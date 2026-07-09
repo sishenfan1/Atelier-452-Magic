@@ -1,0 +1,8 @@
+{
+  "apiKey": "ark-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "endpoint": "https://ark.cn-beijing.volces.com/api/v3",
+  "model": "doubao-seedance-2-0-260128",
+  "resolution": "720p",
+  "ratio": "adaptive",
+  "stylePrompt": "画面风格必须与首帧和尾帧图片保持完全一致：相同的线条、笔触、色彩和质感。严禁改变画风，严禁添加原图中不存在的颜色或上色，严禁增加阴影、光效或背景细节。如果原图是黑白线稿，则全程保持纯黑白线稿。只在两帧之间生成自然的动作过渡。"
+}

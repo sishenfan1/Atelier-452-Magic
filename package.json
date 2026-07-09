@@ -1,0 +1,13 @@
+{
+  "name": "inbetween-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI 中割（中间帧补间）动画工作台 — 关键帧串联 + Seedance 首尾帧生成",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
