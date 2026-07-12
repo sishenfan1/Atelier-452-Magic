@@ -1,13 +1,43 @@
 {
-  "name": "inbetween-studio",
-  "version": "0.1.0",
+  "name": "atelier452-magic",
+  "version": "1.0.0",
   "private": true,
-  "description": "AI 中割（中间帧补间）动画工作台 — 关键帧串联 + Seedance 首尾帧生成",
-  "main": "server.js",
+  "description": "Atelier452 Magic — 关键帧中割生成 + 视频转绘上色（Seedance）",
+  "main": "electron/main.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "app": "electron .",
+    "dist": "electron-builder --win portable"
   },
   "dependencies": {
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.atelier452.magic",
+    "productName": "Atelier452 Magic",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**",
+      "server.js",
+      "public-mode.js",
+      "public/**",
+      "package.json",
+      "node_modules/**"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "Atelier452Magic.exe"
+    }
   }
 }

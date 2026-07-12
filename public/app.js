@@ -24,6 +24,14 @@ const state = {
     current: -1,
     running: false,
   },
+  refine: {
+    sourceUrl: null, sourceName: '',
+    refs: [],        // 角色设定/色卡参考 {id, name, url}
+    history: [],     // {src, out, time, note}
+    current: -1,
+  },
+  presets: [],       // {id, name, text}
+  usedPrompts: [],   // 自动记录的已用提示词 {t, kind, text}
 };
 let nextImgId = 1;
 let nextRefId = 1;
@@ -101,6 +109,12 @@ function snapshot() {
     whole: {
       history: state.whole.history,
     },
+    refine: {
+      sourceUrl: state.refine.sourceUrl,
+      sourceName: state.refine.sourceName,
+      refs: state.refine.refs,
+      history: state.refine.history,
+    },
   };
 }
 function saveProject() {
@@ -159,6 +173,13 @@ async function loadProject() {
     state.whole.history = w.history || [];
     state.whole.current = state.whole.history.length ? 0 : -1;
     renderWhole();
+    const rf = p.refine || {};
+    state.refine.sourceUrl = rf.sourceUrl || null;
+    state.refine.sourceName = rf.sourceName || '';
+    state.refine.refs = rf.refs || [];
+    state.refine.history = rf.history || [];
+    state.refine.current = state.refine.history.length ? 0 : -1;
+    renderRefine();
     syncSliderLabels();
     rebuildSegments();
     renderAll();
@@ -204,13 +225,169 @@ function syncSliderLabels() {
   updateWholeTotal();
 }
 
+// ---------------- 输入框聚焦自动展开 ----------------
+function autoExpand(el, minH = 120) {
+  const grow = () => {
+    el.style.height = 'auto';
+    el.style.height = Math.min(420, Math.max(el.scrollHeight + 4, minH)) + 'px';
+  };
+  el.addEventListener('focus', grow);
+  el.addEventListener('input', () => { if (document.activeElement === el) grow(); });
+  el.addEventListener('blur', () => { el.style.height = ''; });
+}
+
+// ---------------- 图片悬停放大气泡 ----------------
+const imgPeek = document.createElement('div');
+imgPeek.id = 'imgPeek';
+imgPeek.innerHTML = '<img alt="">';
+document.body.appendChild(imgPeek);
+const imgPeekImg = imgPeek.querySelector('img');
+
+function positionPeek(e) {
+  const pad = 18;
+  const w = imgPeek.offsetWidth, h = imgPeek.offsetHeight;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  if (x + w > innerWidth - 8) x = e.clientX - w - pad;
+  if (y + h > innerHeight - 8) y = Math.max(8, innerHeight - h - 8);
+  imgPeek.style.left = x + 'px';
+  imgPeek.style.top = y + 'px';
+}
+document.addEventListener('mouseover', (e) => {
+  const img = e.target.closest('img');
+  if (!img || img.closest('#imgPeek')) return;
+  if (!img.closest('.image-item, .input-cell, .seg-card .pair')) return;
+  imgPeekImg.src = img.src;
+  imgPeek.classList.add('show');
+  positionPeek(e);
+});
+document.addEventListener('mousemove', (e) => {
+  if (imgPeek.classList.contains('show')) positionPeek(e);
+});
+document.addEventListener('mouseout', (e) => {
+  if (e.target.closest && e.target.closest('img')) imgPeek.classList.remove('show');
+});
+
+// ---------------- 宏观时间轴：关键帧标记可拖拽调间距 ----------------
+const MT_PAD = 44;        // 左右留白，容纳首尾缩略图
+const MT_MIN_GAP = 0.1;   // 段最短 0.1s
+const MT_MAX_GAP = 6;     // 段最长 6s
+let mtKeyNodes = [];
+let mtGapNodes = [];
+
+function mtTimes() {
+  const times = [0];
+  for (const g of wholeTimings()) times.push(times[times.length - 1] + g);
+  return times;
+}
+
+// 全量重建（结构变化时）
+function renderMacroTimeline() {
+  const el = $('macroTimeline');
+  const hint = $('macroHint');
+  mtKeyNodes = [];
+  mtGapNodes = [];
+  if (state.images.length < 2) {
+    el.innerHTML = '';
+    el.classList.remove('active');
+    hint.hidden = false;
+    return;
+  }
+  hint.hidden = true;
+  el.classList.add('active');
+  el.innerHTML = '<div class="mt-track"></div>';
+  for (let i = 0; i < state.images.length - 1; i++) {
+    const gap = document.createElement('div');
+    gap.className = 'mt-gap';
+    gap.onclick = () => openGapDialog(i);
+    el.appendChild(gap);
+    mtGapNodes.push(gap);
+  }
+  state.images.forEach((im, i) => {
+    const k = document.createElement('div');
+    k.className = 'mt-key' + (i === 0 ? ' fixed' : '');
+    k.innerHTML = `<img src="${im.url}" draggable="false"><span class="mt-idx">${i + 1}</span><span class="mt-time"></span>`;
+    if (i > 0) attachKeyDrag(k, i);
+    el.appendChild(k);
+    mtKeyNodes.push(k);
+  });
+  layoutMacroTimeline();
+}
+
+// 轻量布局（数值变化时，拖拽中高频调用）
+function layoutMacroTimeline() {
+  const el = $('macroTimeline');
+  if (!el.classList.contains('active') || el.clientWidth === 0) return;
+  const times = mtTimes();
+  const total = Math.max(times[times.length - 1], 0.001);
+  const scale = (el.clientWidth - MT_PAD * 2) / total;
+  mtKeyNodes.forEach((k, i) => {
+    k.style.left = (MT_PAD + times[i] * scale) + 'px';
+    k.querySelector('.mt-time').textContent = times[i].toFixed(1) + 's';
+  });
+  mtGapNodes.forEach((g, i) => {
+    const im = state.images[i];
+    g.style.left = (MT_PAD + times[i] * scale) + 'px';
+    g.style.width = Math.max(10, (times[i + 1] - times[i]) * scale) + 'px';
+    const dur = (times[i + 1] - times[i]).toFixed(1);
+    g.innerHTML = `<span>${dur}s${(im.gapPrompt || '').trim() ? ' ✎' : ''}${im.gapActing > 0 ? ' ★' + im.gapActing : ''}</span>`;
+    g.title = (im.gapPrompt || '').trim() || '点击编辑本段动作 / 演技 / 时长';
+  });
+}
+
+// 拖动关键帧 i：改变它与前一帧的间距（涟漪式，后续帧整体平移）
+function attachKeyDrag(node, i) {
+  node.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    node.setPointerCapture(e.pointerId);
+    node.classList.add('dragging');
+    const el = $('macroTimeline');
+    const startTotal = Math.max(wholeTotalSeconds(), 0.001);
+    const scale = (el.clientWidth - MT_PAD * 2) / startTotal; // 用按下瞬间的比例做换算
+    const startX = e.clientX;
+    const origGap = Number(state.images[i - 1].hold ?? 2);
+    const onMove = (ev) => {
+      const delta = (ev.clientX - startX) / scale;
+      const g = Math.min(MT_MAX_GAP, Math.max(MT_MIN_GAP, origGap + delta));
+      state.images[i - 1].hold = Math.round(g * 10) / 10;
+      layoutMacroTimeline();
+      updateWholeTotal();
+    };
+    const onUp = (ev) => {
+      node.releasePointerCapture(ev.pointerId);
+      node.classList.remove('dragging');
+      node.removeEventListener('pointermove', onMove);
+      node.removeEventListener('pointerup', onUp);
+      renderImageList(); // 同步左侧小滑杆并触发保存
+      scheduleSave();
+    };
+    node.addEventListener('pointermove', onMove);
+    node.addEventListener('pointerup', onUp);
+  });
+}
+
+// 段落编辑弹窗
+let gapDlgIdx = -1;
+function openGapDialog(i) {
+  gapDlgIdx = i;
+  const im = state.images[i];
+  $('gapDialogTitle').textContent = `段落 ${i + 1} → ${i + 2}（关键帧 ${i + 1} 到 ${i + 2} 之间）`;
+  $('gapDlgSeconds').value = Number(im.hold ?? 2).toFixed(1);
+  $('gapDlgActing').value = im.gapActing ?? 0;
+  $('gapDlgActingVal').textContent = (im.gapActing ?? 0) > 0 ? im.gapActing : '全局';
+  $('gapDlgPrompt').value = im.gapPrompt || '';
+  $('gapDialog').showModal();
+}
+
 // ---------------- 模式切换 ----------------
 function switchMode(mode) {
   stopPlayback();
   $('viewInbetween').hidden = mode !== 'inbetween';
   $('viewV2V').hidden = mode !== 'v2v';
+  $('viewRefine').hidden = mode !== 'refine';
   $('tabInbetween').classList.toggle('active', mode === 'inbetween');
   $('tabV2V').classList.toggle('active', mode === 'v2v');
+  $('tabRefine').classList.toggle('active', mode === 'refine');
+  if (mode === 'inbetween') layoutMacroTimeline(); // 隐藏时宽度为 0，回来时重排
 }
 
 // ---------------- 关键帧管理 ----------------
@@ -279,6 +456,7 @@ async function generateSegment(i, overrides = {}) {
         prompt,
         duration: seconds,
         stylePrompt: $('stylePrompt').value.trim(),
+        inbetweenPrompt: $('inbetweenPrompt').value.trim(),
         actingPrompt: buildActingPrompt(),
       }),
     });
@@ -338,14 +516,27 @@ function loadVideo(url) {
   });
 }
 
-async function extractFrames(version) {
-  if (version.frames || version.extracting) return;
-  version.extracting = true;
-  try {
-    await doExtractFrames(version);
-  } finally {
-    version.extracting = false;
-  }
+// 抽帧串行队列：同一时间只跑一个，避免多视频同时解码卡死页面
+let extractChain = Promise.resolve();
+function extractFrames(version) {
+  if (version.frames) return Promise.resolve();
+  if (version.extractPromise) return version.extractPromise;
+  version.extractPromise = extractChain
+    .then(() => (version.frames ? null : doExtractFrames(version)))
+    .finally(() => { version.extractPromise = null; });
+  extractChain = version.extractPromise.catch(() => {});
+  return version.extractPromise;
+}
+
+// 释放某分段中非当前版本的帧缓存（ImageBitmap 显存/内存）
+function releaseInactiveFrames(seg) {
+  seg.versions.forEach((v, vi) => {
+    if (vi !== seg.active && v.frames) {
+      for (const b of v.frames) { if (b.close) b.close(); }
+      v.frames = null;
+      v.diffs = null;
+    }
+  });
 }
 
 async function doExtractFrames(version) {
@@ -379,6 +570,7 @@ async function doExtractFrames(version) {
       diffs.push(s / luma.length);
     }
     prevLuma = luma;
+    if (i % 6 === 5) await new Promise((r) => setTimeout(r, 0)); // 让出主线程，避免长循环卡 UI
   }
   diffs.unshift(diffs[0] ?? 0);
   version.frames = frames;
@@ -719,91 +911,408 @@ function download(url, name) {
   a.remove();
 }
 
+// ---------------- 生成队列：多任务并行 + 进度 ----------------
+let nextJobId = 1;
+const jobs = [];
+
+function addJob(label, estSec) {
+  const job = { id: nextJobId++, label, estSec, startedAt: performance.now(), status: 'running', error: null };
+  jobs.push(job);
+  renderJobs();
+  return job;
+}
+function finishJob(job, ok, error) {
+  job.status = ok ? 'succeeded' : 'failed';
+  job.error = error || null;
+  renderJobs();
+  if (window.refreshMe) window.refreshMe(); // 公开站：刷新积分余额
+  // 成功 8 秒后自动消失；失败保留 60 秒供查看
+  setTimeout(() => {
+    const i = jobs.indexOf(job);
+    if (i >= 0) { jobs.splice(i, 1); renderJobs(); }
+  }, ok ? 8000 : 60000);
+}
+function renderJobs() {
+  const el = $('jobStack');
+  el.innerHTML = '';
+  for (const j of jobs) {
+    const sec = (performance.now() - j.startedAt) / 1000;
+    const pct = j.status === 'running' ? Math.min(95, (sec / j.estSec) * 100) : 100;
+    const card = document.createElement('div');
+    card.className = 'job-card ' + j.status;
+    card.innerHTML = `
+      <div class="job-head"><span>${escapeHtml(j.label)}</span>
+        <span>${j.status === 'running' ? Math.round(sec) + 's' : (j.status === 'succeeded' ? '✓ 完成' : '✕ 失败')}</span></div>
+      <div class="job-bar"><i style="width:${pct.toFixed(0)}%"></i></div>
+      ${j.error ? `<div class="job-err">${escapeHtml(j.error)}</div>` : ''}`;
+    card.onclick = () => {
+      if (j.status !== 'running') {
+        const i = jobs.indexOf(j);
+        if (i >= 0) { jobs.splice(i, 1); renderJobs(); }
+      }
+    };
+    el.appendChild(card);
+  }
+  el.hidden = jobs.length === 0;
+}
+setInterval(() => { if (jobs.some((j) => j.status === 'running')) renderJobs(); }, 1000);
+
+async function pollUntilDone(taskId) {
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 4000));
+    const p = await (await fetch('/api/segments/' + taskId)).json();
+    if (p.status === 'succeeded') return p;
+    if (p.status === 'failed') throw new Error(p.error || '生成失败');
+  }
+}
+
 // ---------------- 一体生成：全部关键帧 → 单次连续动画 ----------------
 function setWholeStatus(t) { $('wholeStatus').textContent = t || ''; }
 
 async function wholeGenerate() {
   if (state.images.length < 2) { alert('请先上传至少 2 张关键帧'); return; }
-  if (state.images.length > 9) { alert('Seedance 最多支持 9 张参考图，请减少关键帧'); return; }
-  if (state.whole.running) return;
-  state.whole.running = true;
-  $('btnWhole').disabled = true;
-  setWholeStatus('提交一体生成任务中…');
-  const timings = wholeTimings();
+  if (state.images.length > 100) { alert('最多 100 张关键帧'); return; }
+  if (state.images.length > 9 &&
+      !confirm(`当前 ${state.images.length} 张关键帧，超过 Seedance 官方参考图上限（9 张），API 可能拒绝。仍要尝试提交吗？`)) return;
+  // 提交时快照当前设置，允许随后立刻改设置再提交下一个任务并行跑
+  const gaps = wholeGaps();
   const totalDur = Math.max(4, Math.min(15, Math.round(wholeTotalSeconds())));
+  const frames = state.images.length;
+  const note = $('globalPrompt').value.trim();
+  const body = JSON.stringify({
+    images: state.images.map((im) => im.url),
+    prompt: note,
+    stylePrompt: $('stylePrompt').value.trim(),
+    inbetweenPrompt: $('inbetweenPrompt').value.trim(),
+    actingPrompt: buildActingPrompt(),
+    duration: totalDur,
+    gaps,
+  });
+  const job = addJob(`🎬 一体生成 ${frames}帧 → ${totalDur}s`, 60 + totalDur * 25);
+  setWholeStatus('已提交（可继续提交更多任务并行生成，进度见右下角）');
   try {
     const res = await fetch('/api/whole', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        images: state.images.map((im) => im.url),
-        prompt: $('globalPrompt').value.trim(),
-        stylePrompt: $('stylePrompt').value.trim(),
-        actingPrompt: buildActingPrompt(),
-        duration: totalDur,
-        timings,
-      }),
+      body,
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || res.statusText);
-    const t0 = Date.now();
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 4000));
-      const p = await (await fetch('/api/segments/' + json.id)).json();
-      if (p.status === 'succeeded') {
-        state.whole.history.unshift({
-          videoUrl: p.videoUrl,
-          time: new Date().toLocaleString('zh-CN', { hour12: false }),
-          duration: totalDur,
-          frames: state.images.length,
-          note: $('globalPrompt').value.trim(),
-        });
-        state.whole.current = 0;
-        setWholeStatus('一体生成完成');
-        renderWhole();
-        scheduleSave();
-        return;
-      }
-      if (p.status === 'failed') throw new Error(p.error || '生成失败');
-      setWholeStatus(`一体生成中… ${Math.round((Date.now() - t0) / 1000)}s（${state.images.length} 张关键帧 → ${totalDur}s 成片）`);
-    }
+    const p = await pollUntilDone(json.id);
+    const actingLevel = Number($('acting').value);
+    state.whole.history.unshift({
+      videoUrl: p.videoUrl,
+      time: new Date().toLocaleString('zh-CN', { hour12: false }),
+      duration: totalDur,
+      frames,
+      note,
+      acting: actingLevel,
+      actingTier: actingTier(actingLevel).name,
+      dl: false,
+    });
+    state.whole.current = 0;
+    loadGenPlayer(p.videoUrl); // 新结果自动载入 ④ 生成回放
+    renderWhole();
+    scheduleSave();
+    finishJob(job, true);
   } catch (e) {
-    setWholeStatus('失败: ' + (e.message || e));
-  } finally {
-    state.whole.running = false;
-    $('btnWhole').disabled = false;
+    finishJob(job, false, String(e.message || e));
   }
+}
+
+/** 下载文件名：带芝居等级与档位，如 一体生成_v3_芝居78夸张.mp4 */
+function wholeFileName(h, ver) {
+  const shibai = h.acting ? `_芝居${h.acting}${h.actingTier || ''}` : '';
+  return `一体生成_v${ver}${shibai}_${h.duration}s.mp4`;
 }
 
 function renderWhole() {
   const w = state.whole;
-  const cur = w.history[w.current];
-  $('wholeResult').hidden = !cur;
-  $('wholeResultEmpty').hidden = !!cur;
-  if (cur && $('wholeResult').getAttribute('src') !== cur.videoUrl) $('wholeResult').src = cur.videoUrl;
+  // 顶部旧播放器已废弃 —— 点击历史卡片载入 ④ 生成回放大播放器
+  $('wholeResult').hidden = true;
+  $('wholeResultEmpty').hidden = w.history.length > 0;
   const hist = $('wholeHistory');
   hist.innerHTML = '';
   w.history.forEach((h, idx) => {
+    const ver = w.history.length - idx;
     const card = document.createElement('div');
-    card.className = 'hist-card' + (idx === w.current ? ' active' : '');
+    card.className = 'gen-card' + (h.dl ? '' : ' undownloaded') + (h.videoUrl === genPlayerUrl ? ' playing' : '');
+    card.dataset.url = h.videoUrl;
     card.innerHTML = `
-      <video src="${h.videoUrl}" muted preload="metadata"></video>
-      <div class="meta"><b>版本 ${w.history.length - idx}</b>
-        ${escapeHtml(h.time)} · ${h.duration}s · ${h.frames} 张关键帧${h.note ? '<br>' + escapeHtml(h.note) : ''}</div>
-      <button class="btn tov2v" title="送去转绘上色">🎨</button>
-      <button class="btn dl" title="下载">⬇</button>`;
-    card.onclick = () => { w.current = idx; renderWhole(); };
+      <video src="${h.videoUrl}" muted loop controls preload="metadata"></video>
+      <div class="gen-meta">
+        <b>v${ver}</b>
+        ${h.acting ? `<span class="chip shibai-chip">芝居 ${h.acting} · ${escapeHtml(h.actingTier || '')}</span>` : ''}
+        ${h.dl ? '' : `<span class="chip dl-chip">${t('未下载')}</span>`}
+        <span class="gen-sub">${escapeHtml(h.time)} · ${h.duration}s · ${h.frames} ${t('张关键帧')}</span>
+        ${h.note ? `<span class="gen-note">${escapeHtml(h.note)}</span>` : ''}
+        <span class="gen-actions">
+          <button class="btn dl" title="${t('下载')}">⬇ ${t('下载')}</button>
+          <button class="btn tov2v" title="${t('送去转绘上色')}">🎨</button>
+        </span>
+      </div>`;
+    const video = card.querySelector('video');
+    card.addEventListener('mouseenter', () => { video.play().catch(() => {}); });
+    card.addEventListener('mouseleave', () => { video.pause(); });
+    card.addEventListener('click', () => { loadGenPlayer(h.videoUrl); });
     card.querySelector('.dl').onclick = (e) => {
       e.stopPropagation();
-      download(h.videoUrl, `whole_${w.history.length - idx}.mp4`);
+      download(h.videoUrl, wholeFileName(h, ver));
+      h.dl = true;
+      renderWhole();
+      scheduleSave();
     };
     card.querySelector('.tov2v').onclick = async (e) => {
       e.stopPropagation();
-      await setV2VSource(h.videoUrl, `一体生成 版本 ${w.history.length - idx}`);
+      await setV2VSource(h.videoUrl, `一体生成 v${ver}`);
       switchMode('v2v');
     };
     hist.appendChild(card);
   });
+  // 首次渲染时自动载入当前版本，循环播放
+  if (w.history.length && !genPlayerUrl) {
+    const cur = w.history[Math.min(w.current || 0, w.history.length - 1)];
+    if (cur) loadGenPlayer(cur.videoUrl);
+  }
+}
+
+// ---------------- ④ 生成回放大播放器（替代旧连续预览画布） ----------------
+const STEP_FPS = 12; // 逐帧步进上限：每步 1/12 秒
+const genPlayer = $('genPlayer');
+let genPlayerUrl = '';
+
+function loadGenPlayer(url) {
+  if (!url) return;
+  genPlayerUrl = url;
+  if (genPlayer.getAttribute('src') !== url) genPlayer.src = url;
+  genPlayer.hidden = false;
+  $('genPlayerEmpty').hidden = true;
+  $('genPlayerControls').hidden = false;
+  genPlayer.play().catch(() => {});
+  updateGenPlayerInfo();
+  // 高亮当前载入的历史卡片
+  document.querySelectorAll('#wholeHistory .gen-card').forEach((el) =>
+    el.classList.toggle('playing', el.dataset.url === url));
+}
+
+function updateGenPlayerInfo() {
+  const dur = genPlayer.duration;
+  if (!genPlayerUrl || !Number.isFinite(dur) || dur <= 0) { $('genPlayerInfo').textContent = ''; return; }
+  const total = Math.max(1, Math.round(dur * STEP_FPS));
+  const cur = Math.min(total, Math.floor(genPlayer.currentTime * STEP_FPS) + 1);
+  $('genPlayerInfo').textContent =
+    `${fmt(genPlayer.currentTime)}s / ${fmt(dur)}s · ${cur} / ${total} f · ${STEP_FPS}fps${genPlayer.paused ? ' · ⏸' : ''}`;
+}
+
+function stepGenFrame(dir) {
+  if (!genPlayerUrl || !Number.isFinite(genPlayer.duration)) return;
+  genPlayer.pause(); // 逐帧查看：先定格
+  const step = 1 / STEP_FPS;
+  const max = Math.max(0, genPlayer.duration - step / 2);
+  genPlayer.currentTime = Math.max(0, Math.min(max, genPlayer.currentTime + dir * step));
+}
+
+function toggleGenPlayer() {
+  if (!genPlayerUrl) return;
+  if (genPlayer.paused) genPlayer.play().catch(() => {});
+  else genPlayer.pause();
+}
+
+$('btnFramePrev').onclick = () => stepGenFrame(-1);
+$('btnFrameNext').onclick = () => stepGenFrame(1);
+$('btnPlayPause').onclick = toggleGenPlayer;
+for (const ev of ['timeupdate', 'seeked', 'play', 'pause', 'loadedmetadata']) {
+  genPlayer.addEventListener(ev, updateGenPlayerInfo);
+}
+// 键盘：空格 = 播放/暂停；← → = 12fps 逐帧（仅中割工作区可见、焦点不在输入控件时）
+document.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' && e.code !== 'ArrowLeft' && e.code !== 'ArrowRight') return;
+  if ($('viewInbetween').hidden || !genPlayerUrl) return;
+  const el = document.activeElement;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+  e.preventDefault();
+  if (e.code === 'Space') toggleGenPlayer();
+  else stepGenFrame(e.code === 'ArrowRight' ? 1 : -1);
+});
+
+// ---------------- 原画精修（Seedream 图生图） ----------------
+function setRefineStatus(tx) { $('refineStatus').textContent = tx || ''; }
+
+function setRefineSource(url, name) {
+  state.refine.sourceUrl = url;
+  state.refine.sourceName = name || '';
+  renderRefine();
+  scheduleSave();
+}
+
+async function refineGenerate() {
+  const rf = state.refine;
+  if (!rf.sourceUrl) { alert(t('请先选择要精修的源图片')); return; }
+  const prompt = [$('refinePrompt').value.trim(), $('refineExtraPrompt').value.trim()].filter(Boolean).join('\n');
+  const src = rf.sourceUrl;
+  const job = addJob(`🖌 精修 ${rf.sourceName || 'image'}`, 25);
+  setRefineStatus(t('已提交（可继续提交更多任务并行生成，进度见右下角）'));
+  try {
+    const res = await fetch('/api/refine', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: src, prompt, refs: rf.refs.map((r) => r.url) }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || res.statusText);
+    rf.history.unshift({
+      src,
+      out: json.url,
+      time: new Date().toLocaleString('zh-CN', { hour12: false }),
+      note: $('refineExtraPrompt').value.trim(),
+    });
+    rf.current = 0;
+    renderRefine();
+    scheduleSave();
+    finishJob(job, true);
+  } catch (e) {
+    finishJob(job, false, String(e.message || e));
+  }
+}
+
+function renderRefine() {
+  const rf = state.refine;
+  // 角色设定/色卡参考网格
+  const rg = $('refineRefGrid');
+  rg.innerHTML = '';
+  rf.refs.forEach((r, idx) => {
+    const cell = document.createElement('div');
+    cell.className = 'input-cell';
+    cell.innerHTML = `<img src="${r.url}"><span class="num">${idx + 1}</span><button class="del-ref" title="${t('删除')}">✕</button>`;
+    cell.querySelector('.del-ref').onclick = () => {
+      rf.refs.splice(idx, 1);
+      renderRefine();
+      scheduleSave();
+    };
+    rg.appendChild(cell);
+  });
+  // 关键帧快选网格
+  const grid = $('refinePickGrid');
+  grid.innerHTML = '';
+  state.images.forEach((im, idx) => {
+    const cell = document.createElement('div');
+    cell.className = 'input-cell' + (rf.sourceUrl === im.url ? ' active' : '');
+    cell.style.cursor = 'pointer';
+    cell.innerHTML = `<img src="${im.url}"><span class="num">${idx + 1}</span>`;
+    cell.onclick = () => setRefineSource(im.url, im.name);
+    grid.appendChild(cell);
+  });
+  // 结果对比
+  const cur = rf.history[rf.current];
+  $('refineCompare').hidden = !cur;
+  $('refineActions').hidden = !cur;
+  $('refineEmpty').hidden = !!cur || !!rf.sourceUrl;
+  if (!cur && rf.sourceUrl) {
+    // 只选了源图：左边显示原图
+    $('refineCompare').hidden = false;
+    $('refineBefore').src = rf.sourceUrl;
+    $('refineAfter').removeAttribute('src');
+  } else if (cur) {
+    $('refineBefore').src = cur.src;
+    $('refineAfter').src = cur.out;
+  }
+  // 历史
+  const hist = $('refineHistory');
+  hist.innerHTML = '';
+  rf.history.forEach((h, idx) => {
+    const card = document.createElement('div');
+    card.className = 'hist-card' + (idx === rf.current ? ' active' : '');
+    card.innerHTML = `
+      <img src="${h.out}" style="width:120px;border-radius:4px;background:#fff">
+      <div class="meta"><b>${t('版本')} ${rf.history.length - idx}</b>${escapeHtml(h.time)}${h.note ? '<br>' + escapeHtml(h.note) : ''}</div>
+      <button class="btn dl">⬇</button>`;
+    card.onclick = () => { rf.current = idx; renderRefine(); };
+    card.querySelector('.dl').onclick = (e) => {
+      e.stopPropagation();
+      download(h.out, `refine_${rf.history.length - idx}.png`);
+    };
+    hist.appendChild(card);
+  });
+}
+
+// ---------------- 提示词库 ----------------
+let presetTargetId = null;
+
+function openPresetDialog(targetId) {
+  presetTargetId = targetId;
+  renderPresetList();
+  $('presetStatus').textContent = '';
+  $('presetDialog').showModal();
+}
+
+function savePresets() {
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ presets: state.presets }),
+  }).catch(() => {});
+}
+
+/** 应用/复制一段提示词：有目标框则填入，独立模式则复制到剪贴板 */
+function applyPromptText(text, label) {
+  const ta = presetTargetId ? $(presetTargetId) : null;
+  if (ta) {
+    ta.value = text;
+    ta.dispatchEvent(new Event('change'));
+    $('presetStatus').textContent = t('已填入') + ': ' + label;
+    $('presetDialog').close();
+  } else {
+    navigator.clipboard.writeText(text).catch(() => {});
+    $('presetStatus').textContent = t('已复制') + ': ' + label;
+  }
+}
+
+function renderPresetList() {
+  const list = $('presetList');
+  list.innerHTML = '';
+  // 独立模式提示 + 新建区显隐
+  $('presetNewText').parentElement.hidden = false;
+  if (state.presets.length === 0) {
+    list.innerHTML = `<div class="hint">${t('暂无预设 — 在下方保存当前提示词')}</div>`;
+  }
+  for (const p of state.presets) {
+    const chip = document.createElement('div');
+    chip.className = 'preset-chip';
+    chip.title = p.text;
+    chip.innerHTML = `<span class="pname">${escapeHtml(p.name)}</span><button class="pdel" title="${t('删除')}">✕</button>`;
+    chip.onclick = () => applyPromptText(p.text, p.name);
+    chip.querySelector('.pdel').onclick = (e) => {
+      e.stopPropagation();
+      state.presets = state.presets.filter((x) => x.id !== p.id);
+      savePresets();
+      renderPresetList();
+    };
+    list.appendChild(chip);
+  }
+  // 最近使用（自动记录每次生成用过的提示词）
+  const used = $('usedList');
+  used.innerHTML = '';
+  const items = (state.usedPrompts || []).slice(0, 40);
+  if (items.length === 0) {
+    used.innerHTML = `<div class="hint">${t('还没有使用记录 — 生成一次即自动记录')}</div>`;
+  }
+  for (const u of items) {
+    const row = document.createElement('div');
+    row.className = 'used-row';
+    row.title = u.text;
+    row.innerHTML = `
+      <span class="used-kind">${escapeHtml(u.kind || '')}</span>
+      <span class="used-text">${escapeHtml(u.text.slice(0, 80))}${u.text.length > 80 ? '…' : ''}</span>
+      <button class="btn uapply">${presetTargetId ? t('填入') : t('复制')}</button>
+      <button class="btn usave" title="${t('保存为预设')}">★</button>`;
+    row.querySelector('.uapply').onclick = () => applyPromptText(u.text, u.text.slice(0, 16));
+    row.querySelector('.usave').onclick = () => {
+      state.presets.push({ id: 'p' + Date.now(), name: u.text.slice(0, 24), text: u.text });
+      savePresets();
+      renderPresetList();
+    };
+    used.appendChild(row);
+  }
 }
 
 // ---------------- 成片上色（V2V） ----------------
@@ -842,53 +1351,44 @@ async function v2vGenerate() {
   const v = state.v2v;
   if (!v.sourceUrl) { alert('请先设置源视频'); return; }
   if (v.refs.length === 0) { alert('请至少上传 1 张上色参考图'); return; }
-  if (v.running) return;
-  v.running = true;
-  $('btnV2VGenerate').disabled = true;
-  setV2VStatus('提交任务中…（首次会启动公网文件隧道，约 10 秒）');
+  if (v.refs.length > 9 &&
+      !confirm(`当前 ${v.refs.length} 张参考图 + 1 个视频，超过 Seedance 官方文件上限，API 可能拒绝。仍要尝试提交吗？`)) return;
+  // 快照当前设置，允许并行提交多个转绘任务
+  const duration = Number($('v2vDuration').value);
+  const snap = {
+    videoUrl: v.sourceUrl,
+    refs: v.refs.map((r) => r.url),
+    prompt: $('v2vExtraPrompt').value.trim(),
+    colorPrompt: $('colorPrompt').value.trim(),
+    duration,
+  };
+  const job = addJob(`🎨 转绘上色 ${duration}s · ${snap.refs.length} 张参考图`, 90 + duration * 30);
+  setV2VStatus('已提交（可继续提交更多任务并行生成，进度见右下角）');
   try {
     const res = await fetch('/api/v2v', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        videoUrl: v.sourceUrl,
-        refs: v.refs.map((r) => r.url),
-        prompt: $('v2vExtraPrompt').value.trim(),
-        colorPrompt: $('colorPrompt').value.trim(),
-        duration: Number($('v2vDuration').value),
-      }),
+      body: JSON.stringify(snap),
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || res.statusText);
-    const t0 = Date.now();
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 4000));
-      const p = await (await fetch('/api/segments/' + json.id)).json();
-      if (p.status === 'succeeded') {
-        v.history.unshift({
-          videoUrl: p.videoUrl,
-          time: new Date().toLocaleString('zh-CN', { hour12: false }),
-          duration: Number($('v2vDuration').value),
-          sourceUrl: v.sourceUrl,
-          refs: v.refs.length,
-          refUrls: v.refs.map((r) => r.url),
-          colorPrompt: $('colorPrompt').value.trim(),
-          note: $('v2vExtraPrompt').value.trim(),
-        });
-        v.current = 0;
-        setV2VStatus('转绘完成');
-        renderV2V();
-        scheduleSave();
-        return;
-      }
-      if (p.status === 'failed') throw new Error(p.error || '转绘失败');
-      setV2VStatus(`转绘中… ${Math.round((Date.now() - t0) / 1000)}s`);
-    }
+    const p = await pollUntilDone(json.id);
+    v.history.unshift({
+      videoUrl: p.videoUrl,
+      time: new Date().toLocaleString('zh-CN', { hour12: false }),
+      duration,
+      sourceUrl: snap.videoUrl,
+      refs: snap.refs.length,
+      refUrls: snap.refs,
+      colorPrompt: snap.colorPrompt,
+      note: snap.prompt,
+    });
+    v.current = 0;
+    renderV2V();
+    scheduleSave();
+    finishJob(job, true);
   } catch (e) {
-    setV2VStatus('失败: ' + (e.message || e));
-  } finally {
-    v.running = false;
-    $('btnV2VGenerate').disabled = false;
+    finishJob(job, false, String(e.message || e));
   }
 }
 
@@ -948,6 +1448,7 @@ function renderAll() {
   renderImageList();
   renderInputGrid();
   renderTimeline();
+  renderRefine();
 }
 
 function renderImageList() {
@@ -956,30 +1457,51 @@ function renderImageList() {
   state.images.forEach((im, idx) => {
     const li = document.createElement('li');
     li.className = 'image-item';
-    li.draggable = true;
+    li.draggable = false; // 仅当从缩略图行按下时才临时开启，避免抢滑杆的拖动
     const isLast = idx === state.images.length - 1;
+    const gapActing = im.gapActing ?? 0;
     li.innerHTML = `
-      <div class="im-row"><span class="idx">${idx + 1}</span><img src="${im.url}"><span class="name">${escapeHtml(im.name)}</span><button class="del" title="删除">✕</button></div>
-      ${isLast ? '' : `<div class="hold-row"><span class="lbl">→ 下一帧</span>
-        <input type="range" class="hold" min="0.5" max="6" step="0.5" value="${im.hold ?? 2}" draggable="false">
-        <b>${(im.hold ?? 2).toFixed(1)}s</b></div>`}`;
+      <div class="im-row"><span class="grip" title="拖拽排序">⠿</span><span class="idx">${idx + 1}</span><img src="${im.url}"><span class="name">${escapeHtml(im.name)}</span><button class="del" title="删除">✕</button></div>
+      ${isLast ? '' : `<div class="gap-box">
+        <div class="hold-row"><span class="lbl">时长</span>
+          <input type="range" class="hold" min="0.1" max="6" step="0.1" value="${im.hold ?? 2}" draggable="false">
+          <b class="hold-val">${(im.hold ?? 2).toFixed(1)}s</b></div>
+        <div class="hold-row"><span class="lbl">演技</span>
+          <input type="range" class="gapacting" min="0" max="100" step="1" value="${gapActing}" draggable="false">
+          <b class="gapacting-val">${gapActing > 0 ? gapActing : '全局'}</b></div>
+        <textarea class="gap-prompt" rows="1" placeholder="↳ 这一段的动作描述（可选，如：转身挥刀劈下）" draggable="false">${escapeHtml(im.gapPrompt || '')}</textarea>
+      </div>`}`;
     li.querySelector('.del').onclick = () => removeImage(im.id);
     const hold = li.querySelector('.hold');
     if (hold) {
-      hold.addEventListener('mousedown', (e) => e.stopPropagation());
       hold.addEventListener('input', (e) => {
         im.hold = Number(e.target.value);
-        li.querySelector('.hold-row b').textContent = im.hold.toFixed(1) + 's';
+        li.querySelector('.hold-val').textContent = im.hold.toFixed(1) + 's';
         updateWholeTotal();
         scheduleSave();
       });
+      const ga = li.querySelector('.gapacting');
+      ga.addEventListener('input', (e) => {
+        im.gapActing = Number(e.target.value);
+        li.querySelector('.gapacting-val').textContent = im.gapActing > 0 ? im.gapActing : '全局';
+        scheduleSave();
+      });
+      const gp = li.querySelector('.gap-prompt');
+      gp.addEventListener('change', (e) => { im.gapPrompt = e.target.value; scheduleSave(); });
+      autoExpand(gp, 80);
     }
+    // 排序拖拽只从缩略图行发起：按下时临时开启 draggable，结束即关闭
+    const row = li.querySelector('.im-row');
+    row.addEventListener('mousedown', () => { li.draggable = true; });
+    row.addEventListener('mouseup', () => { li.draggable = false; });
     li.addEventListener('dragstart', (e) => {
-      if (e.target.tagName === 'INPUT') { e.preventDefault(); return; }
       e.dataTransfer.setData('text/plain', String(idx));
       li.classList.add('dragging');
     });
-    li.addEventListener('dragend', () => li.classList.remove('dragging'));
+    li.addEventListener('dragend', () => {
+      li.draggable = false;
+      li.classList.remove('dragging');
+    });
     li.addEventListener('dragover', (e) => e.preventDefault());
     li.addEventListener('drop', (e) => {
       e.preventDefault();
@@ -988,6 +1510,7 @@ function renderImageList() {
     });
     ul.appendChild(li);
   });
+  renderMacroTimeline();
   updateWholeTotal();
 }
 
@@ -998,12 +1521,34 @@ function wholeTimings() {
 function wholeTotalSeconds() {
   return wholeTimings().reduce((a, b) => a + b, 0);
 }
+
+// 每段演技微调（0 = 跟随全局滑杆）的精简描述
+const GAP_ACTING_SHORT = [
+  { max: 20, t: '克制——幅度小、缓慢柔和、内敛' },
+  { max: 40, t: '自然——幅度适中、流畅写实' },
+  { max: 60, t: '生动——明快有力、关键姿势清晰、有动作重音' },
+  { max: 80, t: '夸张——迅猛利落（snappy）、姿势夸张、缓急分明' },
+  { max: 100, t: '极限作画（sakuga）——极快极猛、极端夸张的关键姿势、暴烈节奏' },
+];
+function gapActingText(v) {
+  const tier = GAP_ACTING_SHORT.find((x) => v <= x.max) || GAP_ACTING_SHORT[GAP_ACTING_SHORT.length - 1];
+  return `强度${v}/100，${tier.t}`;
+}
+// 组装每段设置：时长 + 本段动作 + 本段演技
+function wholeGaps() {
+  return state.images.slice(0, -1).map((im) => ({
+    seconds: Number(im.hold ?? 2),
+    prompt: (im.gapPrompt || '').trim(),
+    actingText: im.gapActing > 0 ? gapActingText(im.gapActing) : '',
+  }));
+}
 function updateWholeTotal() {
   const el = $('wholeTotalVal');
-  if (state.images.length < 2) { el.textContent = '—'; return; }
+  if (state.images.length < 2) { el.textContent = '—'; layoutMacroTimeline(); return; }
   const t = wholeTotalSeconds();
   const clamped = Math.max(4, Math.min(15, Math.round(t)));
   el.textContent = t.toFixed(1) + ' 秒' + (t < 4 || t > 15 ? `（超出范围，将按 ${clamped}s 生成）` : '');
+  layoutMacroTimeline();
 }
 
 function renderInputGrid() {
@@ -1048,7 +1593,9 @@ function renderTimeline() {
       ${seg.error ? `<div class="err-msg">${seg.error}</div>` : ''}`;
     card.querySelectorAll('.version-pill').forEach((btn) => {
       btn.onclick = () => {
+        stopPlayback();
         seg.active = Number(btn.dataset.ver);
+        releaseInactiveFrames(seg); // 释放旧版本帧缓存，防止内存膨胀
         const v = seg.versions[seg.active];
         if (v && !v.frames) extractFrames(v).catch(console.warn);
         renderTimeline();
@@ -1092,14 +1639,129 @@ async function refreshConfig() {
   $('cfgResolution').value = cfg.resolution;
   $('cfgRatio').value = cfg.ratio;
   $('cfgPublicBase').value = cfg.publicBase || '';
+  $('cfgImgModel').value = cfg.imgModel || '';
+  $('cfgImgProvider').value = cfg.imgProvider || 'ark';
+  $('cfgOpenaiBase').value = cfg.openaiBase || 'https://api.openai.com';
+  $('cfgOpenaiImgModel').value = cfg.openaiImgModel || 'gpt-image-2';
+  $('cfgOpenaiKey').placeholder = cfg.hasOpenaiKey ? '已配置（留空保持不变）' : 'sk-...';
   if (!$('stylePrompt').value) $('stylePrompt').value = cfg.stylePrompt || '';
+  if (!$('inbetweenPrompt').value) $('inbetweenPrompt').value = cfg.inbetweenPrompt || '';
   if (!$('colorPrompt').value) $('colorPrompt').value = cfg.colorPrompt || '';
+  if (!$('refinePrompt').value) $('refinePrompt').value = cfg.refinePrompt || '';
+  state.presets = cfg.presets || [];
+  state.usedPrompts = cfg.usedPrompts || [];
   return cfg;
 }
 
 // ---------------- 事件绑定 ----------------
 $('tabInbetween').onclick = () => switchMode('inbetween');
 $('tabV2V').onclick = () => switchMode('v2v');
+$('tabRefine').onclick = () => switchMode('refine');
+
+// 精修：源图上传 / 生成 / 结果操作
+$('refineFileInput').onchange = async (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    const url = await uploadAsset(f);
+    setRefineSource(url, f.name);
+  } catch (err) {
+    alert('上传失败: ' + err.message);
+  }
+};
+const rfz = $('refineDropZone');
+rfz.addEventListener('dragover', (e) => { e.preventDefault(); rfz.classList.add('over'); });
+rfz.addEventListener('dragleave', () => rfz.classList.remove('over'));
+rfz.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  rfz.classList.remove('over');
+  const f = [...e.dataTransfer.files].find((x) => x.type.startsWith('image/'));
+  if (f) {
+    try { setRefineSource(await uploadAsset(f), f.name); } catch (err) { alert('上传失败: ' + err.message); }
+  }
+});
+// 精修参考图（角色设定/色卡）上传
+$('refineRefInput').onchange = async (e) => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  for (const f of files) {
+    if (!f.type.startsWith('image/')) continue;
+    try {
+      const url = await uploadAsset(f);
+      state.refine.refs.push({ id: nextRefId++, name: f.name, url });
+    } catch (err) { alert('上传失败: ' + err.message); }
+  }
+  renderRefine();
+  scheduleSave();
+};
+const rrdz = $('refineRefDrop');
+rrdz.addEventListener('dragover', (e) => { e.preventDefault(); rrdz.classList.add('over'); });
+rrdz.addEventListener('dragleave', () => rrdz.classList.remove('over'));
+rrdz.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  rrdz.classList.remove('over');
+  for (const f of [...e.dataTransfer.files]) {
+    if (!f.type.startsWith('image/')) continue;
+    try {
+      const url = await uploadAsset(f);
+      state.refine.refs.push({ id: nextRefId++, name: f.name, url });
+    } catch (err) { alert('上传失败: ' + err.message); }
+  }
+  renderRefine();
+  scheduleSave();
+});
+
+// 右栏大生成按钮 + 提示词库独立入口（按钮 + 右缘悬停）
+$('btnWholeTop').onclick = wholeGenerate;
+$('btnLibrary').onclick = () => openPresetDialog(null);
+$('libraryEdge').addEventListener('mouseenter', () => {
+  if (!$('presetDialog').open) openPresetDialog(null);
+});
+
+$('btnRefine').onclick = refineGenerate;
+$('btnRefineDownload').onclick = () => {
+  const cur = state.refine.history[state.refine.current];
+  if (cur) download(cur.out, 'refined.png');
+};
+$('btnRefineAddKey').onclick = () => {
+  const cur = state.refine.history[state.refine.current];
+  if (!cur) return;
+  state.images.push({ id: nextImgId++, name: 'refined_' + nextImgId + '.png', url: cur.out, hold: 2 });
+  rebuildSegments();
+  renderAll();
+  scheduleSave();
+  switchMode('inbetween');
+};
+$('refinePrompt').onchange = () => {
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refinePrompt: $('refinePrompt').value }),
+  }).catch(() => {});
+};
+
+// 提示词库：📚 按钮（事件委托，动态节点也生效）
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.plib');
+  if (!btn) return;
+  e.preventDefault();
+  openPresetDialog(btn.dataset.target);
+});
+$('presetClose').onclick = () => $('presetDialog').close();
+$('presetSave').onclick = () => {
+  const ta = presetTargetId ? $(presetTargetId) : null;
+  // 优先保存独立输入框里的新提示词；没有则保存目标提示词框内容
+  const text = ($('presetNewText').value.trim()) || (ta ? ta.value.trim() : '');
+  const name = $('presetName').value.trim() || text.slice(0, 24);
+  if (!text) { $('presetStatus').textContent = t('当前提示词框是空的'); return; }
+  state.presets.push({ id: 'p' + Date.now(), name, text });
+  $('presetName').value = '';
+  $('presetNewText').value = '';
+  savePresets();
+  renderPresetList();
+  $('presetStatus').textContent = t('已保存') + ': ' + name;
+};
 
 $('fileInput').onchange = (e) => { addFiles([...e.target.files]); e.target.value = ''; };
 const dz = $('dropZone');
@@ -1177,6 +1839,13 @@ $('stylePrompt').onchange = () => {
     body: JSON.stringify({ stylePrompt: $('stylePrompt').value }),
   }).catch(() => {});
 };
+$('inbetweenPrompt').onchange = () => {
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inbetweenPrompt: $('inbetweenPrompt').value }),
+  }).catch(() => {});
+};
 $('colorPrompt').onchange = () => {
   fetch('/api/config', {
     method: 'POST',
@@ -1209,11 +1878,17 @@ $('cfgSave').onclick = async () => {
     endpoint: $('cfgEndpoint').value,
     model: $('cfgModel').value,
     v2vModel: $('cfgV2VModel').value,
+    imgModel: $('cfgImgModel').value,
+    imgProvider: $('cfgImgProvider').value,
+    openaiBase: $('cfgOpenaiBase').value.trim(),
+    openaiImgModel: $('cfgOpenaiImgModel').value.trim(),
     resolution: $('cfgResolution').value,
     ratio: $('cfgRatio').value,
     publicBase: $('cfgPublicBase').value.trim(),
   };
   if ($('cfgKey').value.trim()) body.apiKey = $('cfgKey').value.trim();
+  if ($('cfgOpenaiKey').value.trim()) body.openaiKey = $('cfgOpenaiKey').value.trim();
+  $('cfgOpenaiKey').value = '';
   const res = await fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1248,8 +1923,47 @@ window.__addImagesFromUrls = async (urls) => {
 window.__state = state;
 
 // ---------------- 启动 ----------------
+// 接收来自 AI Director Workspace 的合并提示词（/studio?adwPrompt=…）
+(() => {
+  const p = new URLSearchParams(location.search).get('adwPrompt');
+  if (!p) return;
+  $('globalPrompt').value = p;
+  scheduleSave();
+  setWholeStatus('已接收来自 Director Workspace 的镜头提示词 ✓');
+  history.replaceState(null, '', location.pathname);
+})();
+
 syncSliderLabels();
 refreshConfig();
+// 主要提示词框：聚焦自动展开
+for (const id of ['globalPrompt', 'stylePrompt', 'inbetweenPrompt', 'colorPrompt', 'v2vExtraPrompt', 'detailPrompt', 'gapDlgPrompt', 'refinePrompt', 'refineExtraPrompt']) {
+  autoExpand($(id));
+}
+
+// 段落编辑弹窗
+$('gapDlgActing').oninput = (e) => {
+  $('gapDlgActingVal').textContent = Number(e.target.value) > 0 ? e.target.value : '全局';
+};
+$('gapDlgSave').onclick = () => {
+  const im = state.images[gapDlgIdx];
+  if (im) {
+    im.hold = Math.min(6, Math.max(0.1, Number($('gapDlgSeconds').value) || 2));
+    im.gapActing = Number($('gapDlgActing').value) || 0;
+    im.gapPrompt = $('gapDlgPrompt').value;
+    renderImageList();
+    scheduleSave();
+  }
+  $('gapDialog').close();
+};
+$('gapDlgClose').onclick = () => $('gapDialog').close();
+
+// 窗口缩放时重排时间轴
+let mtResizeTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(mtResizeTimer);
+  mtResizeTimer = setTimeout(layoutMacroTimeline, 150);
+});
+
 renderAll();
 renderV2V();
 renderWhole();

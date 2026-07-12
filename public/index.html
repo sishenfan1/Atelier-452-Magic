@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Atelier452 Magic</title>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="cosmic.css">
 </head>
 <body>
 <header class="topbar">
@@ -20,9 +21,20 @@
       <span class="mode-title">视频转绘上色</span>
       <small>粗动画 → 参考图成片</small>
     </button>
+    <button id="tabRefine" class="mode-tab">
+      <span class="mode-kicker">工作区 3</span>
+      <span class="mode-title">原画精修</span>
+      <small>草稿 → 完成版原画</small>
+    </button>
   </nav>
   <div class="top-actions">
+    <span id="userArea" class="user-area" hidden></span>
     <span id="modeChip" class="chip">…</span>
+    <button id="btnLibrary" class="btn ghost" title="提示词库 / Prompt Library">📚</button>
+    <button id="btnTour" class="btn ghost" title="新手引导 / Tour">❓</button>
+    <span id="langSeg" class="lang-seg" role="group" aria-label="Language">
+      <button data-lang="zh">中</button><button data-lang="en">EN</button><button data-lang="ja">日</button>
+    </span>
     <button id="btnSettings" class="btn ghost">⚙ API 设置</button>
   </div>
 </header>
@@ -55,7 +67,7 @@
         </div>
         <div class="timing-card">
           <label>重映射总时长 <b id="remapSecondsVal">3.5s</b></label>
-          <input type="range" id="remapSeconds" min="0.5" max="20" step="0.5" value="3.5">
+          <input type="range" id="remapSeconds" min="0.5" max="20" step="0.1" value="3.5">
         </div>
         <div class="timing-card">
           <label>输出 fps <b id="remapFpsVal">12</b></label>
@@ -74,12 +86,16 @@
         </div>
       </div>
       <div class="field">
-        <label>动作描述（所有分段共用）</label>
+        <label>动作描述（所有分段共用）<button class="btn plib" data-target="globalPrompt">📚</button></label>
         <textarea id="globalPrompt" rows="2" placeholder="例：挥舞武士刀，动作流畅"></textarea>
       </div>
       <div class="field">
-        <label>风格锁定 <span class="hint">自动附加，保持画风与首尾帧一致</span></label>
+        <label>风格锁定 <span class="hint">自动附加，保持画风与首尾帧一致</span><button class="btn plib" data-target="stylePrompt">📚</button></label>
         <textarea id="stylePrompt" rows="3"></textarea>
+      </div>
+      <div class="field">
+        <label>中割运动锁定 <span class="hint">自动附加，强制关键帧之间持续运动</span><button class="btn plib" data-target="inbetweenPrompt">📚</button></label>
+        <textarea id="inbetweenPrompt" rows="3"></textarea>
       </div>
       <button id="btnWhole" class="btn primary wide big-action">🎬 一体生成（全部关键帧 → 一段连续动画）</button>
       <div id="wholeStatus" class="hint accent" style="margin:6px 0"></div>
@@ -88,7 +104,23 @@
   </aside>
 
   <div class="col-center">
-    <section class="panel">
+    <section class="panel" id="panelGenPlayer">
+      <h2>④ 生成回放 <span class="hint">— 点击历史版本载入；空格 播放/暂停；← → 逐帧（12fps）</span></h2>
+      <div class="gen-player-wrap">
+        <video id="genPlayer" muted loop playsinline hidden></video>
+        <div id="genPlayerEmpty" class="empty-note">还没有生成结果 — 点「🎬 一体生成」后自动在这里循环播放</div>
+      </div>
+      <div class="controls gen-player-controls" id="genPlayerControls" hidden>
+        <div class="row">
+          <button id="btnFramePrev" class="btn">⏴ 上一帧</button>
+          <button id="btnPlayPause" class="btn primary">⏯ 播放 / 暂停（空格）</button>
+          <button id="btnFrameNext" class="btn">下一帧 ⏵</button>
+          <span id="genPlayerInfo" class="hint accent"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" hidden aria-hidden="true">
       <h2>④ 连续预览</h2>
       <div class="preview-wrap">
         <canvas id="previewCanvas" width="1280" height="720"></canvas>
@@ -119,6 +151,12 @@
     </section>
 
     <section class="panel">
+      <h2>⏱ 宏观时间轴 <span class="hint">— 左右拖动关键帧调整间距（改变与前一帧的时长）；点击两帧之间的段落条编辑该段动作与演技</span></h2>
+      <div id="macroTimeline" class="macro-timeline"></div>
+      <div class="hint" id="macroHint">上传至少 2 张关键帧后显示</div>
+    </section>
+
+    <section class="panel">
       <h2>⑤ 一体生成结果 <span class="hint">— 全部关键帧一次成片，点历史版本回看</span></h2>
       <video id="wholeResult" class="v2v-result" controls loop hidden></video>
       <div id="wholeResultEmpty" class="empty-note">还没有一体生成结果 — 上传关键帧后点「🎬 一体生成」</div>
@@ -135,6 +173,10 @@
     <section class="panel">
       <h2>输入图像</h2>
       <div id="inputGrid" class="input-grid"></div>
+    </section>
+    <section class="panel highlight side-generate-panel">
+      <button id="btnWholeTop" class="btn primary wide side-generate">🎬 一体生成</button>
+      <div class="hint side-generate-sub">全部关键帧 → 一段连续动画</div>
     </section>
   </aside>
 </main>
@@ -168,11 +210,11 @@
     <section class="panel">
       <h2>③ 转绘设置</h2>
       <div class="field">
-        <label>内置上色提示词 <span class="hint">自动作为主指令</span></label>
+        <label>内置上色提示词 <span class="hint">自动作为主指令</span><button class="btn plib" data-target="colorPrompt">📚</button></label>
         <textarea id="colorPrompt" rows="4"></textarea>
       </div>
       <div class="field">
-        <label>补充描述（可选）</label>
+        <label>补充描述（可选）<button class="btn plib" data-target="v2vExtraPrompt">📚</button></label>
         <textarea id="v2vExtraPrompt" rows="2" placeholder="例：赛璐璐上色，柔和晨光"></textarea>
       </div>
       <div class="timing-grid single">
@@ -199,6 +241,118 @@
     </section>
   </div>
 </main>
+
+<!-- ============ 模式三：原画精修 ============ -->
+<main class="layout v2v" id="viewRefine" hidden>
+  <aside class="col-left">
+    <section class="panel highlight">
+      <h2>① 源图片</h2>
+      <label class="filedrop big" id="refineDropZone">
+        <input type="file" id="refineFileInput" accept="image/*">
+        <span class="drop-icon">✏️</span>
+        <span class="drop-title">添加要精修的图片</span>
+        <span class="drop-sub">草稿、tie-down 或粗线稿</span>
+      </label>
+      <div class="hint" style="margin-top:8px">或点击下方关键帧直接选用：</div>
+      <div id="refinePickGrid" class="input-grid" style="margin-top:6px"></div>
+    </section>
+
+    <section class="panel highlight">
+      <h2>①+ 角色设定 / 色卡参考</h2>
+      <label class="filedrop" id="refineRefDrop">
+        <input type="file" id="refineRefInput" accept="image/*" multiple>
+        <span class="drop-title">添加设定参考图</span>
+        <span class="drop-sub">彩色模型表、色卡均可——只取角色设计，不取姿势与颜色</span>
+      </label>
+      <div id="refineRefGrid" class="input-grid" style="margin-top:8px"></div>
+    </section>
+
+    <section class="panel">
+      <h2>② 精修设置</h2>
+      <div class="field">
+        <label>内置精修提示词 <span class="hint">自动作为主指令，可按需修改</span><button class="btn plib" data-target="refinePrompt">📚</button></label>
+        <textarea id="refinePrompt" rows="4"></textarea>
+      </div>
+      <div class="field">
+        <label>补充描述（可选）<button class="btn plib" data-target="refineExtraPrompt">📚</button></label>
+        <textarea id="refineExtraPrompt" rows="2"></textarea>
+      </div>
+      <button id="btnRefine" class="btn primary wide big-action">🖌 开始精修</button>
+      <div id="refineStatus" class="hint accent" style="margin-top:6px"></div>
+    </section>
+  </aside>
+
+  <div class="col-center">
+    <section class="panel">
+      <h2>③ 精修结果 <span class="hint">— 左原图 / 右精修后</span></h2>
+      <div id="refineCompare" class="refine-compare" hidden>
+        <figure><img id="refineBefore" alt=""><figcaption>原图</figcaption></figure>
+        <figure><img id="refineAfter" alt=""><figcaption>精修后</figcaption></figure>
+      </div>
+      <div class="row" id="refineActions" hidden style="margin-top:8px; display:flex; gap:8px">
+        <button id="btnRefineDownload" class="btn">⬇ 下载</button>
+        <button id="btnRefineAddKey" class="btn primary">➕ 添加为关键帧</button>
+      </div>
+      <div id="refineEmpty" class="empty-note">还没有精修结果 — 选择源图片后点「🖌 开始精修」</div>
+    </section>
+    <section class="panel">
+      <h2>④ 精修历史</h2>
+      <div id="refineHistory" class="history-list"></div>
+    </section>
+  </div>
+</main>
+
+<!-- 提示词库弹窗 -->
+<dialog id="presetDialog" class="library-dialog">
+  <h3>提示词库 <span class="hint">— 点击预设一键填入</span></h3>
+  <div class="panel-title" style="margin:6px 0 8px">我的预设</div>
+  <div id="presetList" class="preset-list"></div>
+  <div class="panel-title" style="margin:14px 0 8px">最近使用</div>
+  <div id="usedList" class="used-list"></div>
+  <div class="field" style="margin-top:14px">
+    <label>新建提示词 <span class="hint">粘贴/编写后保存为预设</span></label>
+    <textarea id="presetNewText" rows="2" placeholder="在此粘贴或编写提示词…"></textarea>
+  </div>
+  <div class="field-row" style="margin-top:8px">
+    <div class="field" style="flex:1">
+      <input type="text" id="presetName" placeholder="预设名称">
+    </div>
+    <button id="presetSave" class="btn primary" style="align-self:flex-start">★ 保存为预设</button>
+  </div>
+  <div class="dialog-actions">
+    <button id="presetClose" class="btn ghost">关闭</button>
+  </div>
+  <div id="presetStatus" class="hint accent"></div>
+</dialog>
+
+<!-- 提示词库右缘悬停入口 -->
+<div id="libraryEdge" title="提示词库 / Prompt Library"><span>📚</span></div>
+
+<!-- 生成队列（多任务并行进度） -->
+<div id="jobStack" class="job-stack" hidden></div>
+
+<!-- 段落编辑弹窗（宏观时间轴） -->
+<dialog id="gapDialog">
+  <h3 id="gapDialogTitle">段落设置</h3>
+  <div class="field-row">
+    <div class="field">
+      <label>本段时长（秒）</label>
+      <input type="number" id="gapDlgSeconds" min="0.1" max="6" step="0.1" value="2">
+    </div>
+    <div class="field">
+      <label>本段演技 <b id="gapDlgActingVal">全局</b></label>
+      <input type="range" id="gapDlgActing" min="0" max="100" step="1" value="0">
+    </div>
+  </div>
+  <div class="field">
+    <label>本段动作描述 <span class="hint">这两帧之间发生的具体动作（连续、物理可信的运动）</span></label>
+    <textarea id="gapDlgPrompt" rows="3" placeholder="例：重心下沉，猛地转身，刀刃划出弧线劈下"></textarea>
+  </div>
+  <div class="dialog-actions">
+    <button id="gapDlgSave" class="btn primary">保存</button>
+    <button id="gapDlgClose" class="btn ghost">关闭</button>
+  </div>
+</dialog>
 
 <!-- 详细设置弹窗 -->
 <dialog id="detailDialog">
@@ -243,6 +397,35 @@
   </div>
   <div class="field-row">
     <div class="field">
+      <label>精修引擎</label>
+      <select id="cfgImgProvider">
+        <option value="ark">Ark Seedream（火山方舟）</option>
+        <option value="openai">GPT Image 2（OpenAI 兼容）</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>精修模型 ID（Seedream）</label>
+      <input type="text" id="cfgImgModel" placeholder="doubao-seedream-4-0-250828">
+    </div>
+  </div>
+  <div id="openaiFields">
+    <div class="field-row">
+      <div class="field">
+        <label>OpenAI 兼容接口地址 <span class="hint">官方或中转站基址</span></label>
+        <input type="text" id="cfgOpenaiBase" placeholder="https://api.openai.com">
+      </div>
+      <div class="field">
+        <label>GPT Image 模型 ID</label>
+        <input type="text" id="cfgOpenaiImgModel" placeholder="gpt-image-2">
+      </div>
+    </div>
+    <div class="field">
+      <label>OpenAI API Key <span class="hint">留空保持不变</span></label>
+      <input type="password" id="cfgOpenaiKey" placeholder="sk-...">
+    </div>
+  </div>
+  <div class="field-row">
+    <div class="field">
       <label>分辨率</label>
       <select id="cfgResolution">
         <option>480p</option><option selected>720p</option><option>1080p</option>
@@ -267,6 +450,8 @@
   <div id="cfgStatus" class="hint accent"></div>
 </dialog>
 
+<script src="i18n.js"></script>
+<script src="saas.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
