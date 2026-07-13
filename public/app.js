@@ -384,10 +384,13 @@ function switchMode(mode) {
   $('viewInbetween').hidden = mode !== 'inbetween';
   $('viewV2V').hidden = mode !== 'v2v';
   $('viewRefine').hidden = mode !== 'refine';
+  $('viewLibrary').hidden = mode !== 'library';
   $('tabInbetween').classList.toggle('active', mode === 'inbetween');
   $('tabV2V').classList.toggle('active', mode === 'v2v');
   $('tabRefine').classList.toggle('active', mode === 'refine');
+  $('tabLibrary').classList.toggle('active', mode === 'library');
   if (mode === 'inbetween') layoutMacroTimeline(); // 隐藏时宽度为 0，回来时重排
+  if (mode === 'library') renderLibraryPage();
 }
 
 // ---------------- 关键帧管理 ----------------
@@ -1235,17 +1238,71 @@ function renderRefine() {
   });
 }
 
-// ---------------- 提示词库（可拖拽浮动面板 · 分类存储 · JSON 转换器） ----------------
+// ---------------- 提示词库（分区文件夹 · 整页工作区 4 + 可拖拽浮动面板 · JSON 转换器） ----------------
 let presetTargetId = null;
-let libTab = 'general'; // general | storyboard | qa | used | json
-const LIB_CATS = ['general', 'storyboard', 'qa'];
+let libTab = null;          // 浮动面板当前页签：分区 id | 'used' | 'json'
+let plOpenFolderId = null;  // 整页视图当前打开的分区
+let plLastJson = null;      // 整页 JSON 预览的最近一次结果（供下载/复制）
+if (!state.folders) state.folders = [];
 
-function savePresets() {
+const newPromptId = () => 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const newFolderId = () => 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const getFolder = (id) => state.folders.find((f) => f.id === id);
+
+function saveFolders() {
   fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ presets: state.presets }),
+    body: JSON.stringify({ promptFolders: state.folders }),
   }).catch(() => {});
+}
+
+/** 分区数据加载：优先 cfg.promptFolders；为空时从旧版分类预设一次性迁移 */
+function loadFoldersFrom(cfg) {
+  let folders = Array.isArray(cfg.promptFolders)
+    ? cfg.promptFolders.filter((f) => f && f.id && Array.isArray(f.prompts))
+    : [];
+  if (folders.length === 0) {
+    const presets = cfg.presets || [];
+    const catNames = { general: '默认', storyboard: '分镜', qa: '质检' };
+    for (const [cat, name] of Object.entries(catNames)) {
+      const prompts = presets
+        .filter((p) => (p.category || 'general') === cat)
+        .map((p) => ({ id: p.id || newPromptId(), name: p.name, text: p.text, createdAt: '' }));
+      if (cat === 'general' || prompts.length) folders.push({ id: 'f-' + cat, name, prompts });
+    }
+    if (folders.length === 0) folders = [{ id: 'f-default', name: '默认', prompts: [] }];
+    state.folders = folders;
+    saveFolders(); // 持久化迁移结果
+    return;
+  }
+  state.folders = folders;
+}
+
+/** 在分区间移动/重排提示词（拖拽的落点逻辑） */
+function movePrompt(pid, fromId, toId, toIndex) {
+  const from = getFolder(fromId);
+  const to = getFolder(toId);
+  if (!from || !to) return;
+  const i = from.prompts.findIndex((x) => x.id === pid);
+  if (i < 0) return;
+  const [p] = from.prompts.splice(i, 1);
+  if (toIndex === undefined || toIndex < 0 || toIndex > to.prompts.length) to.prompts.push(p);
+  else to.prompts.splice(toIndex, 0, p);
+  saveFolders();
+  renderLibraryPage();
+  if (!$('libraryPanel').hidden) renderLibrary();
+}
+
+function rebuildFolderSelect(sel, selectedId) {
+  sel.innerHTML = '';
+  for (const f of state.folders) {
+    const o = document.createElement('option');
+    o.value = f.id;
+    o.textContent = f.name;
+    if (f.id === selectedId) o.selected = true;
+    sel.appendChild(o);
+  }
 }
 
 function libStatusMsg(msg) { $('libStatus').textContent = msg || ''; }
@@ -1308,7 +1365,7 @@ function applyPromptText(text, label) {
   }
 }
 
-function libRow(p) {
+function libRow(f, p) {
   const row = document.createElement('div');
   row.className = 'lib-row';
   row.title = p.text;
@@ -1320,12 +1377,13 @@ function libRow(p) {
     <button class="btn ldel" title="${t('删除')}">✕</button>`;
   row.querySelector('.lapply').onclick = () => applyPromptText(p.text, p.name);
   row.querySelector('.ldel').onclick = () => {
-    state.presets = state.presets.filter((x) => x.id !== p.id);
-    savePresets();
+    f.prompts = f.prompts.filter((x) => x.id !== p.id);
+    saveFolders();
     renderLibrary();
+    renderLibraryPage();
   };
   row.querySelector('.ledit').onclick = () => {
-    // 行内编辑：名称 / 内容 / 分类
+    // 行内编辑：名称 / 内容 / 所在分区
     row.classList.add('lib-edit');
     row.innerHTML = '';
     const nameIn = document.createElement('input');
@@ -1334,13 +1392,7 @@ function libRow(p) {
     textIn.className = 'input-base'; textIn.rows = 3; textIn.value = p.text;
     const catSel = document.createElement('select');
     catSel.className = 'input-base';
-    for (const c of LIB_CATS) {
-      const o = document.createElement('option');
-      o.value = c;
-      o.textContent = c === 'general' ? t('通用') : c === 'storyboard' ? t('分镜') : t('质检');
-      if ((p.category || 'general') === c) o.selected = true;
-      catSel.appendChild(o);
-    }
+    rebuildFolderSelect(catSel, f.id);
     const rowBtns = document.createElement('div');
     rowBtns.className = 'lib-new-row';
     const saveB = document.createElement('button');
@@ -1348,9 +1400,10 @@ function libRow(p) {
     saveB.onclick = () => {
       p.name = nameIn.value.trim() || p.name;
       p.text = textIn.value;
-      p.category = catSel.value;
-      savePresets();
+      if (catSel.value !== f.id) movePrompt(p.id, f.id, catSel.value);
+      saveFolders();
       renderLibrary();
+      renderLibraryPage();
     };
     const cancelB = document.createElement('button');
     cancelB.className = 'btn ghost'; cancelB.textContent = t('取消');
@@ -1362,23 +1415,36 @@ function libRow(p) {
 }
 
 function renderLibrary() {
-  // 页签高亮
-  $('libTabs').querySelectorAll('button').forEach((b) =>
-    b.classList.toggle('active', b.dataset.tab === libTab));
-  const isCat = LIB_CATS.includes(libTab);
-  $('libListPane').hidden = !isCat;
+  // 动态页签：全部分区 + 历史 + JSON
+  const tabs = $('libTabs');
+  tabs.innerHTML = '';
+  const defs = [
+    ...state.folders.map((f) => ({ id: f.id, label: `📁 ${f.name}` })),
+    { id: 'used', label: t('历史') },
+    { id: 'json', label: 'JSON' },
+  ];
+  if (!defs.some((d) => d.id === libTab)) libTab = defs[0].id;
+  for (const d of defs) {
+    const b = document.createElement('button');
+    b.dataset.tab = d.id;
+    b.textContent = d.label;
+    b.classList.toggle('active', d.id === libTab);
+    tabs.appendChild(b);
+  }
+
+  const folder = getFolder(libTab);
+  $('libListPane').hidden = !folder;
   $('libUsedPane').hidden = libTab !== 'used';
   $('libJsonPane').hidden = libTab !== 'json';
 
-  if (isCat) {
+  if (folder) {
     const list = $('libList');
     list.innerHTML = '';
-    const items = state.presets.filter((p) => (p.category || 'general') === libTab);
-    if (items.length === 0) {
-      list.innerHTML = `<div class="hint">${t('此分类还没有提示词 — 在下方新建')}</div>`;
+    if (folder.prompts.length === 0) {
+      list.innerHTML = `<div class="hint">${t('此分区还没有提示词 — 在下方新建')}</div>`;
     }
-    for (const p of items) list.appendChild(libRow(p));
-    $('libNewCat').value = libTab;
+    for (const p of folder.prompts) list.appendChild(libRow(folder, p));
+    rebuildFolderSelect($('libNewCat'), folder.id);
   }
 
   if (libTab === 'used') {
@@ -1399,21 +1465,26 @@ function renderLibrary() {
         <button class="btn usave" title="${t('保存为预设')}">★</button>`;
       row.querySelector('.uapply').onclick = () => applyPromptText(u.text, u.text.slice(0, 16));
       row.querySelector('.usave').onclick = () => {
-        state.presets.push({ id: 'p' + Date.now(), name: u.text.slice(0, 24), text: u.text, category: 'general' });
-        savePresets();
-        libTab = 'general';
+        const first = state.folders[0];
+        if (!first) return;
+        first.prompts.push({ id: newPromptId(), name: u.text.slice(0, 24), text: u.text, createdAt: new Date().toISOString() });
+        saveFolders();
+        libTab = first.id;
         renderLibrary();
+        renderLibraryPage();
       };
       used.appendChild(row);
     }
   }
 
-  if (libTab === 'json') updateJsonPreview();
+  if (libTab === 'json') {
+    rebuildFolderSelect($('jsonCat'), $('jsonCat').value);
+    updateJsonPreview();
+  }
 }
 
 // ---- JSON 转换器：粘贴提示词 → 标准 JSON ----
-function promptToJsonObj() {
-  const raw = $('jsonInput').value.trim();
+function promptToJsonFrom(raw, name, folderName) {
   let prompt = raw;
   let negative = '';
   const m = raw.match(/^\s*(?:negative(?:\s*prompt)?|负向(?:提示词)?|ネガティブ)\s*[:：]\s*([\s\S]+)$/im);
@@ -1424,8 +1495,8 @@ function promptToJsonObj() {
   return {
     schema: 'a452-prompt',
     version: 1,
-    name: $('jsonName').value.trim() || (prompt.slice(0, 24) || 'prompt'),
-    category: $('jsonCat').value,
+    name: name || (prompt.slice(0, 24) || 'prompt'),
+    folder: folderName || '',
     prompt,
     negative,
     tags: [],
@@ -1434,9 +1505,289 @@ function promptToJsonObj() {
   };
 }
 
+function promptToJsonObj() {
+  const f = getFolder($('jsonCat').value);
+  return promptToJsonFrom($('jsonInput').value.trim(), $('jsonName').value.trim(), f ? f.name : '');
+}
+
 function updateJsonPreview() {
   const raw = $('jsonInput').value.trim();
   $('jsonPreview').textContent = raw ? JSON.stringify(promptToJsonObj(), null, 2) : '';
+}
+
+function downloadJsonObj(o) {
+  const blob = new Blob([JSON.stringify(o, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (o.name || 'prompt').replace(/[\\/:*?"<>|\s]+/g, '_') + '.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+// ================= 工作区 4：提示词库整页 =================
+function plStatusMsg(msg) {
+  $('plStatus').textContent = msg || '';
+  if (msg) setTimeout(() => { if ($('plStatus').textContent === msg) $('plStatus').textContent = ''; }, 4000);
+}
+
+function renderLibraryPage() {
+  const view = $('viewLibrary');
+  if (!view || view.hidden) return;
+  const folder = plOpenFolderId ? getFolder(plOpenFolderId) : null;
+  if (plOpenFolderId && !folder) plOpenFolderId = null;
+  $('plGridPanel').hidden = !!folder;
+  $('plFolderPanel').hidden = !folder;
+
+  if (!folder) {
+    // 分区总览：卡片网格
+    const grid = $('plFolderGrid');
+    grid.innerHTML = '';
+    for (const f of state.folders) grid.appendChild(plFolderCard(f));
+    return;
+  }
+
+  // 分区内部：标题 + 其他分区拖放芯片 + 提示词列表
+  $('plFolderTitle').textContent = `📂 ${folder.name}（${folder.prompts.length}）`;
+  $('plFolderTitle').ondblclick = () => plRenameFolder(folder, $('plFolderTitle'));
+  const chips = $('plFolderChips');
+  chips.innerHTML = '';
+  const others = state.folders.filter((x) => x.id !== folder.id);
+  if (others.length) {
+    const lbl = document.createElement('span');
+    lbl.className = 'hint';
+    lbl.textContent = t('拖到分区芯片即可移动 →');
+    chips.appendChild(lbl);
+    for (const o of others) chips.appendChild(plDropChip(o));
+  }
+  const list = $('plPromptList');
+  list.innerHTML = '';
+  if (folder.prompts.length === 0) {
+    list.innerHTML = `<div class="hint">${t('此分区还没有提示词 — 左侧写好后点「保存提示词」，或上传文件')}</div>`;
+  }
+  folder.prompts.forEach((p, idx) => list.appendChild(plPromptRow(folder, p, idx)));
+}
+
+/** 总览网格里的分区卡片：单击进入，双击重命名，可作为拖放目标 */
+function plFolderCard(f) {
+  const card = document.createElement('div');
+  card.className = 'pl-folder';
+  card.innerHTML = `
+    <div class="pl-folder-icon">📁</div>
+    <div class="pl-folder-name">${escapeHtml(f.name)}</div>
+    <div class="pl-folder-count">${f.prompts.length} ${t('条提示词')}</div>`;
+  card.onclick = () => { plOpenFolderId = f.id; renderLibraryPage(); };
+  card.ondblclick = (e) => { e.stopPropagation(); plRenameFolder(f, card.querySelector('.pl-folder-name')); };
+  bindPromptDrop(card, f);
+  return card;
+}
+
+/** 分区视图顶部的其他分区芯片：拖放目标 + 点击跳转 */
+function plDropChip(f) {
+  const chip = document.createElement('button');
+  chip.className = 'pl-chip';
+  chip.textContent = `📁 ${f.name}（${f.prompts.length}）`;
+  chip.onclick = () => { plOpenFolderId = f.id; renderLibraryPage(); };
+  bindPromptDrop(chip, f);
+  return chip;
+}
+
+/** 把元素变成「提示词拖放目标」：拖进来就移动到分区 f */
+function bindPromptDrop(el, f) {
+  el.addEventListener('dragover', (e) => {
+    if (![...e.dataTransfer.types].includes('text/a452-prompt')) return;
+    e.preventDefault();
+    el.classList.add('pl-drop-hot');
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('pl-drop-hot'));
+  el.addEventListener('drop', (e) => {
+    el.classList.remove('pl-drop-hot');
+    const raw = e.dataTransfer.getData('text/a452-prompt');
+    if (!raw) return;
+    e.preventDefault();
+    try {
+      const d = JSON.parse(raw);
+      if (d.fid === f.id) return;
+      movePrompt(d.pid, d.fid, f.id);
+      plStatusMsg(t('已移动到') + ` ${f.name}`);
+    } catch {}
+  });
+}
+
+/** 分区内的提示词行：可拖拽（跨分区移动 / 同分区排序） */
+function plPromptRow(f, p, idx) {
+  const row = document.createElement('div');
+  row.className = 'lib-row pl-row';
+  row.draggable = true;
+  row.title = p.text;
+  row.innerHTML = `
+    <span class="pl-grip">⠿</span>
+    <span class="lib-name">${escapeHtml(p.name)}</span>
+    <span class="lib-text">${escapeHtml(p.text.slice(0, 110))}${p.text.length > 110 ? '…' : ''}</span>
+    <button class="btn pcopy">${t('复制')}</button>
+    <button class="btn pload" title="${t('载入左侧编辑框')}">✎</button>
+    <button class="btn pjson" title="${t('转为 JSON')}">{ }</button>
+    <button class="btn pdel" title="${t('删除')}">✕</button>`;
+  row.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/a452-prompt', JSON.stringify({ pid: p.id, fid: f.id }));
+    e.dataTransfer.effectAllowed = 'move';
+    row.classList.add('pl-dragging');
+  });
+  row.addEventListener('dragend', () => row.classList.remove('pl-dragging'));
+  // 行内排序：拖到另一行上方/下方
+  row.addEventListener('dragover', (e) => {
+    if (![...e.dataTransfer.types].includes('text/a452-prompt')) return;
+    e.preventDefault();
+    const r = row.getBoundingClientRect();
+    row.classList.toggle('pl-insert-before', e.clientY < r.top + r.height / 2);
+    row.classList.toggle('pl-insert-after', e.clientY >= r.top + r.height / 2);
+  });
+  row.addEventListener('dragleave', () => row.classList.remove('pl-insert-before', 'pl-insert-after'));
+  row.addEventListener('drop', (e) => {
+    const before = row.classList.contains('pl-insert-before');
+    row.classList.remove('pl-insert-before', 'pl-insert-after');
+    const raw = e.dataTransfer.getData('text/a452-prompt');
+    if (!raw) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const d = JSON.parse(raw);
+      if (d.pid === p.id) return;
+      let target = idx + (before ? 0 : 1);
+      if (d.fid === f.id) {
+        const from = f.prompts.findIndex((x) => x.id === d.pid);
+        if (from >= 0 && from < target) target -= 1;
+      }
+      movePrompt(d.pid, d.fid, f.id, target);
+    } catch {}
+  });
+  row.querySelector('.pcopy').onclick = () => {
+    navigator.clipboard.writeText(p.text).catch(() => {});
+    plStatusMsg(t('已复制') + ': ' + p.name);
+  };
+  row.querySelector('.pload').onclick = () => {
+    $('plText').value = p.text;
+    $('plName').value = p.name;
+    plStatusMsg(t('已载入左侧编辑框'));
+  };
+  row.querySelector('.pjson').onclick = () => {
+    const o = promptToJsonFrom(p.text, p.name, f.name);
+    $('plJsonPreview').textContent = JSON.stringify(o, null, 2);
+    plLastJson = o;
+    $('plJsonDownload').disabled = false;
+    $('plJsonCopy').disabled = false;
+  };
+  row.querySelector('.pdel').onclick = () => {
+    f.prompts = f.prompts.filter((x) => x.id !== p.id);
+    saveFolders();
+    renderLibraryPage();
+  };
+  return row;
+}
+
+/** 双击分区名 → 行内重命名（输入框嵌入原元素内，提交后整体重绘） */
+function plRenameFolder(f, nameEl) {
+  if (nameEl.querySelector('input')) return;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'input-base';
+  input.value = f.name;
+  nameEl.textContent = '';
+  nameEl.appendChild(input);
+  input.focus();
+  input.select();
+  const commit = () => {
+    const v = input.value.trim();
+    if (v) { f.name = v; saveFolders(); }
+    renderLibraryPage();
+    if (!$('libraryPanel').hidden) renderLibrary();
+  };
+  input.onblur = commit;
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') input.blur();
+    if (e.key === 'Escape') { input.value = f.name; input.blur(); }
+  };
+}
+
+function plAddFolder(name) {
+  const f = { id: newFolderId(), name: name || `${t('分区')} ${state.folders.length + 1}`, prompts: [] };
+  state.folders.push(f);
+  saveFolders();
+  renderLibraryPage();
+  if (!$('libraryPanel').hidden) renderLibrary();
+  return f;
+}
+
+/** 「保存提示词」弹窗：列出全部分区 + 新建分区选项 */
+function openSaveDialog() {
+  const text = $('plText').value.trim();
+  if (!text) { plStatusMsg(t('请先在左侧输入提示词')); return; }
+  const wrap = $('plSaveFolders');
+  wrap.innerHTML = '';
+  for (const f of state.folders) {
+    const b = document.createElement('button');
+    b.className = 'btn pl-save-folder';
+    b.innerHTML = `📁 ${escapeHtml(f.name)} <span class="hint">（${f.prompts.length}）</span>`;
+    b.onclick = () => doSavePrompt(f);
+    wrap.appendChild(b);
+  }
+  $('plNewFolderName').value = '';
+  $('plSaveDialog').showModal();
+}
+
+function doSavePrompt(folder) {
+  const text = $('plText').value.trim();
+  if (!text) return;
+  const name = $('plName').value.trim() || text.slice(0, 24);
+  folder.prompts.push({ id: newPromptId(), name, text, createdAt: new Date().toISOString() });
+  saveFolders();
+  $('plSaveDialog').close();
+  $('plText').value = '';
+  $('plName').value = '';
+  plStatusMsg(t('已保存到') + ` 📁 ${folder.name}`);
+  renderLibraryPage();
+  if (!$('libraryPanel').hidden) renderLibrary();
+}
+
+/** 上传 .txt/.md/.json 文件 → 当前分区（json 识别 a452-prompt 结构） */
+async function plImportFiles(files, folder) {
+  let n = 0;
+  for (const file of files) {
+    try {
+      const raw = await file.text();
+      let name = file.name.replace(/\.(txt|json|md)$/i, '');
+      let text = raw.trim();
+      if (/\.json$/i.test(file.name)) {
+        try {
+          const o = JSON.parse(raw);
+          if (Array.isArray(o)) {
+            for (const item of o) {
+              if (item && item.prompt) {
+                folder.prompts.push({
+                  id: newPromptId(),
+                  name: item.name || item.prompt.slice(0, 24),
+                  text: item.negative ? `${item.prompt}\nnegative: ${item.negative}` : item.prompt,
+                  createdAt: new Date().toISOString(),
+                });
+                n++;
+              }
+            }
+            continue;
+          }
+          if (o && o.prompt) {
+            name = o.name || name;
+            text = o.negative ? `${o.prompt}\nnegative: ${o.negative}` : o.prompt;
+          }
+        } catch {}
+      }
+      if (!text) continue;
+      folder.prompts.push({ id: newPromptId(), name, text, createdAt: new Date().toISOString() });
+      n++;
+    } catch {}
+  }
+  saveFolders();
+  renderLibraryPage();
+  if (!$('libraryPanel').hidden) renderLibrary();
+  plStatusMsg(t('已导入') + ` ${n} ` + t('条提示词'));
 }
 
 // ---------------- 成片上色（V2V） ----------------
@@ -1774,6 +2125,8 @@ async function refreshConfig() {
   if (!$('refinePrompt').value) $('refinePrompt').value = cfg.refinePrompt || '';
   state.presets = cfg.presets || [];
   state.usedPrompts = cfg.usedPrompts || [];
+  loadFoldersFrom(cfg);
+  renderLibraryPage();
   return cfg;
 }
 
@@ -1781,6 +2134,7 @@ async function refreshConfig() {
 $('tabInbetween').onclick = () => switchMode('inbetween');
 $('tabV2V').onclick = () => switchMode('v2v');
 $('tabRefine').onclick = () => switchMode('refine');
+$('tabLibrary').onclick = () => switchMode('library');
 
 // 精修：源图上传 / 生成 / 结果操作
 $('refineFileInput').onchange = async (e) => {
@@ -1865,18 +2219,20 @@ $('libTabs').addEventListener('click', (e) => {
   libTab = b.dataset.tab;
   renderLibrary();
 });
-// 新建提示词（带分类）
+// 新建提示词（选分区）
 $('libNewSave').onclick = () => {
   const text = $('libNewText').value.trim();
   if (!text) { libStatusMsg(t('当前提示词框是空的')); return; }
   const name = $('libNewName').value.trim() || text.slice(0, 24);
-  const category = $('libNewCat').value;
-  state.presets.push({ id: 'p' + Date.now(), name, text, category });
+  const folder = getFolder($('libNewCat').value) || state.folders[0];
+  if (!folder) return;
+  folder.prompts.push({ id: newPromptId(), name, text, createdAt: new Date().toISOString() });
   $('libNewText').value = '';
   $('libNewName').value = '';
-  savePresets();
-  libTab = category;
+  saveFolders();
+  libTab = folder.id;
   renderLibrary();
+  renderLibraryPage();
   libStatusMsg(t('已保存') + ': ' + name);
 };
 // JSON 转换器
@@ -1900,16 +2256,61 @@ $('jsonCopy').onclick = () => {
 $('jsonToLib').onclick = () => {
   const o = promptToJsonObj();
   if (!o.prompt) { libStatusMsg(t('当前提示词框是空的')); return; }
-  state.presets.push({
-    id: 'p' + Date.now(),
+  const folder = getFolder($('jsonCat').value) || state.folders[0];
+  if (!folder) return;
+  folder.prompts.push({
+    id: newPromptId(),
     name: o.name,
     text: o.prompt + (o.negative ? '\nnegative: ' + o.negative : ''),
-    category: o.category,
+    createdAt: new Date().toISOString(),
   });
-  savePresets();
-  libTab = o.category;
+  saveFolders();
+  libTab = folder.id;
   renderLibrary();
+  renderLibraryPage();
   libStatusMsg(t('已存入库') + ': ' + o.name);
+};
+
+// ---- 工作区 4：提示词库整页 ----
+$('plSave').onclick = openSaveDialog;
+$('plSaveCancel').onclick = () => $('plSaveDialog').close();
+$('plSaveNewFolder').onclick = () => {
+  const name = $('plNewFolderName').value.trim();
+  const f = plAddFolder(name || undefined);
+  doSavePrompt(f);
+};
+$('plAddFolder').onclick = () => plAddFolder();
+$('plBack').onclick = () => { plOpenFolderId = null; renderLibraryPage(); };
+$('plDeleteFolder').onclick = () => {
+  const f = getFolder(plOpenFolderId);
+  if (!f) return;
+  if (state.folders.length <= 1) { plStatusMsg(t('至少保留一个分区')); return; }
+  if (f.prompts.length && !confirm(`${t('删除分区')} 📁 ${f.name}？${t('其中')} ${f.prompts.length} ${t('条提示词将一并删除')}`)) return;
+  state.folders = state.folders.filter((x) => x.id !== f.id);
+  plOpenFolderId = null;
+  saveFolders();
+  renderLibraryPage();
+  if (!$('libraryPanel').hidden) renderLibrary();
+};
+$('plUpload').onchange = (e) => {
+  const f = getFolder(plOpenFolderId);
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (f && files.length) plImportFiles(files, f);
+};
+$('plJson').onclick = () => {
+  const raw = $('plText').value.trim();
+  if (!raw) { plStatusMsg(t('请先在左侧输入提示词')); return; }
+  plLastJson = promptToJsonFrom(raw, $('plName').value.trim(), '');
+  $('plJsonPreview').textContent = JSON.stringify(plLastJson, null, 2);
+  $('plJsonDownload').disabled = false;
+  $('plJsonCopy').disabled = false;
+};
+$('plJsonDownload').onclick = () => { if (plLastJson) downloadJsonObj(plLastJson); };
+$('plJsonCopy').onclick = () => {
+  if (!plLastJson) return;
+  navigator.clipboard.writeText(JSON.stringify(plLastJson, null, 2)).catch(() => {});
+  plStatusMsg(t('已复制 JSON'));
 };
 
 $('btnRefine').onclick = refineGenerate;
