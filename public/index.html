@@ -26,6 +26,11 @@
       <span class="mode-title">原画精修</span>
       <small>草稿 → 完成版原画</small>
     </button>
+    <button id="tabLibrary" class="mode-tab">
+      <span class="mode-kicker">工作区 4</span>
+      <span class="mode-title">提示词库</span>
+      <small>存储 · 分区 · JSON</small>
+    </button>
   </nav>
   <div class="top-actions">
     <span id="userArea" class="user-area" hidden></span>
@@ -302,6 +307,67 @@
   </div>
 </main>
 
+<!-- ============ 模式四：提示词库（整页） ============ -->
+<main class="layout pl-layout" id="viewLibrary" hidden>
+  <aside class="col-left">
+    <section class="panel highlight">
+      <h2>✍ 新提示词</h2>
+      <textarea id="plText" rows="14" placeholder="在此粘贴或撰写提示词…"></textarea>
+      <input type="text" id="plName" placeholder="名称（可选）" style="margin-top:8px">
+      <button id="plSave" class="btn primary wide big-action" style="margin-top:10px">💾 保存提示词</button>
+      <div id="plStatus" class="hint accent" style="margin-top:6px"></div>
+    </section>
+  </aside>
+
+  <div class="col-center">
+    <section class="panel" id="plGridPanel">
+      <h2>🗂 分区 <span class="hint">— 点击进入；双击名称重命名；把提示词拖到分区上即可移动</span>
+        <button id="plAddFolder" class="btn" style="float:right">＋ 新建分区</button></h2>
+      <div id="plFolderGrid" class="pl-folder-grid"></div>
+    </section>
+
+    <section class="panel" id="plFolderPanel" hidden>
+      <h2>
+        <button id="plBack" class="btn ghost">⬅ 全部分区</button>
+        <span id="plFolderTitle" class="pl-folder-title" title="双击重命名"></span>
+        <span style="float:right; display:inline-flex; gap:6px">
+          <label class="btn" style="cursor:pointer">📤 上传提示词文件
+            <input type="file" id="plUpload" accept=".txt,.json,.md" multiple hidden>
+          </label>
+          <button id="plDeleteFolder" class="btn" title="删除分区">✕ 删除分区</button>
+        </span>
+      </h2>
+      <div id="plFolderChips" class="pl-folder-chips"></div>
+      <div id="plPromptList" class="lib-list"></div>
+    </section>
+  </div>
+
+  <aside class="col-right">
+    <section class="panel">
+      <h2>⇄ JSON</h2>
+      <button id="plJson" class="btn primary wide pl-json-btn">{ }<br>转为 JSON</button>
+      <pre id="plJsonPreview" class="json-preview" style="margin-top:10px"></pre>
+      <div class="lib-new-row" style="margin-top:8px">
+        <button id="plJsonDownload" class="btn primary" disabled>⬇ 下载 .json</button>
+        <button id="plJsonCopy" class="btn" disabled>复制 JSON</button>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<!-- 保存提示词：选择目标分区 -->
+<dialog id="plSaveDialog">
+  <h3>保存到哪个分区？</h3>
+  <div id="plSaveFolders" class="pl-save-folders"></div>
+  <div class="lib-new-row" style="margin-top:10px">
+    <input type="text" id="plNewFolderName" placeholder="或新建分区…">
+    <button id="plSaveNewFolder" class="btn primary">＋ 新建并保存</button>
+  </div>
+  <div class="dialog-actions">
+    <button id="plSaveCancel" class="btn ghost">取消</button>
+  </div>
+</dialog>
+
 <!-- 提示词库：可拖拽浮动面板（标题栏拖动，右缘把手可整块拖出） -->
 <div id="libraryPanel" class="library-panel" hidden>
   <div class="lib-head" id="libDragHandle" title="拖动移动面板">
@@ -309,13 +375,8 @@
     <span id="libStatus" class="hint accent"></span>
     <button id="libClose" class="btn ghost" title="关闭">✕</button>
   </div>
-  <div class="lib-tabs" id="libTabs" role="tablist">
-    <button data-tab="general" class="active">通用</button>
-    <button data-tab="storyboard">分镜</button>
-    <button data-tab="qa">质检</button>
-    <button data-tab="used">历史</button>
-    <button data-tab="json">JSON</button>
-  </div>
+  <!-- 页签由 JS 按分区动态生成（… + 历史 + JSON） -->
+  <div class="lib-tabs" id="libTabs" role="tablist"></div>
   <div class="lib-body">
     <div id="libListPane">
       <div id="libList" class="lib-list"></div>
@@ -324,11 +385,7 @@
         <textarea id="libNewText" rows="2" placeholder="在此粘贴或编写提示词…"></textarea>
         <div class="lib-new-row" style="margin-top:6px">
           <input type="text" id="libNewName" placeholder="名称">
-          <select id="libNewCat">
-            <option value="general">通用</option>
-            <option value="storyboard">分镜</option>
-            <option value="qa">质检</option>
-          </select>
+          <select id="libNewCat"></select>
           <button id="libNewSave" class="btn primary">★ 保存</button>
         </div>
       </div>
@@ -341,11 +398,7 @@
       <textarea id="jsonInput" rows="4" placeholder="在此粘贴提示词…"></textarea>
       <div class="lib-new-row" style="margin:6px 0">
         <input type="text" id="jsonName" placeholder="名称（可选）">
-        <select id="jsonCat">
-          <option value="general">通用</option>
-          <option value="storyboard">分镜</option>
-          <option value="qa">质检</option>
-        </select>
+        <select id="jsonCat"></select>
       </div>
       <pre id="jsonPreview" class="json-preview"></pre>
       <div class="lib-new-row" style="margin-top:6px">

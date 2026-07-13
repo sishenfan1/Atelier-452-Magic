@@ -532,6 +532,7 @@ app.get('/api/config', (req, res) => {
     hasOpenaiKey: !!cfg.openaiKey,
     openaiImgModel: cfg.openaiImgModel,
     presets: cfg.presets || [],
+    promptFolders: cfg.promptFolders || [],
     usedPrompts: cfg.usedPrompts || [],
     publicBase: cfg.publicBase,
     tunnel: !!findCloudflared(),
@@ -547,6 +548,7 @@ app.post('/api/config', (req, res) => {
   if (colorPrompt !== undefined) cur.colorPrompt = colorPrompt;
   if (refinePrompt !== undefined) cur.refinePrompt = refinePrompt;
   if (Array.isArray(presets)) cur.presets = presets;
+  if (Array.isArray(req.body && req.body.promptFolders)) cur.promptFolders = req.body.promptFolders;
   if (publicBase !== undefined) cur.publicBase = publicBase;
   if (v2vModel) cur.v2vModel = v2vModel;
   if (imgModel) cur.imgModel = imgModel;
