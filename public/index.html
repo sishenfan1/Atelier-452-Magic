@@ -10,6 +10,7 @@
 <body>
 <header class="topbar">
   <div class="brand">✦ Atelier452 Magic</div>
+  <span id="verChip" class="ver-chip"></span>
   <nav class="mode-tabs">
     <button id="tabInbetween" class="mode-tab active">
       <span class="mode-kicker">工作区 1</span>
@@ -296,6 +297,7 @@
       </div>
       <div class="row" id="refineActions" hidden style="margin-top:8px; display:flex; gap:8px">
         <button id="btnRefineDownload" class="btn">⬇ 下载</button>
+        <button id="btnRefineProj" class="btn" title="存入项目文件夹">💾 项目</button>
         <button id="btnRefineAddKey" class="btn primary">➕ 添加为关键帧</button>
       </div>
       <div id="refineEmpty" class="empty-note">还没有精修结果 — 选择源图片后点「🖌 开始精修」</div>
@@ -350,6 +352,7 @@
       <div class="lib-new-row" style="margin-top:8px">
         <button id="plJsonDownload" class="btn primary" disabled>⬇ 下载 .json</button>
         <button id="plJsonCopy" class="btn" disabled>复制 JSON</button>
+        <button id="plJsonProj" class="btn" disabled title="存入项目文件夹">💾 项目</button>
       </div>
     </section>
   </aside>
@@ -365,6 +368,16 @@
   </div>
   <div class="dialog-actions">
     <button id="plSaveCancel" class="btn ghost">取消</button>
+  </div>
+</dialog>
+
+<!-- 存入项目文件夹：选择目标项目 -->
+<dialog id="projSaveDialog">
+  <h3>存入项目文件夹</h3>
+  <div id="projSaveList" class="proj-save-list"></div>
+  <div class="hint" style="margin-top:8px">在 Director 仪表盘新建与管理项目</div>
+  <div class="dialog-actions">
+    <button id="projSaveCancel" class="btn ghost">取消</button>
   </div>
 </dialog>
 

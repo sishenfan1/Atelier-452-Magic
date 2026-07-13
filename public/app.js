@@ -914,6 +914,70 @@ function download(url, name) {
   a.remove();
 }
 
+// ---------------- 存入项目文件夹 ----------------
+// payload: { src, kind:'video'|'image', name? } 或 { text, filename, kind:'prompt' }
+let projSavePayload = null;
+const saveToast = document.createElement('div');
+saveToast.className = 'save-toast';
+document.body.appendChild(saveToast);
+let saveToastTimer = 0;
+function showSaveToast(msg, ok = true) {
+  saveToast.textContent = msg;
+  saveToast.classList.toggle('err', !ok);
+  saveToast.classList.add('show');
+  clearTimeout(saveToastTimer);
+  saveToastTimer = setTimeout(() => saveToast.classList.remove('show'), 2600);
+}
+
+async function openProjSave(payload) {
+  projSavePayload = payload;
+  const list = $('projSaveList');
+  list.innerHTML = `<div class="hint">${t('读取项目列表…')}</div>`;
+  $('projSaveDialog').showModal();
+  try {
+    const res = await fetch('/api/projects');
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || res.statusText);
+    const projects = json.projects || [];
+    list.innerHTML = '';
+    if (projects.length === 0) {
+      list.innerHTML = `<div class="hint">${t('该目录下还没有项目 — 在 Director 仪表盘新建')}</div>`;
+      return;
+    }
+    for (const p of projects) {
+      const row = document.createElement('button');
+      row.className = 'proj-row';
+      row.title = p.dir;
+      row.innerHTML = `
+        <span class="proj-ico">📁</span>
+        <span class="proj-name">${escapeHtml(p.name)}</span>
+        <span class="proj-dir">${escapeHtml(p.dir)}</span>`;
+      row.onclick = () => saveToProject(p);
+      list.appendChild(row);
+    }
+  } catch (e) {
+    list.innerHTML = `<div class="hint">${t('保存失败')}: ${escapeHtml(String(e.message || e))}</div>`;
+  }
+}
+
+async function saveToProject(p) {
+  const payload = projSavePayload;
+  if (!payload) return;
+  $('projSaveDialog').close();
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(p.id)}/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.ok) throw new Error(json.error || res.statusText);
+    showSaveToast(`${t('已存入')} 📁 ${p.name}`);
+  } catch (e) {
+    showSaveToast(t('保存失败') + ': ' + String(e.message || e), false);
+  }
+}
+
 // ---------------- 生成队列：多任务并行 + 进度 ----------------
 let nextJobId = 1;
 const jobs = [];
@@ -1051,6 +1115,7 @@ function renderWhole() {
         ${h.note ? `<span class="gen-note">${escapeHtml(h.note)}</span>` : ''}
         <span class="gen-actions">
           <button class="btn dl" title="${t('下载')}">⬇ ${t('下载')}</button>
+          <button class="btn proj" title="${t('存入项目文件夹')}">💾 ${t('项目')}</button>
           <button class="btn tov2v" title="${t('送去转绘上色')}">🎨</button>
         </span>
       </div>`;
@@ -1064,6 +1129,10 @@ function renderWhole() {
       h.dl = true;
       renderWhole();
       scheduleSave();
+    };
+    card.querySelector('.proj').onclick = (e) => {
+      e.stopPropagation();
+      openProjSave({ src: h.videoUrl, kind: 'video', name: wholeFileName(h, ver) });
     };
     card.querySelector('.tov2v').onclick = async (e) => {
       e.stopPropagation();
@@ -1228,11 +1297,16 @@ function renderRefine() {
     card.innerHTML = `
       <img src="${h.out}" style="width:120px;border-radius:4px;background:#fff">
       <div class="meta"><b>${t('版本')} ${rf.history.length - idx}</b>${escapeHtml(h.time)}${h.note ? '<br>' + escapeHtml(h.note) : ''}</div>
-      <button class="btn dl">⬇</button>`;
+      <button class="btn dl">⬇</button>
+      <button class="btn proj" title="${t('存入项目文件夹')}">💾</button>`;
     card.onclick = () => { rf.current = idx; renderRefine(); };
     card.querySelector('.dl').onclick = (e) => {
       e.stopPropagation();
       download(h.out, `refine_${rf.history.length - idx}.png`);
+    };
+    card.querySelector('.proj').onclick = (e) => {
+      e.stopPropagation();
+      openProjSave({ src: h.out, kind: 'image', name: `refine_${rf.history.length - idx}.png` });
     };
     hist.appendChild(card);
   });
@@ -1626,6 +1700,7 @@ function plPromptRow(f, p, idx) {
     <button class="btn pcopy">${t('复制')}</button>
     <button class="btn pload" title="${t('载入左侧编辑框')}">✎</button>
     <button class="btn pjson" title="${t('转为 JSON')}">{ }</button>
+    <button class="btn pproj" title="${t('存入项目文件夹')}">💾</button>
     <button class="btn pdel" title="${t('删除')}">✕</button>`;
   row.addEventListener('dragstart', (e) => {
     e.dataTransfer.setData('text/a452-prompt', JSON.stringify({ pid: p.id, fid: f.id }));
@@ -1675,7 +1750,10 @@ function plPromptRow(f, p, idx) {
     plLastJson = o;
     $('plJsonDownload').disabled = false;
     $('plJsonCopy').disabled = false;
+    $('plJsonProj').disabled = false;
   };
+  row.querySelector('.pproj').onclick = () =>
+    openProjSave({ text: p.text, filename: p.name + '.txt', kind: 'prompt' });
   row.querySelector('.pdel').onclick = () => {
     f.prompts = f.prompts.filter((x) => x.id !== p.id);
     saveFolders();
@@ -1908,11 +1986,16 @@ function renderV2V() {
       <video src="${h.videoUrl}" muted preload="metadata"></video>
       <div class="meta"><b>版本 ${v.history.length - idx}</b>
         ${escapeHtml(h.time || '')} · ${h.duration || 0}s · ${h.refs || 0} 张参考图${note}</div>
-      <button class="btn dl">⬇</button>`;
+      <button class="btn dl">⬇</button>
+      <button class="btn proj" title="${t('存入项目文件夹')}">💾</button>`;
     card.onclick = () => { v.current = idx; renderV2V(); };
     card.querySelector('.dl').onclick = (e) => {
       e.stopPropagation();
       download(h.videoUrl, `v2v_${v.history.length - idx}.mp4`);
+    };
+    card.querySelector('.proj').onclick = (e) => {
+      e.stopPropagation();
+      openProjSave({ src: h.videoUrl, kind: 'video', name: `v2v_${v.history.length - idx}.mp4` });
     };
     hist.appendChild(card);
   });
@@ -2100,6 +2183,7 @@ function openDetail(i) {
 async function refreshConfig() {
   const res = await fetch('/api/config');
   const cfg = await res.json();
+  $('verChip').textContent = cfg.appVersion ? 'v' + cfg.appVersion : '';
   const chip = $('modeChip');
   if (cfg.hasKey) {
     chip.textContent = 'Seedance API';
@@ -2305,6 +2389,7 @@ $('plJson').onclick = () => {
   $('plJsonPreview').textContent = JSON.stringify(plLastJson, null, 2);
   $('plJsonDownload').disabled = false;
   $('plJsonCopy').disabled = false;
+  $('plJsonProj').disabled = false;
 };
 $('plJsonDownload').onclick = () => { if (plLastJson) downloadJsonObj(plLastJson); };
 $('plJsonCopy').onclick = () => {
@@ -2312,11 +2397,22 @@ $('plJsonCopy').onclick = () => {
   navigator.clipboard.writeText(JSON.stringify(plLastJson, null, 2)).catch(() => {});
   plStatusMsg(t('已复制 JSON'));
 };
+$('plJsonProj').onclick = () => {
+  if (!plLastJson) return;
+  openProjSave({ text: JSON.stringify(plLastJson, null, 2), filename: (plLastJson.name || 'prompt') + '.json', kind: 'prompt' });
+};
+
+// 存入项目文件夹弹窗
+$('projSaveCancel').onclick = () => $('projSaveDialog').close();
 
 $('btnRefine').onclick = refineGenerate;
 $('btnRefineDownload').onclick = () => {
   const cur = state.refine.history[state.refine.current];
   if (cur) download(cur.out, 'refined.png');
+};
+$('btnRefineProj').onclick = () => {
+  const cur = state.refine.history[state.refine.current];
+  if (cur) openProjSave({ src: cur.out, kind: 'image', name: 'refined.png' });
 };
 $('btnRefineAddKey').onclick = () => {
   const cur = state.refine.history[state.refine.current];
