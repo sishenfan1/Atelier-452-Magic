@@ -1235,15 +1235,10 @@ function renderRefine() {
   });
 }
 
-// ---------------- 提示词库 ----------------
+// ---------------- 提示词库（可拖拽浮动面板 · 分类存储 · JSON 转换器） ----------------
 let presetTargetId = null;
-
-function openPresetDialog(targetId) {
-  presetTargetId = targetId;
-  renderPresetList();
-  $('presetStatus').textContent = '';
-  $('presetDialog').showModal();
-}
+let libTab = 'general'; // general | storyboard | qa | used | json
+const LIB_CATS = ['general', 'storyboard', 'qa'];
 
 function savePresets() {
   fetch('/api/config', {
@@ -1253,66 +1248,195 @@ function savePresets() {
   }).catch(() => {});
 }
 
-/** 应用/复制一段提示词：有目标框则填入，独立模式则复制到剪贴板 */
+function libStatusMsg(msg) { $('libStatus').textContent = msg || ''; }
+
+function positionLibrary(x, y) {
+  const p = $('libraryPanel');
+  const w = p.offsetWidth || 580;
+  x = Math.max(8, Math.min(innerWidth - w - 8, x));
+  y = Math.max(8, Math.min(innerHeight - 64, y));
+  p.style.left = x + 'px';
+  p.style.top = y + 'px';
+}
+
+function openLibrary(targetId, tab) {
+  presetTargetId = targetId || null;
+  if (tab) libTab = tab;
+  const p = $('libraryPanel');
+  const wasHidden = p.hidden;
+  p.hidden = false;
+  if (wasHidden) {
+    const pos = JSON.parse(localStorage.getItem('a452libPos') || 'null');
+    positionLibrary(pos ? pos.x : innerWidth - (p.offsetWidth || 580) - 40, pos ? pos.y : 84);
+  }
+  libStatusMsg(presetTargetId ? t('点击提示词即填入目标框') : '');
+  renderLibrary();
+}
+
+function closeLibrary() {
+  $('libraryPanel').hidden = true;
+  presetTargetId = null;
+}
+
+/** 标题栏/右缘把手共用的拖拽逻辑（pointer 捕获，松手记忆位置） */
+function dragLibraryFrom(e, grabDx, grabDy) {
+  const p = $('libraryPanel');
+  const rect = p.getBoundingClientRect();
+  const dx = grabDx !== undefined ? grabDx : e.clientX - rect.left;
+  const dy = grabDy !== undefined ? grabDy : e.clientY - rect.top;
+  const move = (ev) => positionLibrary(ev.clientX - dx, ev.clientY - dy);
+  const up = () => {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    const r = p.getBoundingClientRect();
+    localStorage.setItem('a452libPos', JSON.stringify({ x: r.left, y: r.top }));
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', up);
+}
+
+/** 应用/复制一段提示词：有目标框则填入（面板保持打开），独立模式则复制到剪贴板 */
 function applyPromptText(text, label) {
   const ta = presetTargetId ? $(presetTargetId) : null;
   if (ta) {
     ta.value = text;
     ta.dispatchEvent(new Event('change'));
-    $('presetStatus').textContent = t('已填入') + ': ' + label;
-    $('presetDialog').close();
+    libStatusMsg(t('已填入') + ': ' + label);
   } else {
     navigator.clipboard.writeText(text).catch(() => {});
-    $('presetStatus').textContent = t('已复制') + ': ' + label;
+    libStatusMsg(t('已复制') + ': ' + label);
   }
 }
 
-function renderPresetList() {
-  const list = $('presetList');
-  list.innerHTML = '';
-  // 独立模式提示 + 新建区显隐
-  $('presetNewText').parentElement.hidden = false;
-  if (state.presets.length === 0) {
-    list.innerHTML = `<div class="hint">${t('暂无预设 — 在下方保存当前提示词')}</div>`;
-  }
-  for (const p of state.presets) {
-    const chip = document.createElement('div');
-    chip.className = 'preset-chip';
-    chip.title = p.text;
-    chip.innerHTML = `<span class="pname">${escapeHtml(p.name)}</span><button class="pdel" title="${t('删除')}">✕</button>`;
-    chip.onclick = () => applyPromptText(p.text, p.name);
-    chip.querySelector('.pdel').onclick = (e) => {
-      e.stopPropagation();
-      state.presets = state.presets.filter((x) => x.id !== p.id);
+function libRow(p) {
+  const row = document.createElement('div');
+  row.className = 'lib-row';
+  row.title = p.text;
+  row.innerHTML = `
+    <span class="lib-name">${escapeHtml(p.name)}</span>
+    <span class="lib-text">${escapeHtml(p.text.slice(0, 90))}${p.text.length > 90 ? '…' : ''}</span>
+    <button class="btn lapply">${presetTargetId ? t('填入') : t('复制')}</button>
+    <button class="btn ledit" title="${t('编辑')}">✎</button>
+    <button class="btn ldel" title="${t('删除')}">✕</button>`;
+  row.querySelector('.lapply').onclick = () => applyPromptText(p.text, p.name);
+  row.querySelector('.ldel').onclick = () => {
+    state.presets = state.presets.filter((x) => x.id !== p.id);
+    savePresets();
+    renderLibrary();
+  };
+  row.querySelector('.ledit').onclick = () => {
+    // 行内编辑：名称 / 内容 / 分类
+    row.classList.add('lib-edit');
+    row.innerHTML = '';
+    const nameIn = document.createElement('input');
+    nameIn.type = 'text'; nameIn.className = 'input-base'; nameIn.value = p.name;
+    const textIn = document.createElement('textarea');
+    textIn.className = 'input-base'; textIn.rows = 3; textIn.value = p.text;
+    const catSel = document.createElement('select');
+    catSel.className = 'input-base';
+    for (const c of LIB_CATS) {
+      const o = document.createElement('option');
+      o.value = c;
+      o.textContent = c === 'general' ? t('通用') : c === 'storyboard' ? t('分镜') : t('质检');
+      if ((p.category || 'general') === c) o.selected = true;
+      catSel.appendChild(o);
+    }
+    const rowBtns = document.createElement('div');
+    rowBtns.className = 'lib-new-row';
+    const saveB = document.createElement('button');
+    saveB.className = 'btn primary'; saveB.textContent = t('保存');
+    saveB.onclick = () => {
+      p.name = nameIn.value.trim() || p.name;
+      p.text = textIn.value;
+      p.category = catSel.value;
       savePresets();
-      renderPresetList();
+      renderLibrary();
     };
-    list.appendChild(chip);
+    const cancelB = document.createElement('button');
+    cancelB.className = 'btn ghost'; cancelB.textContent = t('取消');
+    cancelB.onclick = () => renderLibrary();
+    rowBtns.append(catSel, saveB, cancelB);
+    row.append(nameIn, textIn, rowBtns);
+  };
+  return row;
+}
+
+function renderLibrary() {
+  // 页签高亮
+  $('libTabs').querySelectorAll('button').forEach((b) =>
+    b.classList.toggle('active', b.dataset.tab === libTab));
+  const isCat = LIB_CATS.includes(libTab);
+  $('libListPane').hidden = !isCat;
+  $('libUsedPane').hidden = libTab !== 'used';
+  $('libJsonPane').hidden = libTab !== 'json';
+
+  if (isCat) {
+    const list = $('libList');
+    list.innerHTML = '';
+    const items = state.presets.filter((p) => (p.category || 'general') === libTab);
+    if (items.length === 0) {
+      list.innerHTML = `<div class="hint">${t('此分类还没有提示词 — 在下方新建')}</div>`;
+    }
+    for (const p of items) list.appendChild(libRow(p));
+    $('libNewCat').value = libTab;
   }
-  // 最近使用（自动记录每次生成用过的提示词）
-  const used = $('usedList');
-  used.innerHTML = '';
-  const items = (state.usedPrompts || []).slice(0, 40);
-  if (items.length === 0) {
-    used.innerHTML = `<div class="hint">${t('还没有使用记录 — 生成一次即自动记录')}</div>`;
+
+  if (libTab === 'used') {
+    const used = $('usedList');
+    used.innerHTML = '';
+    const items = (state.usedPrompts || []).slice(0, 40);
+    if (items.length === 0) {
+      used.innerHTML = `<div class="hint">${t('还没有使用记录 — 生成一次即自动记录')}</div>`;
+    }
+    for (const u of items) {
+      const row = document.createElement('div');
+      row.className = 'used-row';
+      row.title = u.text;
+      row.innerHTML = `
+        <span class="used-kind">${escapeHtml(u.kind || '')}</span>
+        <span class="used-text">${escapeHtml(u.text.slice(0, 80))}${u.text.length > 80 ? '…' : ''}</span>
+        <button class="btn uapply">${presetTargetId ? t('填入') : t('复制')}</button>
+        <button class="btn usave" title="${t('保存为预设')}">★</button>`;
+      row.querySelector('.uapply').onclick = () => applyPromptText(u.text, u.text.slice(0, 16));
+      row.querySelector('.usave').onclick = () => {
+        state.presets.push({ id: 'p' + Date.now(), name: u.text.slice(0, 24), text: u.text, category: 'general' });
+        savePresets();
+        libTab = 'general';
+        renderLibrary();
+      };
+      used.appendChild(row);
+    }
   }
-  for (const u of items) {
-    const row = document.createElement('div');
-    row.className = 'used-row';
-    row.title = u.text;
-    row.innerHTML = `
-      <span class="used-kind">${escapeHtml(u.kind || '')}</span>
-      <span class="used-text">${escapeHtml(u.text.slice(0, 80))}${u.text.length > 80 ? '…' : ''}</span>
-      <button class="btn uapply">${presetTargetId ? t('填入') : t('复制')}</button>
-      <button class="btn usave" title="${t('保存为预设')}">★</button>`;
-    row.querySelector('.uapply').onclick = () => applyPromptText(u.text, u.text.slice(0, 16));
-    row.querySelector('.usave').onclick = () => {
-      state.presets.push({ id: 'p' + Date.now(), name: u.text.slice(0, 24), text: u.text });
-      savePresets();
-      renderPresetList();
-    };
-    used.appendChild(row);
+
+  if (libTab === 'json') updateJsonPreview();
+}
+
+// ---- JSON 转换器：粘贴提示词 → 标准 JSON ----
+function promptToJsonObj() {
+  const raw = $('jsonInput').value.trim();
+  let prompt = raw;
+  let negative = '';
+  const m = raw.match(/^\s*(?:negative(?:\s*prompt)?|负向(?:提示词)?|ネガティブ)\s*[:：]\s*([\s\S]+)$/im);
+  if (m) {
+    negative = m[1].trim();
+    prompt = raw.slice(0, m.index).trim();
   }
+  return {
+    schema: 'a452-prompt',
+    version: 1,
+    name: $('jsonName').value.trim() || (prompt.slice(0, 24) || 'prompt'),
+    category: $('jsonCat').value,
+    prompt,
+    negative,
+    tags: [],
+    createdAt: new Date().toISOString(),
+    source: 'Atelier452 Prompt Library',
+  };
+}
+
+function updateJsonPreview() {
+  const raw = $('jsonInput').value.trim();
+  $('jsonPreview').textContent = raw ? JSON.stringify(promptToJsonObj(), null, 2) : '';
 }
 
 // ---------------- 成片上色（V2V） ----------------
@@ -1712,12 +1836,81 @@ rrdz.addEventListener('drop', async (e) => {
   scheduleSave();
 });
 
-// 右栏大生成按钮 + 提示词库独立入口（按钮 + 右缘悬停）
+// 右栏大生成按钮 + 提示词库独立入口（顶栏按钮 + 右缘把手）
 $('btnWholeTop').onclick = wholeGenerate;
-$('btnLibrary').onclick = () => openPresetDialog(null);
-$('libraryEdge').addEventListener('mouseenter', () => {
-  if (!$('presetDialog').open) openPresetDialog(null);
+$('btnLibrary').onclick = () => openLibrary(null);
+// 右缘把手：按住直接把面板"拖出来"，松手即定位；单击也可打开
+$('libraryEdge').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  openLibrary(null);
+  const p = $('libraryPanel');
+  const w = p.offsetWidth || 580;
+  positionLibrary(e.clientX - w + 20, e.clientY - 16);
+  dragLibraryFrom(e, w - 20, 16);
 });
+// 标题栏拖动
+$('libDragHandle').addEventListener('pointerdown', (e) => {
+  if (e.target.closest('button')) return;
+  e.preventDefault();
+  dragLibraryFrom(e);
+});
+$('libClose').onclick = closeLibrary;
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' && !$('libraryPanel').hidden) closeLibrary();
+});
+// 页签切换
+$('libTabs').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-tab]');
+  if (!b) return;
+  libTab = b.dataset.tab;
+  renderLibrary();
+});
+// 新建提示词（带分类）
+$('libNewSave').onclick = () => {
+  const text = $('libNewText').value.trim();
+  if (!text) { libStatusMsg(t('当前提示词框是空的')); return; }
+  const name = $('libNewName').value.trim() || text.slice(0, 24);
+  const category = $('libNewCat').value;
+  state.presets.push({ id: 'p' + Date.now(), name, text, category });
+  $('libNewText').value = '';
+  $('libNewName').value = '';
+  savePresets();
+  libTab = category;
+  renderLibrary();
+  libStatusMsg(t('已保存') + ': ' + name);
+};
+// JSON 转换器
+$('jsonInput').addEventListener('input', updateJsonPreview);
+$('jsonName').addEventListener('input', updateJsonPreview);
+$('jsonCat').addEventListener('change', updateJsonPreview);
+$('jsonDownload').onclick = () => {
+  const o = promptToJsonObj();
+  if (!o.prompt && !o.negative) { libStatusMsg(t('当前提示词框是空的')); return; }
+  const url = URL.createObjectURL(new Blob([JSON.stringify(o, null, 2)], { type: 'application/json' }));
+  download(url, o.name.replace(/[\\/:*?"<>|]/g, '_') + '.json');
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  libStatusMsg(t('已下载 .json'));
+};
+$('jsonCopy').onclick = () => {
+  const o = promptToJsonObj();
+  if (!o.prompt && !o.negative) return;
+  navigator.clipboard.writeText(JSON.stringify(o, null, 2)).catch(() => {});
+  libStatusMsg(t('已复制 JSON'));
+};
+$('jsonToLib').onclick = () => {
+  const o = promptToJsonObj();
+  if (!o.prompt) { libStatusMsg(t('当前提示词框是空的')); return; }
+  state.presets.push({
+    id: 'p' + Date.now(),
+    name: o.name,
+    text: o.prompt + (o.negative ? '\nnegative: ' + o.negative : ''),
+    category: o.category,
+  });
+  savePresets();
+  libTab = o.category;
+  renderLibrary();
+  libStatusMsg(t('已存入库') + ': ' + o.name);
+};
 
 $('btnRefine').onclick = refineGenerate;
 $('btnRefineDownload').onclick = () => {
@@ -1741,27 +1934,13 @@ $('refinePrompt').onchange = () => {
   }).catch(() => {});
 };
 
-// 提示词库：📚 按钮（事件委托，动态节点也生效）
+// 提示词库：📚 按钮（事件委托，动态节点也生效）→ 填入模式打开浮动面板
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('.plib');
   if (!btn) return;
   e.preventDefault();
-  openPresetDialog(btn.dataset.target);
+  openLibrary(btn.dataset.target);
 });
-$('presetClose').onclick = () => $('presetDialog').close();
-$('presetSave').onclick = () => {
-  const ta = presetTargetId ? $(presetTargetId) : null;
-  // 优先保存独立输入框里的新提示词；没有则保存目标提示词框内容
-  const text = ($('presetNewText').value.trim()) || (ta ? ta.value.trim() : '');
-  const name = $('presetName').value.trim() || text.slice(0, 24);
-  if (!text) { $('presetStatus').textContent = t('当前提示词框是空的'); return; }
-  state.presets.push({ id: 'p' + Date.now(), name, text });
-  $('presetName').value = '';
-  $('presetNewText').value = '';
-  savePresets();
-  renderPresetList();
-  $('presetStatus').textContent = t('已保存') + ': ' + name;
-};
 
 $('fileInput').onchange = (e) => { addFiles([...e.target.files]); e.target.value = ''; };
 const dz = $('dropZone');

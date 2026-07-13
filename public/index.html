@@ -302,28 +302,60 @@
   </div>
 </main>
 
-<!-- 提示词库弹窗 -->
-<dialog id="presetDialog" class="library-dialog">
-  <h3>提示词库 <span class="hint">— 点击预设一键填入</span></h3>
-  <div class="panel-title" style="margin:6px 0 8px">我的预设</div>
-  <div id="presetList" class="preset-list"></div>
-  <div class="panel-title" style="margin:14px 0 8px">最近使用</div>
-  <div id="usedList" class="used-list"></div>
-  <div class="field" style="margin-top:14px">
-    <label>新建提示词 <span class="hint">粘贴/编写后保存为预设</span></label>
-    <textarea id="presetNewText" rows="2" placeholder="在此粘贴或编写提示词…"></textarea>
+<!-- 提示词库：可拖拽浮动面板（标题栏拖动，右缘把手可整块拖出） -->
+<div id="libraryPanel" class="library-panel" hidden>
+  <div class="lib-head" id="libDragHandle" title="拖动移动面板">
+    <span class="lib-title">📚 提示词库</span>
+    <span id="libStatus" class="hint accent"></span>
+    <button id="libClose" class="btn ghost" title="关闭">✕</button>
   </div>
-  <div class="field-row" style="margin-top:8px">
-    <div class="field" style="flex:1">
-      <input type="text" id="presetName" placeholder="预设名称">
+  <div class="lib-tabs" id="libTabs" role="tablist">
+    <button data-tab="general" class="active">通用</button>
+    <button data-tab="storyboard">分镜</button>
+    <button data-tab="qa">质检</button>
+    <button data-tab="used">历史</button>
+    <button data-tab="json">JSON</button>
+  </div>
+  <div class="lib-body">
+    <div id="libListPane">
+      <div id="libList" class="lib-list"></div>
+      <div class="lib-new">
+        <div class="panel-title" style="margin:12px 0 6px">新建提示词</div>
+        <textarea id="libNewText" rows="2" placeholder="在此粘贴或编写提示词…"></textarea>
+        <div class="lib-new-row" style="margin-top:6px">
+          <input type="text" id="libNewName" placeholder="名称">
+          <select id="libNewCat">
+            <option value="general">通用</option>
+            <option value="storyboard">分镜</option>
+            <option value="qa">质检</option>
+          </select>
+          <button id="libNewSave" class="btn primary">★ 保存</button>
+        </div>
+      </div>
     </div>
-    <button id="presetSave" class="btn primary" style="align-self:flex-start">★ 保存为预设</button>
+    <div id="libUsedPane" hidden>
+      <div id="usedList" class="used-list"></div>
+    </div>
+    <div id="libJsonPane" hidden>
+      <div class="hint" style="margin-bottom:6px">粘贴任意提示词 → 实时转换为标准 JSON（自动识别「负向/negative」行）</div>
+      <textarea id="jsonInput" rows="4" placeholder="在此粘贴提示词…"></textarea>
+      <div class="lib-new-row" style="margin:6px 0">
+        <input type="text" id="jsonName" placeholder="名称（可选）">
+        <select id="jsonCat">
+          <option value="general">通用</option>
+          <option value="storyboard">分镜</option>
+          <option value="qa">质检</option>
+        </select>
+      </div>
+      <pre id="jsonPreview" class="json-preview"></pre>
+      <div class="lib-new-row" style="margin-top:6px">
+        <button id="jsonDownload" class="btn primary">⬇ 下载 .json</button>
+        <button id="jsonCopy" class="btn">复制 JSON</button>
+        <button id="jsonToLib" class="btn">★ 存入库</button>
+      </div>
+    </div>
   </div>
-  <div class="dialog-actions">
-    <button id="presetClose" class="btn ghost">关闭</button>
-  </div>
-  <div id="presetStatus" class="hint accent"></div>
-</dialog>
+</div>
 
 <!-- 提示词库右缘悬停入口 -->
 <div id="libraryEdge" title="提示词库 / Prompt Library"><span>📚</span></div>

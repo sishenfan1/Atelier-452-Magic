@@ -157,8 +157,87 @@ dialog {
 .shibai-chip { border-color: var(--accent); color: var(--accent2); font-weight: 700; }
 .dl-chip { border-color: #eab308; color: #facc15; }
 
-/* ===== 提示词库 ===== */
-.library-dialog { max-width: 620px; width: 92vw; }
+/* ===== 提示词库：可拖拽浮动面板 ===== */
+.library-panel {
+  position: fixed;
+  z-index: 120;
+  width: 580px;
+  max-width: 94vw;
+  max-height: 76vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+.lib-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 12px;
+  border-bottom: 1px solid var(--line);
+  cursor: move;
+  user-select: none;
+}
+.lib-title { font-weight: 700; font-size: 13px; letter-spacing: 0.04em; }
+.lib-head .hint { flex: 1; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-tabs { display: flex; border-bottom: 1px solid var(--line); }
+.lib-tabs button {
+  flex: 1;
+  padding: 8px 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--dim);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.lib-tabs button:hover { color: var(--text); background: var(--card2); }
+.lib-tabs button.active { color: #fff; border-bottom-color: var(--accent); }
+.lib-body { padding: 12px; overflow-y: auto; }
+.lib-list { display: flex; flex-direction: column; gap: 6px; }
+.lib-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  background: var(--card2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.lib-row:hover { border-color: var(--accent); }
+.lib-row.lib-edit { flex-direction: column; align-items: stretch; gap: 4px; }
+.lib-name {
+  flex-shrink: 0;
+  font-weight: 700;
+  font-size: 12px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lib-text { flex: 1; font-size: 11px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-row .btn { padding: 2px 8px; font-size: 10.5px; flex-shrink: 0; }
+.lib-new-row { display: flex; gap: 6px; align-items: center; }
+.lib-new-row input[type="text"] { flex: 1; }
+.lib-new-row select { width: auto; }
+.json-preview {
+  background: #0a101c;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: var(--accent2);
+  min-height: 44px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .used-list { display: flex; flex-direction: column; gap: 6px; max-height: 30vh; overflow-y: auto; }
 .used-row {
   display: flex; align-items: center; gap: 8px;
