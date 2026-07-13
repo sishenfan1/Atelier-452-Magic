@@ -7,6 +7,8 @@
   // 'English UI string': ['中文', '日本語']
   var D = {
     // nav / shell
+    'Home': ['主页', 'ホーム'],
+    'Projects': ['项目', 'プロジェクト'],
     'Dashboard': ['仪表盘', 'ダッシュボード'],
     'Scene Board': ['场景看板', 'シーンボード'],
     'Characters': ['角色', 'キャラクター'],
