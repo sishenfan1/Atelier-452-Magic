@@ -5,6 +5,8 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 
+const APP_VERSION = '2026.07.14.1';
+
 const ROOT = __dirname;
 // 桌面版（Electron）下由主进程指定可写数据目录；直接 node server.js 时用项目目录
 const BASE = process.env.ATELIER_DATA_DIR || ROOT;
@@ -477,6 +479,22 @@ app.use(express.static(path.join(ROOT, 'public')));
 app.use('/videos', express.static(VIDEO_DIR));
 app.use('/assets', express.static(ASSET_DIR));
 
+// ---------------- CORS：仅项目注册表端点，且仅放行本机规划器源 ----------------
+// 只作用于 /api/projects*（config、生成等敏感端点保持同源），并把来源限制为
+// 本机 planner，避免任意网页跨域驱动本地 API 或读取 API Key。
+const CORS_ALLOW = new Set(['http://localhost:3452', 'http://127.0.0.1:3452']);
+app.use('/api/projects', (req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && CORS_ALLOW.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 // 公开站模式（A452_PUBLIC=1）：登录、积分、每用户工程、支付。桌面模式下为 null。
 const pm = require(path.join(__dirname, 'public-mode.js')).install(app, { DATA_DIR });
 
@@ -537,6 +555,7 @@ app.get('/api/config', (req, res) => {
     publicBase: cfg.publicBase,
     tunnel: !!findCloudflared(),
     ffmpeg: !!FFMPEG,
+    appVersion: APP_VERSION,
   });
 });
 
@@ -566,6 +585,138 @@ app.post('/api/config', (req, res) => {
   if (ratio) cur.ratio = ratio;
   saveConfig(cur);
   res.json({ ok: true, hasKey: !!cur.apiKey });
+});
+
+// ---------------- 工程注册表（持久化在 config.json 的 projects 键；删除只删登记，绝不动磁盘文件） ----------------
+const PROJECTS_BASE = path.join(BASE, 'Projects');
+const sanitizeFileName = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+
+function loadProjects() {
+  const cfg = loadConfig();
+  return Array.isArray(cfg.projects) ? cfg.projects : [];
+}
+function saveProjects(list) {
+  const cfg = loadConfig();
+  cfg.projects = list;
+  saveConfig(cfg);
+}
+// 文件名冲突自动加 -2、-3 后缀
+function uniquePath(p) {
+  if (!fs.existsSync(p)) return p;
+  const ext = path.extname(p);
+  const stem = p.slice(0, p.length - ext.length);
+  for (let i = 2; ; i++) {
+    const cand = `${stem}-${i}${ext}`;
+    if (!fs.existsSync(cand)) return cand;
+  }
+}
+
+app.get('/api/projects', (req, res) => {
+  res.json({ projects: loadProjects(), defaultBase: PROJECTS_BASE, appVersion: APP_VERSION });
+});
+
+// 节点色板：与 planner NODE_COLORS 保持一致，新建工程按现有数量循环取色
+const PROJECT_COLORS = ['#6d8dff', '#7ee0ff', '#a06dff', '#4fd8a5', '#ffb454', '#ff6d7e'];
+app.post('/api/projects', (req, res) => {
+  const { name, dir, color } = req.body || {};
+  const n = String(name || '').trim();
+  if (!n) return res.status(400).json({ error: '缺少工程名称' });
+  const target = String(dir || '').trim() || path.join(PROJECTS_BASE, sanitizeFileName(n) || 'project');
+  try {
+    fs.mkdirSync(target, { recursive: true });
+  } catch (e) {
+    return res.status(400).json({ error: '无法创建工程目录: ' + String(e.message || e) });
+  }
+  const now = new Date().toISOString();
+  const list = loadProjects();
+  const nodeColor = String(color || '').trim() || PROJECT_COLORS[list.length % PROJECT_COLORS.length];
+  const project = { id: newId(), name: n, dir: target, note: '', color: nodeColor, createdAt: now, updatedAt: now };
+  list.push(project);
+  saveProjects(list);
+  res.json({ ok: true, project });
+});
+
+app.patch('/api/projects/:id', (req, res) => {
+  const list = loadProjects();
+  const p = list.find((x) => x.id === req.params.id);
+  if (!p) return res.status(404).json({ error: '工程不存在' });
+  const { name, dir, note, color } = req.body || {};
+  if (name !== undefined && String(name).trim()) p.name = String(name).trim();
+  if (dir !== undefined && String(dir).trim() && String(dir).trim() !== p.dir) {
+    const target = String(dir).trim();
+    try {
+      fs.mkdirSync(target, { recursive: true }); // 只建新目录，绝不移动/删除旧目录
+    } catch (e) {
+      return res.status(400).json({ error: '无法创建工程目录: ' + String(e.message || e) });
+    }
+    p.dir = target;
+  }
+  if (note !== undefined) p.note = String(note);
+  if (color !== undefined) p.color = String(color);
+  p.updatedAt = new Date().toISOString();
+  saveProjects(list);
+  res.json({ ok: true, project: p });
+});
+
+app.delete('/api/projects/:id', (req, res) => {
+  const list = loadProjects();
+  const next = list.filter((x) => x.id !== req.params.id);
+  if (next.length === list.length) return res.status(404).json({ error: '工程不存在' });
+  saveProjects(next); // 只删登记，不碰磁盘文件
+  res.json({ ok: true });
+});
+
+// 在 Windows 资源管理器中打开工程目录
+app.post('/api/projects/:id/open', (req, res) => {
+  const p = loadProjects().find((x) => x.id === req.params.id);
+  if (!p) return res.status(404).json({ error: '工程不存在' });
+  try {
+    fs.mkdirSync(p.dir, { recursive: true });
+    spawn('explorer', [p.dir], { detached: true }).unref(); // explorer 退出码不代表失败，直接视为成功
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// 把服务器上的生成结果（/videos/... 或 /assets/...）复制进工程目录，或把提示词写成文本文件
+app.post('/api/projects/:id/save', (req, res) => {
+  const p = loadProjects().find((x) => x.id === req.params.id);
+  if (!p) return res.status(404).json({ error: '工程不存在' });
+  const { src, kind, name, text, filename } = req.body || {};
+  try {
+    if (kind === 'prompt') {
+      if (typeof text !== 'string' || !String(filename || '').trim()) {
+        return res.status(400).json({ error: '缺少 text 或 filename' });
+      }
+      const dir = path.join(p.dir, 'prompts');
+      fs.mkdirSync(dir, { recursive: true });
+      const safe = sanitizeFileName(filename) || 'prompt.txt';
+      const dest = uniquePath(path.join(dir, safe));
+      fs.writeFileSync(dest, text);
+      return res.json({ ok: true, savedTo: dest });
+    }
+    if (kind !== 'video' && kind !== 'image') {
+      return res.status(400).json({ error: "kind 必须是 'video' | 'image' | 'prompt'" });
+    }
+    const file = typeof src === 'string' ? localFileOf(src) : null;
+    if (!file) return res.status(400).json({ error: '无效的 src（仅支持 /videos/... 或 /assets/...）' });
+    const baseDir = src.startsWith('/videos/') ? VIDEO_DIR : ASSET_DIR;
+    const real = path.resolve(file);
+    if (!real.startsWith(path.resolve(baseDir) + path.sep)) {
+      return res.status(400).json({ error: '非法路径' }); // 防路径穿越
+    }
+    if (!fs.existsSync(real)) return res.status(404).json({ error: '源文件不存在' });
+    const dir = path.join(p.dir, kind === 'video' ? 'videos' : 'images');
+    fs.mkdirSync(dir, { recursive: true });
+    let fname = sanitizeFileName(name) || path.basename(real);
+    if (!path.extname(fname)) fname += path.extname(real);
+    const dest = uniquePath(path.join(dir, fname));
+    fs.copyFileSync(real, dest);
+    res.json({ ok: true, savedTo: dest });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
 });
 
 // 创建一段中割生成任务

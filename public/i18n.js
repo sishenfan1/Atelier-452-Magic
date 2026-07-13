@@ -269,6 +269,15 @@ const I18N = {
   'GPT Image 模型 ID': ['GPT Image model ID', 'GPT Image モデル ID'],
   '留空保持不变': ['blank = keep current', '空欄なら変更なし'],
   '已配置（留空保持不变）': ['configured (blank = keep)', '設定済み（空欄なら変更なし）'],
+
+  // 存入项目文件夹
+  '存入项目文件夹': ['Save to project folder', 'プロジェクトフォルダへ保存'],
+  '💾 项目': ['💾 Project', '💾 プロジェクト'],
+  '项目': ['Project', 'プロジェクト'],
+  '已存入': ['Saved to', '保存しました →'],
+  '读取项目列表…': ['Loading projects…', 'プロジェクトを読み込み中…'],
+  '该目录下还没有项目 — 在 Director 仪表盘新建': ['No projects yet — create one in the Director dashboard', 'プロジェクトはまだありません — Director ダッシュボードで作成してください'],
+  '在 Director 仪表盘新建与管理项目': ['Create & manage projects in the Director dashboard', 'プロジェクトの作成・管理は Director ダッシュボードで'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]
