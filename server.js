@@ -483,7 +483,7 @@ app.use('/assets', express.static(ASSET_DIR));
 // 只作用于 /api/projects*（config、生成等敏感端点保持同源），并把来源限制为
 // 本机 planner，避免任意网页跨域驱动本地 API 或读取 API Key。
 const CORS_ALLOW = new Set(['http://localhost:3452', 'http://127.0.0.1:3452']);
-app.use('/api/projects', (req, res, next) => {
+app.use(['/api/projects', '/api/style-json'], (req, res, next) => {
   const origin = req.headers.origin;
   if (origin && CORS_ALLOW.has(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -589,6 +589,9 @@ app.post('/api/config', (req, res) => {
 
 // ---------------- 工程注册表（持久化在 config.json 的 projects 键；删除只删登记，绝不动磁盘文件） ----------------
 const PROJECTS_BASE = path.join(BASE, 'Projects');
+// Style DNA「转 JSON」保存目录：命名的风格导出（*.json），页面以更小的方块列出
+const STYLE_JSON_DIR = path.join(BASE, 'Prompts', 'JSON files');
+fs.mkdirSync(STYLE_JSON_DIR, { recursive: true });
 const sanitizeFileName = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '_').trim();
 
 function loadProjects() {
@@ -714,6 +717,71 @@ app.post('/api/projects/:id/save', (req, res) => {
     const dest = uniquePath(path.join(dir, fname));
     fs.copyFileSync(real, dest);
     res.json({ ok: true, savedTo: dest });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// ---------------- Style DNA「转 JSON」保存库（<BASE>/Prompts/JSON files，页面以更小方块列出） ----------------
+// 把 JSON 描述文件读成 { name, filename, size, savedAt }，按修改时间倒序（最新在前）
+function listStyleJson() {
+  let names;
+  try {
+    names = fs.readdirSync(STYLE_JSON_DIR);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((f) => f.toLowerCase().endsWith('.json'))
+    .map((filename) => {
+      const st = fs.statSync(path.join(STYLE_JSON_DIR, filename));
+      return { name: filename.slice(0, -5), filename, size: st.size, savedAt: st.mtime.toISOString() };
+    })
+    .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+}
+
+app.get('/api/style-json', (req, res) => {
+  res.json({ files: listStyleJson(), dir: STYLE_JSON_DIR });
+});
+
+// 保存命名的风格 JSON：同名覆盖（重存同一份配置应更新而不是产生 -2 副本）
+app.post('/api/style-json', (req, res) => {
+  const { name, json } = req.body || {};
+  const safe = sanitizeFileName(name);
+  if (!safe) return res.status(400).json({ error: '缺少名称' });
+  let text;
+  if (typeof json === 'string') {
+    try { JSON.parse(json); } catch (e) { return res.status(400).json({ error: '无效的 JSON: ' + String(e.message || e) }); }
+    text = json;
+  } else if (json && typeof json === 'object') {
+    text = JSON.stringify(json, null, 2);
+  } else {
+    return res.status(400).json({ error: '缺少 json 内容' });
+  }
+  const filename = safe + '.json';
+  try {
+    const dest = path.join(STYLE_JSON_DIR, filename);
+    fs.writeFileSync(dest, text); // 同名覆盖
+    const st = fs.statSync(dest);
+    res.json({ ok: true, file: { name: safe, filename, size: st.size, savedAt: st.mtime.toISOString() } });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.delete('/api/style-json/:filename', (req, res) => {
+  const base = path.basename(req.params.filename || ''); // 只取文件名，防路径穿越
+  if (!base || base !== req.params.filename || !base.toLowerCase().endsWith('.json')) {
+    return res.status(400).json({ error: '非法文件名' });
+  }
+  const target = path.resolve(STYLE_JSON_DIR, base);
+  if (target !== path.join(path.resolve(STYLE_JSON_DIR), base)) {
+    return res.status(400).json({ error: '非法路径' });
+  }
+  try {
+    if (!fs.existsSync(target)) return res.status(404).json({ error: '文件不存在' });
+    fs.rmSync(target);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
