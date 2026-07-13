@@ -71,7 +71,20 @@ body {
   grid-template-columns: 300px minmax(0, 1fr) 340px;
   gap: 10px; padding: 10px; align-items: start;
 }
-.col-left, .col-right { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 72px; }
+/* 左右两栏各自独立滚动：不再跟随中间「历史列表」滚动 —— 侧栏内容超高时内部滚动 */
+.col-left, .col-right {
+  display: flex; flex-direction: column; gap: 10px;
+  position: sticky; top: 72px;
+  max-height: calc(100vh - 82px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+.col-left::-webkit-scrollbar, .col-right::-webkit-scrollbar { width: 8px; }
+.col-left::-webkit-scrollbar-thumb, .col-right::-webkit-scrollbar-thumb {
+  background: var(--line-strong); border-radius: 4px;
+}
 .col-center { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 
 .panel {
@@ -482,7 +495,7 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
   .mode-tab { min-width: 0; flex: 1; }
   .top-actions { justify-content: space-between; }
   .layout { grid-template-columns: 1fr; }
-  .col-left, .col-right { position: static; }
+  .col-left, .col-right { position: static; max-height: none; overflow: visible; }
 }
 
 /* ===== ④ 生成回放大播放器 ===== */

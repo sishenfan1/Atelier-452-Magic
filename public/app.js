@@ -2645,3 +2645,78 @@ renderV2V();
 renderWhole();
 setBadge('已停止');
 loadProject();
+
+// ---------------- 风格 DNA 停靠区（从策划端 postMessage 接收，可拖入任意提示词框） ----------------
+let dnaProfiles = []; // [{ id, name, fragment }]
+
+function renderDnaDock() {
+  const dock = document.getElementById('dnaDock');
+  const empty = document.getElementById('dnaDockEmpty');
+  if (!dock) return;
+  dock.innerHTML = '';
+  const has = dnaProfiles.length > 0;
+  if (empty) empty.hidden = has;
+  for (const p of dnaProfiles) {
+    if (!p || !p.fragment) continue;
+    const chip = document.createElement('div');
+    chip.className = 'dna-chip';
+    chip.draggable = true;
+    chip.title = p.fragment;
+    chip.innerHTML = `<span class="dna-chip-name">${escapeHtml(p.name || 'DNA')}</span>`;
+    chip.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/a452-dna', p.fragment);
+      e.dataTransfer.setData('text/plain', p.fragment);
+      e.dataTransfer.effectAllowed = 'copy';
+      chip.classList.add('dragging');
+    });
+    chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+    dock.appendChild(chip);
+  }
+}
+
+/** 把一段文字插入到某个 textarea 的光标处（或追加），并触发保存 */
+function insertIntoTextarea(ta, text) {
+  const cur = ta.value;
+  const start = ta.selectionStart ?? cur.length;
+  const end = ta.selectionEnd ?? cur.length;
+  const needsSep = start > 0 && !/\s$/.test(cur.slice(0, start)) ? ', ' : '';
+  const next = cur.slice(0, start) + needsSep + text + cur.slice(end);
+  ta.value = next;
+  const caret = start + needsSep.length + text.length;
+  try { ta.setSelectionRange(caret, caret); } catch {}
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  ta.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+// 所有 textarea 都能作为 DNA 拖放目标
+document.addEventListener('dragover', (e) => {
+  const ta = e.target instanceof HTMLTextAreaElement ? e.target : null;
+  if (ta && Array.from(e.dataTransfer.types || []).includes('text/a452-dna')) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    ta.classList.add('dna-drop-target');
+  }
+});
+document.addEventListener('dragleave', (e) => {
+  if (e.target instanceof HTMLTextAreaElement) e.target.classList.remove('dna-drop-target');
+});
+document.addEventListener('drop', (e) => {
+  const ta = e.target instanceof HTMLTextAreaElement ? e.target : null;
+  if (!ta) return;
+  const frag = e.dataTransfer.getData('text/a452-dna');
+  if (!frag) return; // 非 DNA 拖放交给浏览器默认处理
+  e.preventDefault();
+  ta.classList.remove('dna-drop-target');
+  insertIntoTextarea(ta, frag);
+});
+
+// 与策划端（父窗口 iframe）握手：接收 DNA 列表
+window.addEventListener('message', (e) => {
+  const d = e.data;
+  if (!d || d.type !== 'a452-style-dna' || !Array.isArray(d.profiles)) return;
+  dnaProfiles = d.profiles.filter((p) => p && p.fragment);
+  renderDnaDock();
+});
+renderDnaDock();
+// 通知父窗口：studio 就绪，请把 DNA 发过来
+try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'a452-studio-ready' }, '*'); } catch {}

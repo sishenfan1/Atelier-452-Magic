@@ -298,6 +298,51 @@ dialog {
 .refine-compare figure { border-radius: 4px; }
 .refine-compare figcaption { background: var(--line); color: var(--dim); }
 
+/* ===== 风格 DNA 停靠区（可拖入提示词框的小方块） ===== */
+.dna-dock {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+.dna-chip {
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 8px;
+  background: var(--card2);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  cursor: grab;
+  user-select: none;
+  transition: transform 0.12s ease, border-color 0.12s, box-shadow 0.12s;
+}
+.dna-chip:hover {
+  transform: translateY(-2px) scale(1.04);
+  border-color: var(--accent);
+  box-shadow: 0 6px 18px -6px var(--accent);
+}
+.dna-chip:active { cursor: grabbing; }
+.dna-chip.dragging { opacity: 0.5; }
+.dna-chip-name {
+  font-weight: 700;
+  font-size: 11.5px;
+  line-height: 1.25;
+  color: var(--accent2);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+/* 提示词框在被 DNA 悬停拖放时高亮 */
+.dna-drop-target {
+  outline: 2px dashed var(--accent2);
+  outline-offset: 1px;
+  background: rgba(59, 130, 246, 0.08);
+}
+
 /* ===== 工作区 4：提示词库整页 ===== */
 .pl-layout .col-left textarea { resize: vertical; font-size: 13px; line-height: 1.55; }
 .pl-layout #plSave {
