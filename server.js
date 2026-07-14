@@ -74,6 +74,10 @@ const DEFAULT_CONFIG = {
   openaiBase: 'https://api.openai.com',
   openaiKey: '',
   openaiImgModel: 'gpt-image-2',
+  // 剧本解析智能体（PDF 导入 → 分场/镜头/提示词）
+  llmProvider: 'auto',   // 'auto' | 'anthropic' | 'openai' | 'ark'
+  anthropicKey: '',
+  llmModel: '',          // 留空则按提供商用默认：claude-fable-5 / gpt-5.6-sol / doubao-seed-1-6-250615
   resolution: '720p',
   ratio: 'adaptive',
   stylePrompt: DEFAULT_STYLE_PROMPT,
@@ -482,8 +486,11 @@ app.use('/assets', express.static(ASSET_DIR));
 // ---------------- CORS：仅项目注册表端点，且仅放行本机规划器源 ----------------
 // 只作用于 /api/projects*（config、生成等敏感端点保持同源），并把来源限制为
 // 本机 planner，避免任意网页跨域驱动本地 API 或读取 API Key。
-const CORS_ALLOW = new Set(['http://localhost:3452', 'http://127.0.0.1:3452']);
-app.use(['/api/projects', '/api/style-json'], (req, res, next) => {
+const CORS_ALLOW = new Set([
+  'http://localhost:3452', 'http://127.0.0.1:3452',
+  'http://localhost:3453', 'http://127.0.0.1:3453', // planner dev fallback port
+]);
+app.use(['/api/projects', '/api/style-json', '/api/script'], (req, res, next) => {
   const origin = req.headers.origin;
   if (origin && CORS_ALLOW.has(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -549,6 +556,9 @@ app.get('/api/config', (req, res) => {
     openaiBase: cfg.openaiBase,
     hasOpenaiKey: !!cfg.openaiKey,
     openaiImgModel: cfg.openaiImgModel,
+    llmProvider: cfg.llmProvider || 'auto',
+    hasAnthropicKey: !!cfg.anthropicKey,
+    llmModel: cfg.llmModel || '',
     presets: cfg.presets || [],
     promptFolders: cfg.promptFolders || [],
     usedPrompts: cfg.usedPrompts || [],
@@ -583,8 +593,203 @@ app.post('/api/config', (req, res) => {
   if (model) cur.model = model;
   if (resolution) cur.resolution = resolution;
   if (ratio) cur.ratio = ratio;
+  const { llmProvider, anthropicKey, llmModel } = req.body || {};
+  if (llmProvider) cur.llmProvider = llmProvider;
+  if (anthropicKey !== undefined && anthropicKey !== '') cur.anthropicKey = anthropicKey;
+  if (anthropicKey === null) cur.anthropicKey = '';
+  if (llmModel !== undefined) cur.llmModel = llmModel;
   saveConfig(cur);
   res.json({ ok: true, hasKey: !!cur.apiKey });
+});
+
+// ---------------- 剧本解析智能体：PDF/文本 → 分场 + 镜头 + 提示词 + 角色/场景地 ----------------
+// 内置 LM Agent：优先 Claude（Anthropic），其次 OpenAI 兼容（ChatGPT），再次 Ark（doubao）；
+// 全部未配置或调用失败时退化为启发式分场，保证导入永远有结果。
+const SCRIPT_AGENT_SYS = [
+  'You are the in-house script breakdown agent of Atelier 452, an AI animation director workspace.',
+  'You read a raw film / animation script (any language, often extracted from a PDF) and produce a',
+  'structured storyboard breakdown as STRICT JSON. Rules:',
+  '- Output ONLY a single JSON object. No markdown fences, no commentary.',
+  '- Keep all creative text (titles, summaries, prompts, dialogue) in the SAME language as the script.',
+  '- Divide the script into scenes at location/time changes (INT./EXT., 第X场, scene headings, blank-line beats).',
+  '- For each scene create 2-6 shots covering its key visual beats.',
+  '- Every shot MUST include a `prompt`: a vivid one-paragraph text-to-video prompt (subject + action +',
+  '  camera + lighting + mood) ready for an AI video model, and `script`: the exact excerpt of the',
+  '  original script text this shot covers (dialogue + action lines, verbatim).',
+  '- Extract every named character and location into the top-level lists with useful visual descriptions.',
+  'JSON schema (all keys required unless marked optional):',
+  '{',
+  '  "title": string, "logline": string,',
+  '  "characters": [{ "name": string, "role": string, "visualDescription": string, "personality": string, "promptFragment": string }],',
+  '  "locations":  [{ "name": string, "description": string, "promptFragment": string }],',
+  '  "scenes": [{',
+  '    "title": string, "summary": string, "location": string,',
+  '    "timeOfDay": "dawn"|"morning"|"noon"|"afternoon"|"dusk"|"night"|"unspecified",',
+  '    "weather": "clear"|"overcast"|"rain"|"storm"|"snow"|"fog"|"interior"|"unspecified",',
+  '    "shots": [{',
+  '      "title": string, "description": string, "script": string, "prompt": string,',
+  '      "negative": string (optional), "dialogue": string (optional),',
+  '      "shotSize": "EWS"|"WS"|"MS"|"MCU"|"CU"|"ECU"|"Insert",',
+  '      "cameraMovement": "static"|"dolly in"|"dolly out"|"pan"|"tilt"|"handheld"|"crane"|"tracking",',
+  '      "motionDescription": string, "emotion": string,',
+  '      "durationSeconds": number (3-8), "characters": [string]',
+  '    }]',
+  '  }]',
+  '}',
+].join('\n');
+
+function tolerantJsonParse(s) {
+  if (!s) return null;
+  let t = String(s).trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) t = fence[1].trim();
+  const start = t.indexOf('{');
+  const end = t.lastIndexOf('}');
+  if (start > 0 || end < t.length - 1) t = t.slice(Math.max(0, start), end + 1);
+  try { return JSON.parse(t); } catch { return null; }
+}
+
+function validScriptAnalysis(a) {
+  return !!(a && Array.isArray(a.scenes) && a.scenes.length > 0 &&
+    a.scenes.every((sc) => sc && typeof sc === 'object' && Array.isArray(sc.shots)));
+}
+
+/** 单轮 LLM 补全（三提供商统一入口），返回纯文本 */
+async function llmComplete(cfg, provider, messages) {
+  if (provider === 'anthropic') {
+    const model = cfg.llmModel || 'claude-fable-5';
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': cfg.anthropicKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 16000,
+        system: SCRIPT_AGENT_SYS,
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(`Claude (${model}) ${r.status}: ${JSON.stringify(j).slice(0, 260)}`);
+    return (j.content || []).map((b) => b.text || '').join('');
+  }
+  // openai 兼容 与 ark 同为 chat/completions 形状
+  const base = provider === 'openai' ? (cfg.openaiBase || 'https://api.openai.com') + '/v1' : cfg.endpoint;
+  const key = provider === 'openai' ? cfg.openaiKey : cfg.apiKey;
+  const model = cfg.llmModel || (provider === 'openai' ? 'gpt-5.6-sol' : 'doubao-seed-1-6-250615');
+  const r = await fetch(base + '/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'system', content: SCRIPT_AGENT_SYS }, ...messages],
+      max_tokens: 16000,
+    }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`${provider} (${model}) ${r.status}: ${JSON.stringify(j).slice(0, 260)}`);
+  return (((j.choices || [])[0] || {}).message || {}).content || '';
+}
+
+/** 启发式兜底：按剧本场景头（INT./EXT./第X场/SCENE N）正则分场，每场一镜承载原文 */
+function heuristicScriptAnalysis(text) {
+  const headRe = /^[ \t]*(INT\.|EXT\.|INT\/EXT|内景|外景|第[一二三四五六七八九十百0-9]+[场幕集]|场景[ \t]*[0-9０-９]+|SCENE[ \t]+[0-9]+|[0-9]+[ \t]*[.、][ \t]*(?:INT|EXT|内|外))/im;
+  const lines = String(text).split(/\r?\n/);
+  const scenes = [];
+  let cur = null;
+  for (const line of lines) {
+    if (headRe.test(line)) {
+      cur = { title: line.trim().slice(0, 60), body: [] };
+      scenes.push(cur);
+      continue;
+    }
+    if (!cur) {
+      cur = { title: 'Scene 1', body: [] };
+      scenes.push(cur);
+    }
+    cur.body.push(line);
+  }
+  const out = scenes
+    .map((sc, i) => {
+      const body = sc.body.join('\n').trim();
+      if (!body && scenes.length > 1) return null;
+      return {
+        title: sc.title || `Scene ${i + 1}`,
+        summary: body.slice(0, 160),
+        location: '',
+        timeOfDay: 'unspecified',
+        weather: 'unspecified',
+        shots: [{
+          title: sc.title || `Shot ${i + 1}`,
+          description: body.slice(0, 400),
+          script: body,
+          prompt: body.slice(0, 300),
+          shotSize: 'MS',
+          cameraMovement: 'static',
+          motionDescription: '',
+          emotion: '',
+          durationSeconds: 5,
+          characters: [],
+        }],
+      };
+    })
+    .filter(Boolean);
+  return {
+    title: '',
+    logline: '',
+    characters: [],
+    locations: [],
+    scenes: out.length ? out : [{
+      title: 'Imported script', summary: '', location: '', timeOfDay: 'unspecified', weather: 'unspecified',
+      shots: [{ title: 'Full text', description: String(text).slice(0, 400), script: String(text), prompt: String(text).slice(0, 300), shotSize: 'MS', cameraMovement: 'static', motionDescription: '', emotion: '', durationSeconds: 5, characters: [] }],
+    }],
+  };
+}
+
+app.post('/api/script/analyze', async (req, res) => {
+  const cfg = loadConfig();
+  const raw = String((req.body && req.body.text) || '').trim();
+  if (!raw) return res.status(400).json({ error: 'text is empty' });
+  const MAX = 100_000;
+  const text = raw.length > MAX ? raw.slice(0, MAX) : raw; // 超长截断（返回体里注明）
+  const truncated = raw.length > MAX;
+
+  // 提供商选择：显式配置优先，auto 按可用密钥排序 Claude → OpenAI → Ark
+  let provider = cfg.llmProvider || 'auto';
+  if (provider === 'auto') {
+    provider = cfg.anthropicKey ? 'anthropic' : cfg.openaiKey ? 'openai' : cfg.apiKey ? 'ark' : 'none';
+  }
+  if (provider === 'anthropic' && !cfg.anthropicKey) provider = 'none';
+  if (provider === 'openai' && !cfg.openaiKey) provider = 'none';
+  if (provider === 'ark' && !cfg.apiKey) provider = 'none';
+
+  if (provider === 'none') {
+    return res.json({ ok: true, provider: 'heuristic', truncated, note: 'no LLM key configured', analysis: heuristicScriptAnalysis(text) });
+  }
+
+  const userMsg = { role: 'user', content: `Break down the following script into the JSON schema. Script begins:\n\n${text}` };
+  try {
+    // Agent 循环：生成 → 解析校验 → 失败则带错误反馈修复一轮
+    let reply = await llmComplete(cfg, provider, [userMsg]);
+    let analysis = tolerantJsonParse(reply);
+    if (!validScriptAnalysis(analysis)) {
+      const repair = {
+        role: 'user',
+        content: `Your previous output was not valid against the schema (parse result: ${analysis ? 'missing/empty scenes[].shots[]' : 'not parseable JSON'}). Previous output begins:\n${String(reply).slice(0, 1500)}\n\nOutput ONLY the corrected complete JSON object now.`,
+      };
+      reply = await llmComplete(cfg, provider, [userMsg, { role: 'assistant', content: String(reply).slice(0, 6000) }, repair]);
+      analysis = tolerantJsonParse(reply);
+    }
+    if (!validScriptAnalysis(analysis)) throw new Error('LLM 两轮输出均无法解析为有效 JSON');
+    res.json({ ok: true, provider, model: cfg.llmModel || undefined, truncated, analysis });
+  } catch (e) {
+    // LLM 失败 → 启发式兜底，同时把简短错误带回给前端提示
+    const note = String(e.message || e).replace(/\s+/g, ' ').slice(0, 160);
+    res.json({ ok: true, provider: 'heuristic', truncated, note, analysis: heuristicScriptAnalysis(text) });
+  }
 });
 
 // ---------------- 工程注册表（持久化在 config.json 的 projects 键；删除只删登记，绝不动磁盘文件） ----------------

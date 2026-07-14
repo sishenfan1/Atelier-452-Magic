@@ -2203,6 +2203,9 @@ async function refreshConfig() {
   $('cfgOpenaiBase').value = cfg.openaiBase || 'https://api.openai.com';
   $('cfgOpenaiImgModel').value = cfg.openaiImgModel || 'gpt-image-2';
   $('cfgOpenaiKey').placeholder = cfg.hasOpenaiKey ? '已配置（留空保持不变）' : 'sk-...';
+  $('cfgLlmProvider').value = cfg.llmProvider || 'auto';
+  $('cfgLlmModel').value = cfg.llmModel || '';
+  $('cfgAnthropicKey').placeholder = cfg.hasAnthropicKey ? '已配置（留空保持不变）' : 'sk-ant-...';
   if (!$('stylePrompt').value) $('stylePrompt').value = cfg.stylePrompt || '';
   if (!$('inbetweenPrompt').value) $('inbetweenPrompt').value = cfg.inbetweenPrompt || '';
   if (!$('colorPrompt').value) $('colorPrompt').value = cfg.colorPrompt || '';
@@ -2561,10 +2564,14 @@ $('cfgSave').onclick = async () => {
     resolution: $('cfgResolution').value,
     ratio: $('cfgRatio').value,
     publicBase: $('cfgPublicBase').value.trim(),
+    llmProvider: $('cfgLlmProvider').value,
+    llmModel: $('cfgLlmModel').value.trim(),
   };
   if ($('cfgKey').value.trim()) body.apiKey = $('cfgKey').value.trim();
   if ($('cfgOpenaiKey').value.trim()) body.openaiKey = $('cfgOpenaiKey').value.trim();
+  if ($('cfgAnthropicKey').value.trim()) body.anthropicKey = $('cfgAnthropicKey').value.trim();
   $('cfgOpenaiKey').value = '';
+  $('cfgAnthropicKey').value = '';
   const res = await fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

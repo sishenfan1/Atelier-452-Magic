@@ -269,6 +269,15 @@ const I18N = {
   'GPT Image 模型 ID': ['GPT Image model ID', 'GPT Image モデル ID'],
   '留空保持不变': ['blank = keep current', '空欄なら変更なし'],
   '已配置（留空保持不变）': ['configured (blank = keep)', '設定済み（空欄なら変更なし）'],
+  '剧本解析智能体': ['Script breakdown agent', '脚本解析エージェント'],
+  'PDF 导入用；auto = 有哪个密钥用哪个': ['for PDF import; auto = use whichever key exists', 'PDF読み込み用。auto＝あるキーを自動選択'],
+  '自动（Claude → ChatGPT → doubao）': ['Auto (Claude → ChatGPT → doubao)', '自動（Claude → ChatGPT → doubao）'],
+  'Claude（Anthropic）': ['Claude (Anthropic)', 'Claude（Anthropic）'],
+  'ChatGPT（OpenAI 兼容）': ['ChatGPT (OpenAI-compatible)', 'ChatGPT（OpenAI互換）'],
+  'doubao（火山方舟）': ['doubao (Volcengine Ark)', 'doubao（Volcengine Ark）'],
+  '智能体模型 ID': ['Agent model ID', 'エージェントのモデルID'],
+  '留空用默认': ['blank = default', '空欄ならデフォルト'],
+  '留空保持不变；ChatGPT 复用上方 OpenAI Key': ['blank = keep; ChatGPT reuses the OpenAI key above', '空欄なら変更なし。ChatGPTは上のOpenAIキーを使用'],
 
   // 存入项目文件夹
   '存入项目文件夹': ['Save to project folder', 'プロジェクトフォルダへ保存'],
