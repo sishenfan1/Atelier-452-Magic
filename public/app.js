@@ -2206,6 +2206,9 @@ async function refreshConfig() {
   $('cfgLlmProvider').value = cfg.llmProvider || 'auto';
   $('cfgLlmModel').value = cfg.llmModel || '';
   $('cfgAnthropicKey').placeholder = cfg.hasAnthropicKey ? '已配置（留空保持不变）' : 'sk-ant-...';
+  if (typeof cfg.llmSpendUsd === 'number') {
+    $('cfgLlmSpend').textContent = `已用 $${cfg.llmSpendUsd.toFixed(2)} / $${cfg.llmSpendCap || 20}`;
+  }
   if (!$('stylePrompt').value) $('stylePrompt').value = cfg.stylePrompt || '';
   if (!$('inbetweenPrompt').value) $('inbetweenPrompt').value = cfg.inbetweenPrompt || '';
   if (!$('colorPrompt').value) $('colorPrompt').value = cfg.colorPrompt || '';
