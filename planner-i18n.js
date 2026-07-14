@@ -176,6 +176,7 @@
     'Close': ['关闭', '閉じる'],
     'Cannot reach the local studio server — launch the Atelier 452 desktop app first.': ['无法连接本地工作室服务 — 请先启动 Atelier 452 桌面应用。', 'ローカルのスタジオサーバーに接続できません — 先にAtelier 452デスクトップアプリを起動してください。'],
     'No readable text found in this file (scanned PDFs need OCR first).': ['文件中没有可读文本（扫描版 PDF 需先 OCR）。', 'このファイルに読めるテキストがありません（スキャンPDFは先にOCRが必要）。'],
+    "Claude spend cap reached — imported with offline rules instead. Recharge at console.anthropic.com, then tell Claude it's recharged to unlock the next $20.": ['已达 Claude 用量上限——本次已用离线规则导入。请到 console.anthropic.com 充值，然后告诉 Claude 已充值，即可解锁下一个 $20 额度。', 'Claudeの利用上限に達したため、今回はオフラインルールで読み込みました。console.anthropic.com でチャージ後、Claudeに「チャージ済み」と伝えると次の$20が解放されます。'],
     'Claude agent': ['Claude 智能体', 'Claudeエージェント'],
     'ChatGPT agent': ['ChatGPT 智能体', 'ChatGPTエージェント'],
     'Doubao agent': ['豆包智能体', 'doubaoエージェント'],
