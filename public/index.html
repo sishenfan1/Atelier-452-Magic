@@ -529,6 +529,25 @@
   </div>
   <div class="field-row">
     <div class="field">
+      <label>剧本解析智能体 <span class="hint">PDF 导入用；auto = 有哪个密钥用哪个</span></label>
+      <select id="cfgLlmProvider">
+        <option value="auto">自动（Claude → ChatGPT → doubao）</option>
+        <option value="anthropic">Claude（Anthropic）</option>
+        <option value="openai">ChatGPT（OpenAI 兼容）</option>
+        <option value="ark">doubao（火山方舟）</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>智能体模型 ID <span class="hint">留空用默认</span></label>
+      <input type="text" id="cfgLlmModel" placeholder="claude-fable-5 / gpt-5.6-sol / doubao-seed-1-6-250615">
+    </div>
+  </div>
+  <div class="field">
+    <label>Claude API Key <span class="hint">留空保持不变；ChatGPT 复用上方 OpenAI Key</span></label>
+    <input type="password" id="cfgAnthropicKey" placeholder="sk-ant-...">
+  </div>
+  <div class="field-row">
+    <div class="field">
       <label>分辨率</label>
       <select id="cfgResolution">
         <option>480p</option><option selected>720p</option><option>1080p</option>
