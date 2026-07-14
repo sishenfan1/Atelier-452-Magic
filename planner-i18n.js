@@ -9,6 +9,8 @@
     // nav / shell
     'Home': ['主页', 'ホーム'],
     'Projects': ['项目', 'プロジェクト'],
+    'Scene Setup': ['场景搭建', 'シーン設定'],
+    'Environments': ['环境', '環境'],
     'Dashboard': ['仪表盘', 'ダッシュボード'],
     'Scene Board': ['场景看板', 'シーンボード'],
     'Characters': ['角色', 'キャラクター'],
