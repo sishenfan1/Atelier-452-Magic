@@ -154,6 +154,19 @@
     'Per-shot prompt': ['单镜头提示词', 'カット別プロンプト'],
     'Generation Studio': ['生成工作室', '生成スタジオ'],
     'Open in new tab ↗': ['新标签页打开 ↗', '新しいタブで開く ↗'],
+    // kawaii mascot cast — greetings & home cards
+    'Welcome back, Director! Let’s make something cute today ♡': ['欢迎回来，导演！今天也一起做点可爱的东西吧 ♡', 'おかえりなさい、監督！今日もかわいいものを作りましょ ♡'],
+    'Dreams to frames… leave the magic to me ✧': ['把梦境变成画面……魔法就交给我吧 ✧', '夢をフレームに……魔法はわたしにおまかせ ✧'],
+    'All your films, neatly filed and ready!': ['你的所有影片，都整理得井井有条！', 'あなたの作品、ぜんぶきちんと整理済みです！'],
+    'Places, everyone! The board is set ♡': ['各就各位！看板已经就绪 ♡', 'みんな配置について！ボードの準備完了 ♡'],
+    'Every hero needs a heart — meet your cast!': ['每位主角都需要一颗心——来见见你的角色们！', 'ヒーローには心が必要——キャストに会いましょう！'],
+    'Let’s grow little worlds to wander in ♪': ['一起种出可以漫步的小世界吧 ♪', 'さまよえる小さな世界を育てましょう ♪'],
+    'Style is everything, darling ☆ time to sparkle!': ['风格就是一切，亲爱的 ☆ 闪耀起来！', 'スタイルこそすべてよ、ダーリン ☆ 輝く時間！'],
+    'Tick-tock ♪ every second tells your story.': ['滴答滴答 ♪ 每一秒都在讲述你的故事。', 'チクタク ♪ 一秒ごとにあなたの物語。'],
+    'Your galaxy of films & archives': ['你的影片与档案星系', '作品とアーカイブの銀河'],
+    'Board, characters, environments & timeline in one': ['看板、角色、环境与时间线合而为一', 'ボード・キャラ・環境・タイムラインをひとつに'],
+    'The visual genome of your film': ['你影片的视觉基因', '作品のビジュアル遺伝子'],
+    'Inside Scene Setup — sequence the whole constellation': ['就在场景搭建里——为整个星座排序', 'シーン設定の中に——星座まるごとシーケンス'],
   };
 
   var LANG = localStorage.getItem('adwLang') || 'en';
