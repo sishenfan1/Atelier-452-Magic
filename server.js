@@ -78,6 +78,8 @@ const DEFAULT_CONFIG = {
   llmProvider: 'auto',   // 'auto' | 'anthropic' | 'openai' | 'ark'
   anthropicKey: '',
   llmModel: '',          // 留空则按提供商用默认：claude-fable-5 / gpt-5.6-sol / doubao-seed-1-6-250615
+  // Claude 用量硬顶：累计成本达到 capUsd 后拒绝再调用 Claude，需人工确认充值后重置
+  llmSpend: { usd: 0, capUsd: 20 },
   resolution: '720p',
   ratio: 'adaptive',
   stylePrompt: DEFAULT_STYLE_PROMPT,
@@ -559,6 +561,8 @@ app.get('/api/config', (req, res) => {
     llmProvider: cfg.llmProvider || 'auto',
     hasAnthropicKey: !!cfg.anthropicKey,
     llmModel: cfg.llmModel || '',
+    llmSpendUsd: getLlmSpend().usd,
+    llmSpendCap: getLlmSpend().capUsd,
     presets: cfg.presets || [],
     promptFolders: cfg.promptFolders || [],
     usedPrompts: cfg.usedPrompts || [],
@@ -593,11 +597,20 @@ app.post('/api/config', (req, res) => {
   if (model) cur.model = model;
   if (resolution) cur.resolution = resolution;
   if (ratio) cur.ratio = ratio;
-  const { llmProvider, anthropicKey, llmModel } = req.body || {};
+  const { llmProvider, anthropicKey, llmModel, llmSpendReset, llmSpendCap } = req.body || {};
   if (llmProvider) cur.llmProvider = llmProvider;
   if (anthropicKey !== undefined && anthropicKey !== '') cur.anthropicKey = anthropicKey;
   if (anthropicKey === null) cur.anthropicKey = '';
   if (llmModel !== undefined) cur.llmModel = llmModel;
+  // 用量重置：仅在用户确认已充值后调用（新的 $20 周期）
+  if (llmSpendReset === true) {
+    const s = cur.llmSpend && typeof cur.llmSpend === 'object' ? cur.llmSpend : {};
+    cur.llmSpend = { usd: 0, capUsd: Number(s.capUsd) > 0 ? Number(s.capUsd) : 20 };
+  }
+  if (Number(llmSpendCap) > 0) {
+    const s = cur.llmSpend && typeof cur.llmSpend === 'object' ? cur.llmSpend : {};
+    cur.llmSpend = { usd: Number(s.usd) || 0, capUsd: Number(llmSpendCap) };
+  }
   saveConfig(cur);
   res.json({ ok: true, hasKey: !!cur.apiKey });
 });
@@ -638,6 +651,49 @@ const SCRIPT_AGENT_SYS = [
   '}',
 ].join('\n');
 
+// ---- Claude 用量计费（美元/百万 token；缓存读 0.1×、缓存写 1.25×）----
+const CLAUDE_PRICES = [
+  { match: /fable|mythos/i,           inUsd: 10, outUsd: 50 },
+  { match: /opus/i,                   inUsd: 5,  outUsd: 25 },
+  { match: /sonnet/i,                 inUsd: 3,  outUsd: 15 },
+  { match: /haiku/i,                  inUsd: 1,  outUsd: 5 },
+];
+
+function claudeCostUsd(model, usage) {
+  if (!usage) return 0;
+  const p = CLAUDE_PRICES.find((x) => x.match.test(model || '')) || CLAUDE_PRICES[0]; // 未知模型按最贵计，宁多勿少
+  const inTok = usage.input_tokens || 0;
+  const outTok = usage.output_tokens || 0;
+  const cacheW = usage.cache_creation_input_tokens || 0;
+  const cacheR = usage.cache_read_input_tokens || 0;
+  return (
+    (inTok * p.inUsd + outTok * p.outUsd + cacheW * p.inUsd * 1.25 + cacheR * p.inUsd * 0.1) / 1e6
+  );
+}
+
+function getLlmSpend() {
+  const cur = loadConfig();
+  const s = cur.llmSpend && typeof cur.llmSpend === 'object' ? cur.llmSpend : {};
+  return { usd: Number(s.usd) || 0, capUsd: Number(s.capUsd) > 0 ? Number(s.capUsd) : 20 };
+}
+
+/** 成功调用后累计花费（重新读盘再写，避免覆盖并发变更） */
+function trackClaudeSpend(model, usage) {
+  try {
+    const cost = claudeCostUsd(model, usage);
+    if (!cost) return;
+    const cur = loadConfig();
+    const s = cur.llmSpend && typeof cur.llmSpend === 'object' ? cur.llmSpend : {};
+    cur.llmSpend = {
+      usd: Math.round(((Number(s.usd) || 0) + cost) * 1e6) / 1e6,
+      capUsd: Number(s.capUsd) > 0 ? Number(s.capUsd) : 20,
+    };
+    saveConfig(cur);
+  } catch {}
+}
+
+const CLAUDE_CAP_MSG = 'CLAUDE_SPEND_CAP_REACHED';
+
 function tolerantJsonParse(s) {
   if (!s) return null;
   let t = String(s).trim();
@@ -657,6 +713,11 @@ function validScriptAnalysis(a) {
 /** 单轮 LLM 补全（三提供商统一入口），返回纯文本 */
 async function llmComplete(cfg, provider, messages) {
   if (provider === 'anthropic') {
+    // 硬顶闸门：达到上限即拒绝，任何一分钱都不再花
+    const spend = getLlmSpend();
+    if (spend.usd >= spend.capUsd) {
+      throw new Error(`${CLAUDE_CAP_MSG}: 已用 $${spend.usd.toFixed(2)} / $${spend.capUsd} 上限`);
+    }
     const model = cfg.llmModel || 'claude-fable-5';
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -673,7 +734,9 @@ async function llmComplete(cfg, provider, messages) {
       }),
     });
     const j = await r.json().catch(() => ({}));
+    if (j && j.usage) trackClaudeSpend(j.model || model, j.usage); // 成功响应即计费
     if (!r.ok) throw new Error(`Claude (${model}) ${r.status}: ${JSON.stringify(j).slice(0, 260)}`);
+    if (j.stop_reason === 'refusal') throw new Error(`Claude (${model}) declined the request (refusal)`);
     return (j.content || []).map((b) => b.text || '').join('');
   }
   // openai 兼容 与 ark 同为 chat/completions 形状
@@ -784,11 +847,21 @@ app.post('/api/script/analyze', async (req, res) => {
       analysis = tolerantJsonParse(reply);
     }
     if (!validScriptAnalysis(analysis)) throw new Error('LLM 两轮输出均无法解析为有效 JSON');
-    res.json({ ok: true, provider, model: cfg.llmModel || undefined, truncated, analysis });
+    const spend = getLlmSpend();
+    res.json({
+      ok: true, provider, model: cfg.llmModel || undefined, truncated, analysis,
+      spendUsd: spend.usd, spendCap: spend.capUsd,
+    });
   } catch (e) {
     // LLM 失败 → 启发式兜底，同时把简短错误带回给前端提示
     const note = String(e.message || e).replace(/\s+/g, ' ').slice(0, 160);
-    res.json({ ok: true, provider: 'heuristic', truncated, note, analysis: heuristicScriptAnalysis(text) });
+    const spend = getLlmSpend();
+    res.json({
+      ok: true, provider: 'heuristic', truncated, note,
+      capped: note.includes(CLAUDE_CAP_MSG),
+      spendUsd: spend.usd, spendCap: spend.capUsd,
+      analysis: heuristicScriptAnalysis(text),
+    });
   }
 });
 
