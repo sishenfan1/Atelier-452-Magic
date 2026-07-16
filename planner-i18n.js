@@ -118,6 +118,12 @@
     'Style': ['风格', 'スタイル'],
     'Remove': ['移除', '削除'],
     'Send merged prompt to the Generation Studio': ['把合并提示词发送到生成工作室', '合成プロンプトを生成スタジオへ送る'],
+    '✧ Send to Studio': ['✧ 发送到工作室', '✧ スタジオへ送る'],
+    'Send the whole shot to Gen Studio: merged prompt → action box, thumbnail → keyframe, character & location refs → repaint/refine reference slots':
+      ['把整个镜头发送到生成工作室：合并提示词 → 动作描述框，缩略图 → 关键帧，角色与场景参考 → 重绘/精修参考位', 'カット一式を生成スタジオへ送信：合成プロンプト→アクション欄、サムネイル→キーフレーム、キャラ・ロケ参考→リペイント/リファイン参考スロット'],
+    '+ Insert': ['+ 插入', '+ 挿入'],
+    "append a profile's fragments to the prompts": ['把所选风格档案的片段追加到提示词', 'プロファイルの断片をプロンプトへ追加'],
+    "Append this DNA's prompt fragment and negative defaults": ['追加该 DNA 的提示词片段与默认负面词', 'このDNAのプロンプト断片と既定ネガティブを追加'],
     // bibles
     'Character Bible': ['角色圣经', 'キャラクター設定集'],
     'Location Bible': ['场景地圣经', 'ロケーション設定集'],
