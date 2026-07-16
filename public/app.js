@@ -2621,10 +2621,20 @@ window.__state = state;
 
 syncSliderLabels();
 refreshConfig();
-// 主要提示词框：聚焦自动展开
-for (const id of ['globalPrompt', 'stylePrompt', 'inbetweenPrompt', 'colorPrompt', 'v2vExtraPrompt', 'detailPrompt', 'gapDlgPrompt', 'refinePrompt', 'refineExtraPrompt']) {
-  autoExpand($(id));
-}
+// 所有多行文本框：聚焦自动展开（事件委托，动态创建的框也生效）
+const taGrow = (el) => {
+  el.style.height = 'auto';
+  el.style.height = Math.min(420, Math.max(el.scrollHeight + 4, 140)) + 'px';
+};
+document.addEventListener('focusin', (e) => {
+  if (e.target.tagName === 'TEXTAREA') taGrow(e.target);
+});
+document.addEventListener('input', (e) => {
+  if (e.target.tagName === 'TEXTAREA' && document.activeElement === e.target) taGrow(e.target);
+});
+document.addEventListener('focusout', (e) => {
+  if (e.target.tagName === 'TEXTAREA') e.target.style.height = '';
+});
 
 // 段落编辑弹窗
 $('gapDlgActing').oninput = (e) => {
@@ -2720,13 +2730,63 @@ document.addEventListener('drop', (e) => {
   insertIntoTextarea(ta, frag);
 });
 
-// 与策划端（父窗口 iframe）握手：接收 DNA 列表
+// ---------------- 镜头包直通：Scene Setup → Gen Studio 全量入位 ----------------
+async function dataUrlToFile(src, name) {
+  const blob = await (await fetch(src)).blob();
+  const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+  return new File([blob], `${name}.${ext}`, { type: blob.type || 'image/png' });
+}
+
+/** 接收镜头包：提示词 → 动作描述；缩略图 → 关键帧；参考图 → 转绘+精修参考 */
+async function receiveShotHandoff(d) {
+  try {
+    if (d.prompt) {
+      $('globalPrompt').value = d.prompt;
+      scheduleSave();
+    }
+    // 关键帧（镜头缩略图）→ 工作区 1 输入关键帧
+    const keyFiles = [];
+    for (const src of (d.keyframes || []).slice(0, 15)) {
+      try { keyFiles.push(await dataUrlToFile(src, d.title ? `${d.title}-key` : 'shot-key')); } catch {}
+    }
+    if (keyFiles.length) await addFiles(keyFiles);
+    // 角色/场景参考图 → 工作区 2 上色参考 + 工作区 3 精修参考（各上传一次，双处登记）
+    let nRefs = 0;
+    for (const r of (d.refs || []).slice(0, 12)) {
+      try {
+        const f = await dataUrlToFile(r.src, r.label || 'ref');
+        if (!f.type.startsWith('image/')) continue;
+        const url = await uploadAsset(f);
+        state.v2v.refs.push({ id: nextRefId++, name: f.name, url });
+        state.refine.refs.push({ id: nextRefId++, name: f.name, url });
+        nRefs++;
+      } catch {}
+    }
+    if (nRefs) { renderV2V(); renderRefine(); scheduleSave(); }
+    switchMode('inbetween');
+    setWholeStatus(
+      `已接收镜头「${d.title || ''}」✓ ` +
+      [d.prompt ? '提示词' : '', keyFiles.length ? `${keyFiles.length} 关键帧` : '', nRefs ? `${nRefs} 参考图` : '']
+        .filter(Boolean).join(' · ') + ' 已入位',
+    );
+  } catch (err) {
+    setWholeStatus('镜头包接收失败: ' + (err && err.message || err));
+  }
+}
+
+// 与策划端（父窗口 iframe）握手：接收 DNA 列表 / 镜头包
 window.addEventListener('message', (e) => {
   const d = e.data;
-  if (!d || d.type !== 'a452-style-dna' || !Array.isArray(d.profiles)) return;
-  dnaProfiles = d.profiles.filter((p) => p && p.fragment);
-  renderDnaDock();
+  if (!d) return;
+  if (d.type === 'a452-style-dna' && Array.isArray(d.profiles)) {
+    dnaProfiles = d.profiles.filter((p) => p && p.fragment);
+    renderDnaDock();
+    return;
+  }
+  if (d.type === 'a452-shot-handoff') {
+    receiveShotHandoff(d);
+  }
 });
 renderDnaDock();
-// 通知父窗口：studio 就绪，请把 DNA 发过来
+// 通知父窗口：studio 就绪，请把 DNA / 镜头包发过来
 try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'a452-studio-ready' }, '*'); } catch {}
