@@ -203,6 +203,18 @@
     // style dna / continuity / timeline / export
     'Live preview': ['实时预览', 'ライブプレビュー'],
     'Negative defaults': ['默认负向词', 'デフォルトネガティブ'],
+    // built-in style library
+    'Style Library': ['风格库', 'スタイルライブラリ'],
+    'curated presets — original prompts + structured DNA': ['精选预设——原始提示词 + 结构化 DNA', '厳選プリセット — 原文プロンプト + 構造化DNA'],
+    '+ Add to library': ['+ 加入库', '+ ライブラリへ追加'],
+    'Added ✓ — add again': ['已添加 ✓ — 再次添加', '追加済み ✓ — もう一度追加'],
+    'view original prompts (2)': ['查看原始提示词 (2)', '原文プロンプトを見る (2)'],
+    'view original prompts (3)': ['查看原始提示词 (3)', '原文プロンプトを見る (3)'],
+    'view original prompts (4)': ['查看原始提示词 (4)', '原文プロンプトを見る (4)'],
+    'Style DNA fragment (composed)': ['Style DNA 片段（合成）', 'スタイルDNA断片（合成）'],
+    'Original prompts — as found (verbatim)': ['原始提示词——按发现原样保留（逐字）', '原文プロンプト — 発見時のまま（逐語）'],
+    '+ Add to my library': ['+ 加入我的库', '+ 自分のライブラリへ追加'],
+    'Copy JSON': ['复制 JSON', 'JSONをコピー'],
     'New DNA': ['新建 DNA', '新規DNA'],
     'Set active': ['设为当前', 'アクティブにする'],
     'Set active profile': ['设为当前档案', 'プロファイルをアクティブにする'],
