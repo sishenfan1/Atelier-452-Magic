@@ -507,3 +507,20 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 #genPlayerInfo { font-variant-numeric: tabular-nums; }
 .gen-card { cursor: pointer; }
 .gen-card.playing { border-color: var(--accent, #3b82f6); }
+
+/* ---------------- 洋葱皮 Onion Skin ---------------- */
+.onion-dialog { width: min(940px, 94vw); }
+.onion-stage {
+  display: flex; justify-content: center; align-items: center;
+  background: #05060F; border: 1px solid #0F172A; border-radius: 10px;
+  min-height: 200px; overflow: hidden;
+}
+#onionCanvas { max-width: 100%; max-height: 62vh; display: block; }
+.onion-controls { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.onion-info { font-variant-numeric: tabular-nums; min-width: 52px; text-align: center; }
+.onion-swatch {
+  display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+  vertical-align: -1px; margin-left: 2px;
+}
+.onion-swatch.red { background: rgba(255,45,85,.75); }
+.onion-swatch.green { background: rgba(48,209,88,.75); }

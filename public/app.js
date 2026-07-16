@@ -32,6 +32,7 @@ const state = {
   },
   presets: [],       // {id, name, text}
   usedPrompts: [],   // 自动记录的已用提示词 {t, kind, text}
+  pendingTasks: [],  // 已提交未完成的生成任务 {id, kind, ...提交时元数据}，刷新后恢复轮询
 };
 let nextImgId = 1;
 let nextRefId = 1;
@@ -53,20 +54,31 @@ function escapeHtml(value) {
 }
 
 async function uploadAsset(file) {
+  // base64 编码后约膨胀 1.37 倍，服务器 json 上限 300MB → 原文件约 220MB
+  if (file.size > 220 * 1024 * 1024) throw new Error('文件过大：请控制在约 220MB 以内');
   const dataUrl = await fileToDataUrl(file);
   const res = await fetch('/api/upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dataUrl, name: file.name }),
   });
+  if (!res.ok) {
+    if (res.status === 413) throw new Error('文件过大：base64 编码后超过 300MB，原文件请控制在约 220MB 以内');
+    const txt = await res.text().catch(() => '');
+    let msg = '';
+    try { msg = JSON.parse(txt).error || ''; } catch {}
+    throw new Error(msg || `上传失败 HTTP ${res.status} ${txt.slice(0, 120)}`);
+  }
   const json = await res.json();
-  if (!res.ok) throw new Error(json.error || '上传失败');
   return json.url;
 }
 
 // ---------------- 工程持久化 ----------------
 let saveTimer = 0;
+let projectLoaded = false; // 恢复完成前禁止写盘，避免用近乎空白的快照覆盖 project.json
+let pendingSave = false;   // 恢复期间收到的保存请求先记账，恢复完成后补一次
 function scheduleSave() {
+  if (!projectLoaded) { pendingSave = true; return; }
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveProject, 800);
 }
@@ -115,21 +127,37 @@ function snapshot() {
       refs: state.refine.refs,
       history: state.refine.history,
     },
+    pendingTasks: state.pendingTasks,
   };
 }
 function saveProject() {
+  if (!projectLoaded) { pendingSave = true; return; }
   fetch('/api/project', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(snapshot()),
   }).catch(() => {});
 }
+// 恢复完成（含全新空工程）后解除写盘封锁，并补发恢复期间攒下的保存
+function markProjectLoaded() {
+  projectLoaded = true;
+  if (pendingSave) { pendingSave = false; scheduleSave(); }
+}
 async function loadProject() {
   try {
-    const p = await (await fetch('/api/project')).json();
-    if (!p || !p.images) return;
-    nextImgId = p.nextImgId || 1;
-    nextRefId = p.nextRefId || 1;
+    const res = await fetch('/api/project');
+    const p = await res.json().catch(() => null);
+    if (!res.ok || (p && p.corrupt)) {
+      // 工程文件损坏/读取失败：保持写盘封锁，绝不让空快照覆盖尚可抢救的数据
+      console.warn('工程加载失败', p && p.error);
+      alert('工程加载失败' + (p && p.error ? '：' + p.error : '（服务器错误）') + '\n为防止数据被覆盖，自动保存已停用；请检查数据目录后重新打开应用。');
+      return;
+    }
+    if (p && p.restoredFromBackup) console.warn('工程已从 .bak 备份恢复');
+    if (!p || !p.images) { markProjectLoaded(); return; }
+    // 计数器只增不减：避免与恢复并发的上传拿到重复 id
+    nextImgId = Math.max(nextImgId, p.nextImgId || 1);
+    nextRefId = Math.max(nextRefId, p.nextRefId || 1);
     state.images = p.images || [];
     for (const s of p.segCache || []) {
       state.segCache.set(s.key, {
@@ -153,7 +181,8 @@ async function loadProject() {
     }
     const st = p.settings || {};
     if (st.segSeconds) { $('segSeconds').value = st.segSeconds; }
-    if (st.globalPrompt) $('globalPrompt').value = st.globalPrompt;
+    // 已有手动填入的提示词（如镜头包/adwPrompt 直通）时不覆盖
+    if (st.globalPrompt && !$('globalPrompt').value.trim()) $('globalPrompt').value = st.globalPrompt;
     if (st.remapSeconds) $('remapSeconds').value = st.remapSeconds;
     if (st.remapFps) $('remapFps').value = st.remapFps;
     if (st.acting) $('acting').value = st.acting;
@@ -179,13 +208,19 @@ async function loadProject() {
     state.refine.refs = rf.refs || [];
     state.refine.history = rf.history || [];
     state.refine.current = state.refine.history.length ? 0 : -1;
+    state.pendingTasks = Array.isArray(p.pendingTasks) ? p.pendingTasks : [];
     renderRefine();
     syncSliderLabels();
     rebuildSegments();
     renderAll();
     renderV2V();
+    markProjectLoaded();
+    // 恢复刷新前仍在轮询的生成任务，找回已提交（已付费）的结果
+    for (const entry of state.pendingTasks.slice()) resumePendingTask(entry);
   } catch (e) {
     console.warn('工程恢复失败', e);
+    // 恢复失败时保持写盘封锁：此刻内存里是空工程，放开保存会覆盖磁盘上的真实数据
+    setWholeStatus('工程恢复失败，本次会话不会自动保存 — 请刷新页面重试');
   }
 }
 
@@ -223,17 +258,6 @@ function syncSliderLabels() {
   $('remapFpsVal').textContent = $('remapFps').value;
   $('v2vDurationVal').textContent = $('v2vDuration').value + ' 秒';
   updateWholeTotal();
-}
-
-// ---------------- 输入框聚焦自动展开 ----------------
-function autoExpand(el, minH = 120) {
-  const grow = () => {
-    el.style.height = 'auto';
-    el.style.height = Math.min(420, Math.max(el.scrollHeight + 4, minH)) + 'px';
-  };
-  el.addEventListener('focus', grow);
-  el.addEventListener('input', () => { if (document.activeElement === el) grow(); });
-  el.addEventListener('blur', () => { el.style.height = ''; });
 }
 
 // ---------------- 图片悬停放大气泡 ----------------
@@ -465,7 +489,12 @@ async function generateSegment(i, overrides = {}) {
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || res.statusText);
-    await pollTask(seg, json.id, { prompt, seconds });
+    trackPendingTask({ id: json.id, kind: 'segment', segKey: seg.key, prompt, seconds });
+    try {
+      await pollTask(seg, json.id, { prompt, seconds });
+    } finally {
+      untrackPendingTask(json.id);
+    }
   } catch (e) {
     seg.status = 'error';
     seg.error = String(e.message || e);
@@ -477,7 +506,8 @@ async function generateSegment(i, overrides = {}) {
 async function pollTask(seg, taskId, meta = {}) {
   for (;;) {
     const res = await fetch('/api/segments/' + taskId);
-    const json = await res.json();
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || ('轮询失败 ' + res.status));
     if (json.status === 'succeeded') {
       const version = {
         videoUrl: json.videoUrl,
@@ -496,6 +526,7 @@ async function pollTask(seg, taskId, meta = {}) {
       return;
     }
     if (json.status === 'failed') throw new Error(json.error || '生成失败');
+    if (json.status !== 'running') throw new Error('任务状态未知');
     await new Promise((r) => setTimeout(r, 2500));
   }
 }
@@ -526,6 +557,8 @@ function extractFrames(version) {
   if (version.extractPromise) return version.extractPromise;
   version.extractPromise = extractChain
     .then(() => (version.frames ? null : doExtractFrames(version)))
+    .then((r) => { version.extractFailed = false; return r; })
+    .catch((e) => { version.extractFailed = true; throw e; }) // 标记终态失败，避免播放端无限重试
     .finally(() => { version.extractPromise = null; });
   extractChain = version.extractPromise.catch(() => {});
   return version.extractPromise;
@@ -636,18 +669,23 @@ function buildRemapSchedule(globalFrames) {
 
 function startPlayback(mode) {
   stopPlayback();
+  // 只要有任一分段的当前版本还没抽帧，就先抽全再播放，避免悄悄跳过分段
+  const pending = state.segments
+    .map((s) => s.versions[s.active])
+    .filter((v) => v && v.videoUrl && !v.frames && !v.extractFailed);
+  if (pending.length) {
+    setBadge('抽帧准备中…');
+    Promise.all(pending.map((v) => extractFrames(v).catch(() => {})))
+      .then(() => { if (!state.playing) startPlayback(mode); });
+    return;
+  }
   const globalFrames = buildGlobalFrames();
   if (globalFrames.length === 0) {
-    const pending = state.segments
-      .map((s) => s.versions[s.active])
-      .filter((v) => v && !v.frames);
-    if (pending.length) {
-      setBadge('抽帧准备中…');
-      Promise.all(pending.map((v) => extractFrames(v).catch(() => {})))
-        .then(() => { if (!state.playing) startPlayback(mode); });
-    } else {
-      setBadge('无可播放分段');
-    }
+    const anyFailed = state.segments.some((s) => {
+      const v = s.versions[s.active];
+      return v && v.extractFailed;
+    });
+    setBadge(anyFailed ? '分段视频文件缺失或无法解码，请重新生成' : '无可播放分段');
     return;
   }
   let schedule, fps;
@@ -741,26 +779,15 @@ function highlightInput(imgIdx) {
 function setExportStatus(t) { $('exportStatus').textContent = t || ''; }
 
 async function concatReady() {
-  const ready = readySegments();
-  if (ready.length === 0) {
-    // 帧未抽也允许拼接：只要有成功版本
-    const withVideo = state.segments
-      .map((seg) => seg.versions[seg.active])
-      .filter((v) => v && v.videoUrl);
-    if (!withVideo.length) return null;
-    const res = await fetch('/api/concat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ urls: withVideo.map((v) => v.videoUrl), fps: PREVIEW_FPS }),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || '拼接失败');
-    return json.url;
-  }
+  // 服务器端拼接只需要 videoUrl，与是否已抽帧无关：始终按分段顺序取当前版本，避免悄悄丢段
+  const withVideo = state.segments
+    .map((seg) => seg.versions[seg.active])
+    .filter((v) => v && v.videoUrl);
+  if (!withVideo.length) return null;
   const res = await fetch('/api/concat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ urls: ready.map((x) => x.ver.videoUrl), fps: PREVIEW_FPS }),
+    body: JSON.stringify({ urls: withVideo.map((v) => v.videoUrl), fps: PREVIEW_FPS }),
   });
   const json = await res.json();
   if (!res.ok) throw new Error(json.error || '拼接失败');
@@ -789,6 +816,19 @@ async function exportMp4() {
 
 async function exportRemapMp4() {
   stopPlayback();
+  // 导出前把所有分段当前版本的帧抽全，防止只导出部分分段
+  const pending = state.segments
+    .map((s) => s.versions[s.active])
+    .filter((v) => v && v.videoUrl && !v.frames && !v.extractFailed);
+  if (pending.length) {
+    setExportStatus('抽帧准备中…');
+    await Promise.all(pending.map((v) => extractFrames(v).catch(() => {})));
+  }
+  const missing = state.segments.some((s) => {
+    const v = s.versions[s.active];
+    return v && v.videoUrl && !v.frames;
+  });
+  if (missing) throw new Error('部分分段视频缺失或无法解码，无法完整导出重映射');
   const schedule = buildRemapSchedule(buildGlobalFrames());
   if (schedule.length === 0) throw new Error('无可导出帧');
   const fps = Number($('remapFps').value);
@@ -819,8 +859,14 @@ async function exportRemapMp4() {
   setExportStatus('转码 mp4 中…');
   const blob = new Blob(chunks, { type: 'video/webm' });
   const res = await fetch('/api/convert', { method: 'POST', body: blob });
+  if (!res.ok) {
+    if (res.status === 413) throw new Error('转码失败：视频过大（上限 800MB）');
+    const txt = await res.text().catch(() => '');
+    let msg = '';
+    try { msg = JSON.parse(txt).error || ''; } catch {}
+    throw new Error(msg || ('转码失败 HTTP ' + res.status));
+  }
   const json = await res.json();
-  if (!res.ok) throw new Error(json.error || '转码失败');
   download(json.url, 'inbetween_remap.mp4');
   setExportStatus('已导出重映射 mp4');
 }
@@ -1027,9 +1073,86 @@ setInterval(() => { if (jobs.some((j) => j.status === 'running')) renderJobs(); 
 async function pollUntilDone(taskId) {
   for (;;) {
     await new Promise((r) => setTimeout(r, 4000));
-    const p = await (await fetch('/api/segments/' + taskId)).json();
+    const res = await fetch('/api/segments/' + taskId);
+    const p = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(p.error || ('轮询失败 ' + res.status));
     if (p.status === 'succeeded') return p;
     if (p.status === 'failed') throw new Error(p.error || '生成失败');
+    if (p.status !== 'running') throw new Error('任务状态未知');
+  }
+}
+
+// ---------------- 未完成任务登记：刷新/重启后恢复轮询，找回已付费的结果 ----------------
+function trackPendingTask(entry) {
+  state.pendingTasks.push(entry);
+  scheduleSave();
+}
+function untrackPendingTask(id) {
+  const i = state.pendingTasks.findIndex((x) => x && x.id === id);
+  if (i >= 0) { state.pendingTasks.splice(i, 1); scheduleSave(); }
+}
+/** 恢复一条工程快照里的未完成任务：继续轮询并把结果补进对应历史 */
+async function resumePendingTask(entry) {
+  if (!entry || !entry.id) return;
+  try {
+    if (entry.kind === 'whole') {
+      const job = addJob(`🎬 一体生成 ${entry.frames || '?'}帧 → ${entry.duration || '?'}s（恢复）`, 60 + (entry.duration || 8) * 25);
+      try {
+        const p = await pollUntilDone(entry.id);
+        state.whole.history.unshift({
+          videoUrl: p.videoUrl,
+          time: new Date().toLocaleString('zh-CN', { hour12: false }),
+          duration: entry.duration || 0,
+          frames: entry.frames || 0,
+          note: entry.note || '',
+          acting: entry.acting,
+          actingTier: entry.actingTier,
+          dl: false,
+        });
+        state.whole.current = 0;
+        renderWhole();
+        finishJob(job, true);
+      } catch (e) {
+        finishJob(job, false, String(e.message || e));
+      }
+    } else if (entry.kind === 'v2v') {
+      const job = addJob(`🎨 转绘上色 ${entry.duration || '?'}s（恢复）`, 90 + (entry.duration || 8) * 30);
+      try {
+        const p = await pollUntilDone(entry.id);
+        state.v2v.history.unshift({
+          videoUrl: p.videoUrl,
+          time: new Date().toLocaleString('zh-CN', { hour12: false }),
+          duration: entry.duration || 0,
+          sourceUrl: entry.sourceUrl || null,
+          refs: (entry.refs || []).length,
+          refUrls: entry.refs || [],
+          colorPrompt: entry.colorPrompt || '',
+          note: entry.note || '',
+        });
+        state.v2v.current = 0;
+        renderV2V();
+        finishJob(job, true);
+      } catch (e) {
+        finishJob(job, false, String(e.message || e));
+      }
+    } else if (entry.kind === 'segment' && entry.segKey) {
+      const seg = state.segCache.get(entry.segKey);
+      if (seg && seg.status !== 'running') {
+        seg.status = 'running';
+        seg.error = null;
+        renderTimeline();
+        try {
+          await pollTask(seg, entry.id, { prompt: entry.prompt || '', seconds: entry.seconds || null });
+        } catch (e) {
+          seg.status = 'error';
+          seg.error = String(e.message || e);
+        }
+        renderTimeline();
+      }
+    }
+  } finally {
+    untrackPendingTask(entry.id);
+    scheduleSave();
   }
 }
 
@@ -1046,6 +1169,8 @@ async function wholeGenerate() {
   const totalDur = Math.max(4, Math.min(15, Math.round(wholeTotalSeconds())));
   const frames = state.images.length;
   const note = $('globalPrompt').value.trim();
+  const actingLevel = Number($('acting').value);
+  const tierName = actingTier(actingLevel).name;
   const body = JSON.stringify({
     images: state.images.map((im) => im.url),
     prompt: note,
@@ -1065,8 +1190,13 @@ async function wholeGenerate() {
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || res.statusText);
-    const p = await pollUntilDone(json.id);
-    const actingLevel = Number($('acting').value);
+    trackPendingTask({ id: json.id, kind: 'whole', duration: totalDur, frames, note, acting: actingLevel, actingTier: tierName });
+    let p;
+    try {
+      p = await pollUntilDone(json.id);
+    } finally {
+      untrackPendingTask(json.id);
+    }
     state.whole.history.unshift({
       videoUrl: p.videoUrl,
       time: new Date().toLocaleString('zh-CN', { hour12: false }),
@@ -1074,7 +1204,7 @@ async function wholeGenerate() {
       frames,
       note,
       acting: actingLevel,
-      actingTier: actingTier(actingLevel).name,
+      actingTier: tierName,
       dl: false,
     });
     state.whole.current = 0;
@@ -1202,6 +1332,9 @@ document.addEventListener('keydown', (e) => {
   if ($('viewInbetween').hidden || !genPlayerUrl) return;
   const el = document.activeElement;
   if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+  if (document.querySelector('dialog[open]')) return; // 弹窗打开时不劫持快捷键
+  // 空格让聚焦的按钮正常触发；方向键保留给逐帧步进（点完播放器按钮后仍可步进）
+  if (e.code === 'Space' && el && el.tagName === 'BUTTON') return;
   e.preventDefault();
   if (e.code === 'Space') toggleGenPlayer();
   else stepGenFrame(e.code === 'ArrowRight' ? 1 : -1);
@@ -1220,7 +1353,8 @@ function setRefineSource(url, name) {
 async function refineGenerate() {
   const rf = state.refine;
   if (!rf.sourceUrl) { alert(t('请先选择要精修的源图片')); return; }
-  const prompt = [$('refinePrompt').value.trim(), $('refineExtraPrompt').value.trim()].filter(Boolean).join('\n');
+  const note = $('refineExtraPrompt').value.trim(); // 提交时快照，避免并行任务记录到之后改过的值
+  const prompt = [$('refinePrompt').value.trim(), note].filter(Boolean).join('\n');
   const src = rf.sourceUrl;
   const job = addJob(`🖌 精修 ${rf.sourceName || 'image'}`, 25);
   setRefineStatus(t('已提交（可继续提交更多任务并行生成，进度见右下角）'));
@@ -1236,7 +1370,7 @@ async function refineGenerate() {
       src,
       out: json.url,
       time: new Date().toLocaleString('zh-CN', { hour12: false }),
-      note: $('refineExtraPrompt').value.trim(),
+      note,
     });
     rf.current = 0;
     renderRefine();
@@ -1451,6 +1585,7 @@ function libRow(f, p) {
     <button class="btn ldel" title="${t('删除')}">✕</button>`;
   row.querySelector('.lapply').onclick = () => applyPromptText(p.text, p.name);
   row.querySelector('.ldel').onclick = () => {
+    if (!confirm(`${t('删除')} “${p.name}”？`)) return;
     f.prompts = f.prompts.filter((x) => x.id !== p.id);
     saveFolders();
     renderLibrary();
@@ -1755,6 +1890,7 @@ function plPromptRow(f, p, idx) {
   row.querySelector('.pproj').onclick = () =>
     openProjSave({ text: p.text, filename: p.name + '.txt', kind: 'prompt' });
   row.querySelector('.pdel').onclick = () => {
+    if (!confirm(`${t('删除')} “${p.name}”？`)) return;
     f.prompts = f.prompts.filter((x) => x.id !== p.id);
     saveFolders();
     renderLibraryPage();
@@ -1925,7 +2061,13 @@ async function v2vGenerate() {
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || res.statusText);
-    const p = await pollUntilDone(json.id);
+    trackPendingTask({ id: json.id, kind: 'v2v', duration, sourceUrl: snap.videoUrl, refs: snap.refs, colorPrompt: snap.colorPrompt, note: snap.prompt });
+    let p;
+    try {
+      p = await pollUntilDone(json.id);
+    } finally {
+      untrackPendingTask(json.id);
+    }
     v.history.unshift({
       videoUrl: p.videoUrl,
       time: new Date().toLocaleString('zh-CN', { hour12: false }),
@@ -2046,7 +2188,7 @@ function renderImageList() {
       });
       const gp = li.querySelector('.gap-prompt');
       gp.addEventListener('change', (e) => { im.gapPrompt = e.target.value; scheduleSave(); });
-      autoExpand(gp, 80);
+      gp.dataset.minGrow = '80'; // 聚焦自动展开的最小高度（全局委托 taGrow 读取）
     }
     // 排序拖拽只从缩略图行发起：按下时临时开启 draggable，结束即关闭
     const row = li.querySelector('.im-row');
@@ -2148,7 +2290,7 @@ function renderTimeline() {
         <button class="btn regen" ${seg.status === 'running' ? 'disabled' : ''}>生成新版本</button>
         <button class="btn detail">详细</button>
       </div>
-      ${seg.error ? `<div class="err-msg">${seg.error}</div>` : ''}`;
+      ${seg.error ? `<div class="err-msg">${escapeHtml(seg.error)}</div>` : ''}`;
     card.querySelectorAll('.version-pill').forEach((btn) => {
       btn.onclick = () => {
         stopPlayback();
@@ -2610,21 +2752,21 @@ window.__state = state;
 
 // ---------------- 启动 ----------------
 // 接收来自 AI Director Workspace 的合并提示词（/studio?adwPrompt=…）
-(() => {
+// 这里只取参数，实际填入放在工程恢复完成之后，避免被恢复的旧提示词覆盖
+const adwPromptParam = (() => {
   const p = new URLSearchParams(location.search).get('adwPrompt');
-  if (!p) return;
-  $('globalPrompt').value = p;
-  scheduleSave();
-  setWholeStatus('已接收来自 Director Workspace 的镜头提示词 ✓');
-  history.replaceState(null, '', location.pathname);
+  if (p) history.replaceState(null, '', location.pathname);
+  return p || '';
 })();
 
 syncSliderLabels();
 refreshConfig();
 // 所有多行文本框：聚焦自动展开（事件委托，动态创建的框也生效）
+// 最小高度默认 140，可用 data-min-grow 按框覆盖（如关键帧动作描述框 80）
 const taGrow = (el) => {
+  const minH = Number(el.dataset.minGrow) || 140;
   el.style.height = 'auto';
-  el.style.height = Math.min(420, Math.max(el.scrollHeight + 4, 140)) + 'px';
+  el.style.height = Math.min(420, Math.max(el.scrollHeight + 4, minH)) + 'px';
 };
 document.addEventListener('focusin', (e) => {
   if (e.target.tagName === 'TEXTAREA') taGrow(e.target);
@@ -2632,8 +2774,21 @@ document.addEventListener('focusin', (e) => {
 document.addEventListener('input', (e) => {
   if (e.target.tagName === 'TEXTAREA' && document.activeElement === e.target) taGrow(e.target);
 });
+// 失焦时不立刻收起：mousedown 会先触发 focusout，若同步收起，下方按钮会在
+// mousedown 与 mouseup 之间位移，导致第一次点击被吞。按住时等 pointerup 后再收起。
+let taPointerHeld = false;
+document.addEventListener('pointerdown', () => { taPointerHeld = true; }, true);
+document.addEventListener('pointerup', () => { taPointerHeld = false; }, true);
+document.addEventListener('pointercancel', () => { taPointerHeld = false; }, true);
 document.addEventListener('focusout', (e) => {
-  if (e.target.tagName === 'TEXTAREA') e.target.style.height = '';
+  if (e.target.tagName !== 'TEXTAREA') return;
+  const el = e.target;
+  const collapse = () => { if (document.activeElement !== el) el.style.height = ''; };
+  if (taPointerHeld) {
+    document.addEventListener('pointerup', () => setTimeout(collapse, 0), { once: true });
+  } else {
+    setTimeout(collapse, 150);
+  }
 });
 
 // 段落编辑弹窗
@@ -2664,7 +2819,31 @@ renderAll();
 renderV2V();
 renderWhole();
 setBadge('已停止');
-loadProject();
+// 先恢复工程，再应用 adwPrompt 直通、再向父窗口宣布就绪：
+// 保证镜头包（a452-shot-handoff）不会与恢复过程竞争，避免关键帧/提示词被覆盖或 id 重复
+loadProject().then(() => {
+  if (adwPromptParam) {
+    $('globalPrompt').value = adwPromptParam;
+    scheduleSave();
+    setWholeStatus('已接收来自 Director Workspace 的镜头提示词 ✓');
+  }
+  try {
+    if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'a452-studio-ready' }, '*');
+  } catch {}
+});
+
+// 关窗/刷新前把未落盘的改动冲刷到服务器（防抖 800ms 内关窗会丢最后一次编辑）
+window.addEventListener('pagehide', () => {
+  clearTimeout(saveTimer);
+  if (!projectLoaded) return; // 恢复未完成时内存是空工程，禁止覆盖磁盘
+  const body = JSON.stringify(snapshot());
+  // Blob 必须带 application/json，否则服务器 express.json() 不解析
+  let ok = false;
+  try { ok = navigator.sendBeacon('/api/project', new Blob([body], { type: 'application/json' })); } catch {}
+  if (!ok) {
+    fetch('/api/project', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+  }
+});
 
 // ---------------- 风格 DNA 停靠区（从策划端 postMessage 接收，可拖入任意提示词框） ----------------
 let dnaProfiles = []; // [{ id, name, fragment }]
@@ -2730,6 +2909,83 @@ document.addEventListener('drop', (e) => {
   insertIntoTextarea(ta, frag);
 });
 
+// ---------------- 洋葱皮 Onion Skin：相邻关键帧半透明叠加对比 ----------------
+let onionIdx = 0;
+let onionDrawSeq = 0; // 竞态令牌：连续翻帧时只有最后一次绘制生效
+const onionImgCache = new Map();
+
+function onionLoad(url) {
+  if (onionImgCache.has(url)) return onionImgCache.get(url);
+  const p = new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => { onionImgCache.delete(url); reject(new Error('图片加载失败')); };
+    img.src = url;
+  });
+  onionImgCache.set(url, p);
+  return p;
+}
+
+// 把一帧涂成纯色调（保留轮廓与明暗），用于红/绿叠加层
+function onionTint(img, color, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const x = c.getContext('2d');
+  x.drawImage(img, 0, 0, w, h);
+  x.globalCompositeOperation = 'source-atop';
+  x.fillStyle = color;
+  x.fillRect(0, 0, w, h);
+  return c;
+}
+
+async function drawOnion() {
+  const seq = ++onionDrawSeq;
+  const n = state.images.length;
+  if (!n) return;
+  onionIdx = Math.max(0, Math.min(onionIdx, n - 1));
+  $('onionInfo').textContent = `${onionIdx + 1} / ${n}`;
+  $('onionPrev').disabled = onionIdx === 0;
+  $('onionNext').disabled = onionIdx === n - 1;
+  const wantPrev = $('onionPrevChk').checked && onionIdx > 0;
+  const wantNext = $('onionNextChk').checked && onionIdx < n - 1;
+  try {
+    const [cur, prev, next] = await Promise.all([
+      onionLoad(state.images[onionIdx].url),
+      wantPrev ? onionLoad(state.images[onionIdx - 1].url) : null,
+      wantNext ? onionLoad(state.images[onionIdx + 1].url) : null,
+    ]);
+    if (seq !== onionDrawSeq) return; // 已被更新的绘制取代
+    const canvas = $('onionCanvas');
+    const w = (canvas.width = cur.naturalWidth || 1280);
+    const h = (canvas.height = cur.naturalHeight || 720);
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(cur, 0, 0, w, h);
+    ctx.globalAlpha = Number($('onionAlpha').value) / 100;
+    if (prev) ctx.drawImage(onionTint(prev, 'rgba(255,45,85,.55)', w, h), 0, 0);
+    if (next) ctx.drawImage(onionTint(next, 'rgba(48,209,88,.55)', w, h), 0, 0);
+    ctx.globalAlpha = 1;
+  } catch (err) {
+    if (seq === onionDrawSeq) setWholeStatus('洋葱皮绘制失败: ' + (err && err.message || err));
+  }
+}
+
+$('btnOnion').onclick = () => {
+  if (state.images.length < 2) { setWholeStatus('洋葱皮需要至少 2 张关键帧'); return; }
+  $('onionDialog').showModal();
+  drawOnion();
+};
+$('onionPrev').onclick = () => { onionIdx--; drawOnion(); };
+$('onionNext').onclick = () => { onionIdx++; drawOnion(); };
+$('onionAlpha').oninput = (e) => { $('onionAlphaVal').textContent = e.target.value + ' %'; drawOnion(); };
+$('onionPrevChk').onchange = drawOnion;
+$('onionNextChk').onchange = drawOnion;
+$('onionClose').onclick = () => $('onionDialog').close();
+$('onionDialog').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft') { e.preventDefault(); onionIdx--; drawOnion(); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); onionIdx++; drawOnion(); }
+});
+
 // ---------------- 镜头包直通：Scene Setup → Gen Studio 全量入位 ----------------
 async function dataUrlToFile(src, name) {
   const blob = await (await fetch(src)).blob();
@@ -2775,7 +3031,19 @@ async function receiveShotHandoff(d) {
 }
 
 // 与策划端（父窗口 iframe）握手：接收 DNA 列表 / 镜头包
+// 只信任同源与本机（localhost/127.0.0.1 任意端口，覆盖策划端 3452/3453 与 Electron），
+// 阻止任意网页 window.open 本页后驱动本地 API（与 server.js 的 CORS 锁配套）
+function isTrustedMessageOrigin(origin) {
+  if (origin === location.origin) return true;
+  try {
+    const host = new URL(origin).hostname;
+    return host === 'localhost' || host === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
 window.addEventListener('message', (e) => {
+  if (!isTrustedMessageOrigin(e.origin)) return;
   const d = e.data;
   if (!d) return;
   if (d.type === 'a452-style-dna' && Array.isArray(d.profiles)) {
@@ -2788,5 +3056,5 @@ window.addEventListener('message', (e) => {
   }
 });
 renderDnaDock();
-// 通知父窗口：studio 就绪，请把 DNA / 镜头包发过来
-try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'a452-studio-ready' }, '*'); } catch {}
+// 「a452-studio-ready」握手已移至 loadProject().then(...)（见「启动」段）：
+// 必须等工程恢复完成后再邀请父窗口发镜头包，否则会与恢复竞争

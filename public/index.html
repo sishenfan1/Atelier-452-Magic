@@ -140,6 +140,7 @@
           <button id="btnPlaySeq" class="btn primary">▶ 连续播放</button>
           <button id="btnPlayRemap" class="btn">⧉ 重映射播放</button>
           <button id="btnStop" class="btn">■ 停止</button>
+          <button id="btnOnion" class="btn" title="前后关键帧半透明叠加对比 — 检查中割运动弧线">🧅 洋葱皮</button>
           <label class="check"><input type="checkbox" id="chkLoop" checked> 循环</label>
           <label class="check"><input type="checkbox" id="chkTame"> 自动缓急</label>
           <span class="inline-slider"><span class="lbl">感度</span>
@@ -436,6 +437,23 @@
 <div id="jobStack" class="job-stack" hidden></div>
 
 <!-- 段落编辑弹窗（宏观时间轴） -->
+<!-- 洋葱皮对比查看器 -->
+<dialog id="onionDialog" class="onion-dialog">
+  <h3>🧅 洋葱皮 <span class="hint">— 前帧红・后帧绿，半透明叠加检查相邻关键帧的运动弧线</span></h3>
+  <div class="onion-stage"><canvas id="onionCanvas"></canvas></div>
+  <div class="onion-controls">
+    <button id="onionPrev" class="btn">◀ 上一帧</button>
+    <b id="onionInfo" class="onion-info">1 / 1</b>
+    <button id="onionNext" class="btn">下一帧 ▶</button>
+    <span class="inline-slider"><span class="lbl">叠加浓度</span>
+      <input type="range" id="onionAlpha" min="10" max="80" value="35">
+      <b id="onionAlphaVal">35 %</b></span>
+    <label class="check"><input type="checkbox" id="onionPrevChk" checked> 前帧 <span class="onion-swatch red"></span></label>
+    <label class="check"><input type="checkbox" id="onionNextChk" checked> 后帧 <span class="onion-swatch green"></span></label>
+    <button id="onionClose" class="btn ghost" style="margin-left:auto">关闭</button>
+  </div>
+</dialog>
+
 <dialog id="gapDialog">
   <h3 id="gapDialogTitle">段落设置</h3>
   <div class="field-row">

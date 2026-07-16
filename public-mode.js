@@ -199,13 +199,20 @@ function install(app, dirs) {
   app.get('/api/project', (req, res) => {
     const user = getUser(req);
     if (!user) return res.status(401).json({ error: '请先登录' });
-    try { res.json(JSON.parse(fs.readFileSync(projPath(user.sub), 'utf8'))); } catch { res.json({}); }
+    const r = dirs.readProjectFile(projPath(user.sub));
+    if (!r.ok) return res.status(500).json({ corrupt: true, error: '工程文件已损坏且无可用备份（原件已保存为 .corrupt-*），请勿覆盖保存' });
+    if (r.restored && r.data && typeof r.data === 'object') r.data.restoredFromBackup = true;
+    res.json(r.data);
   });
   app.post('/api/project', (req, res) => {
     const user = getUser(req);
     if (!user) return res.status(401).json({ error: '请先登录' });
-    fs.writeFileSync(projPath(user.sub), JSON.stringify(req.body || {}, null, 1));
-    res.json({ ok: true });
+    try {
+      dirs.writeProjectFile(projPath(user.sub), req.body || {});
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e.message || e) });
+    }
   });
 
   // ---------- Stripe 充值 ----------

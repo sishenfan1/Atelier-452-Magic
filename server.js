@@ -105,15 +105,120 @@ function logUsedPrompt(cfg, kind, text) {
   } catch {}
 }
 
-function loadConfig() {
+// ---------- 原子 JSON 写入（tmp + fsync + rename；Windows 杀毒/索引器瞬时锁定时短重试） ----------
+function atomicWriteFileSync(file, data) {
+  const tmp = file + '.tmp';
+  const fd = fs.openSync(tmp, 'w');
   try {
-    return { ...DEFAULT_CONFIG, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) };
-  } catch {
-    return { ...DEFAULT_CONFIG };
+    fs.writeSync(fd, data);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
   }
+  let lastErr = null;
+  for (let i = 0; i < 3; i++) {
+    try {
+      fs.renameSync(tmp, file);
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (e.code !== 'EPERM' && e.code !== 'EBUSY' && e.code !== 'EACCES') throw e;
+      const until = Date.now() + 50 * (i + 1);
+      while (Date.now() < until) { /* 同步上下文里的短暂退避 */ }
+    }
+  }
+  throw lastErr;
+}
+
+// config.json 损坏且无备份可用时置位：花费按已达上限处理（fail closed），
+// 并冻结配置写入，防止把清零的 llmSpend 账本静默持久化。仅用户显式 llmSpendReset 可解除。
+let configCorrupt = false;
+let corruptEvidenceSaved = false;
+
+function loadConfig() {
+  let raw = null;
+  try {
+    raw = fs.readFileSync(CONFIG_PATH, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return { ...DEFAULT_CONFIG }; // 首次运行
+    console.error('读取 config.json 失败:', String(e.message || e));
+  }
+  if (raw !== null) {
+    try {
+      const cfg = { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
+      configCorrupt = false; // 主文件完好 → 解除（瞬时读错误造成的）写入冻结
+      return cfg;
+    } catch {
+      // 损坏：先保全现场（仅一次），绝不静默用默认值覆盖
+      if (!corruptEvidenceSaved) {
+        corruptEvidenceSaved = true;
+        try { fs.copyFileSync(CONFIG_PATH, CONFIG_PATH + '.corrupt-' + Date.now()); } catch {}
+      }
+    }
+  }
+  // 主文件不可用 → 尝试上一次成功写入的备份
+  try {
+    const cfg = { ...DEFAULT_CONFIG, ...JSON.parse(fs.readFileSync(CONFIG_PATH + '.bak', 'utf8')) };
+    console.error('config.json 损坏，已从 config.json.bak 恢复（损坏原件已保存为 .corrupt-*）');
+    configCorrupt = false; // 备份完好：账本未丢，允许写回修复主文件
+    return cfg;
+  } catch {}
+  // 主文件与备份都不可用：llmSpend 账本按已达上限处理，冻结写入，等待用户处理
+  if (!configCorrupt) {
+    configCorrupt = true;
+    console.error('config.json 与 config.json.bak 均不可读：Claude 花费按已达上限处理，' +
+      '配置写入已冻结。请检查 ' + CONFIG_PATH + '（损坏原件已保存为 .corrupt-*），或在设置中执行"已充值重置"解除。');
+  }
+  const cfg = { ...DEFAULT_CONFIG };
+  cfg.llmSpend = { usd: DEFAULT_CONFIG.llmSpend.capUsd, capUsd: DEFAULT_CONFIG.llmSpend.capUsd };
+  return cfg;
 }
 function saveConfig(cfg) {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  if (configCorrupt) {
+    throw new Error('config.json 已损坏且无可用备份：为保护 Claude 花费账本，配置写入已冻结。' +
+      '请手工检查 config.json（损坏原件已保存为 .corrupt-*），或在设置中执行"已充值重置"解除。');
+  }
+  atomicWriteFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  // 刷新备份：备份内容 = 刚写入的合法 JSON，供下次主文件损坏时恢复
+  try { fs.copyFileSync(CONFIG_PATH, CONFIG_PATH + '.bak'); } catch {}
+}
+
+// ---------- 工程文件读写（原子写 + .bak 轮换 + 损坏识别，供本地与公开站共用） ----------
+function readProjectFile(file) {
+  let raw = null;
+  let parseFailed = false;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return { ok: true, data: {} }; // 首次运行：空工程
+    console.error('读取 ' + path.basename(file) + ' 失败:', String(e.message || e));
+  }
+  if (raw !== null) {
+    try {
+      return { ok: true, data: JSON.parse(raw) };
+    } catch {
+      parseFailed = true;
+      // 损坏文件先改名保全现场，防止后续自动保存覆盖掉尚可抢救的数据
+      try { fs.renameSync(file, file + '.corrupt-' + Date.now()); } catch {}
+    }
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(file + '.bak', 'utf8'));
+    console.error(path.basename(file) + ' 不可用，已从 .bak 备份恢复' + (parseFailed ? '（损坏原件已保存为 .corrupt-*）' : ''));
+    if (parseFailed) { try { atomicWriteFileSync(file, JSON.stringify(data, null, 1)); } catch {} }
+    return { ok: true, data, restored: true };
+  } catch {}
+  console.error(path.basename(file) + ' 损坏且无可用备份，已拒绝当作空工程返回');
+  return { ok: false };
+}
+function writeProjectFile(file, body) {
+  // 覆盖前把当前可解析的版本轮换为 .bak（解析校验保证备份永远是好文件）
+  try {
+    const prev = fs.readFileSync(file, 'utf8');
+    JSON.parse(prev);
+    atomicWriteFileSync(file + '.bak', prev);
+  } catch {}
+  atomicWriteFileSync(file, JSON.stringify(body || {}, null, 1));
 }
 
 // ---------- ffmpeg ----------
@@ -153,6 +258,7 @@ function runFfmpeg(args) {
 }
 
 function probeSize(file) {
+  if (!FFPROBE) return { w: 1280, h: 720 };
   const out = spawnSync(FFPROBE, ['-v', 'error', '-select_streams', 'v:0',
     '-show_entries', 'stream=width,height', '-of', 'csv=p=0', file], { encoding: 'utf8' });
   const [w, h] = (out.stdout || '').trim().split(',').map(Number);
@@ -212,10 +318,19 @@ function ensureTunnel() {
   tunnel.starting = new Promise((resolve, reject) => {
     const proc = spawn(exe, ['tunnel', '--url', 'http://127.0.0.1:' + FILES_PORT]);
     let buf = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { proc.kill(); } catch {} // 超时必须杀掉子进程，防止 cloudflared 越积越多
+      reject(new Error('cloudflared 隧道启动超时（30s）'));
+    }, 30000);
     const onData = (d) => {
       buf += d.toString();
       const m = buf.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-      if (m && !tunnel.url) {
+      if (m && !settled) {
+        settled = true;
+        clearTimeout(timer);
         tunnel.url = m[0];
         tunnel.proc = proc;
         console.log('文件隧道已建立:', tunnel.url);
@@ -224,9 +339,21 @@ function ensureTunnel() {
     };
     proc.stdout.on('data', onData);
     proc.stderr.on('data', onData);
-    proc.on('error', reject);
-    proc.on('close', () => { if (tunnel.proc === proc) { tunnel.url = null; tunnel.proc = null; } });
-    setTimeout(() => { if (!tunnel.url) reject(new Error('cloudflared 隧道启动超时（30s）')); }, 30000);
+    proc.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(e);
+    });
+    proc.on('close', (code) => {
+      if (tunnel.proc === proc) { tunnel.url = null; tunnel.proc = null; }
+      // 快速失败：cloudflared 提前退出时立即报错，不再空等 30s
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(new Error('cloudflared 提前退出 (code ' + code + '): ' + buf.slice(-400)));
+      }
+    });
   }).finally(() => { tunnel.starting = null; });
   return tunnel.starting;
 }
@@ -247,11 +374,12 @@ async function mockGenerate(id, firstDataUrl, lastDataUrl, duration) {
   const a = path.join(TMP_DIR, id + '_a.png');
   const b = path.join(TMP_DIR, id + '_b.png');
   const out = path.join(VIDEO_DIR, id + '.mp4');
-  dataUrlToFile(firstDataUrl, a);
-  dataUrlToFile(lastDataUrl, b);
   const d = clampDuration(duration);
   const fit = 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:white,setsar=1';
   try {
+    // 写帧文件放在 try 里：非法 data URL（如 svg/视频帧）只失败本任务，不能炸掉整个进程
+    dataUrlToFile(firstDataUrl, a);
+    dataUrlToFile(lastDataUrl, b);
     await runFfmpeg([
       '-y', '-loop', '1', '-t', String(d), '-i', a, '-loop', '1', '-t', String(d), '-i', b,
       '-filter_complex', `[0:v]${fit}[va];[1:v]${fit}[vb];[va][vb]xfade=transition=fade:duration=${d}:offset=0,format=yuv420p`,
@@ -297,7 +425,20 @@ async function arkCreate(cfg, firstDataUrl, lastDataUrl, prompt, duration, style
   return json.id;
 }
 
+// 远端结果 → 本地文件（结果链接 24h 过期，成功即下载）
+async function arkDownload(task, remote, localId) {
+  const file = path.join(VIDEO_DIR, localId + '.mp4');
+  const vres = await fetch(remote);
+  if (!vres.ok) throw new Error('下载生成视频失败: ' + vres.status);
+  fs.writeFileSync(file, Buffer.from(await vres.arrayBuffer()));
+  task.status = 'succeeded';
+  task.videoUrl = '/videos/' + localId + '.mp4';
+  delete task.remoteUrl;
+}
+
 async function arkPoll(cfg, task, localId) {
+  // 上次已确认成功但下载失败：跳过状态查询，直接重试下载（钱已花，结果必须找回）
+  if (task.remoteUrl) return arkDownload(task, task.remoteUrl, localId);
   const res = await fetch(cfg.endpoint + '/contents/generations/tasks/' + task.arkId, {
     headers: { Authorization: 'Bearer ' + cfg.apiKey },
   });
@@ -307,13 +448,9 @@ async function arkPoll(cfg, task, localId) {
   if (status === 'succeeded') {
     const remote = json.content && json.content.video_url;
     if (!remote) throw new Error('任务成功但没有 video_url');
-    // 结果链接 24h 过期，立刻下载到本地
-    const file = path.join(VIDEO_DIR, localId + '.mp4');
-    const vres = await fetch(remote);
-    if (!vres.ok) throw new Error('下载生成视频失败: ' + vres.status);
-    fs.writeFileSync(file, Buffer.from(await vres.arrayBuffer()));
-    task.status = 'succeeded';
-    task.videoUrl = '/videos/' + localId + '.mp4';
+    // 先记下远端地址：本次下载失败时，后续轮询可直接重试下载
+    task.remoteUrl = remote;
+    await arkDownload(task, remote, localId);
   } else if (status === 'failed' || status === 'cancelled') {
     task.status = 'failed';
     task.error = (json.error && (json.error.message || json.error.code)) || ('任务' + status);
@@ -505,7 +642,7 @@ app.use(['/api/projects', '/api/style-json', '/api/script'], (req, res, next) =>
 });
 
 // 公开站模式（A452_PUBLIC=1）：登录、积分、每用户工程、支付。桌面模式下为 null。
-const pm = require(path.join(__dirname, 'public-mode.js')).install(app, { DATA_DIR });
+const pm = require(path.join(__dirname, 'public-mode.js')).install(app, { DATA_DIR, readProjectFile, writeProjectFile });
 
 // 只读文件服务（隧道只暴露这个端口，不暴露 API）
 const filesApp = express();
@@ -528,16 +665,24 @@ app.post('/api/upload', (req, res) => {
 });
 
 app.get('/api/project', (req, res) => {
-  try {
-    res.json(JSON.parse(fs.readFileSync(PROJECT_PATH, 'utf8')));
-  } catch {
-    res.json({});
+  const r = readProjectFile(PROJECT_PATH);
+  if (!r.ok) {
+    return res.status(500).json({
+      corrupt: true,
+      error: 'project.json 已损坏且无可用备份（原件已保存为 project.json.corrupt-*），请检查数据目录后再保存',
+    });
   }
+  if (r.restored && r.data && typeof r.data === 'object') r.data.restoredFromBackup = true;
+  res.json(r.data);
 });
 
 app.post('/api/project', (req, res) => {
-  fs.writeFileSync(PROJECT_PATH, JSON.stringify(req.body || {}, null, 1));
-  res.json({ ok: true });
+  try {
+    writeProjectFile(PROJECT_PATH, req.body || {});
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
 });
 
 app.get('/api/config', (req, res) => {
@@ -606,6 +751,8 @@ app.post('/api/config', (req, res) => {
   if (llmSpendReset === true) {
     const s = cur.llmSpend && typeof cur.llmSpend === 'object' ? cur.llmSpend : {};
     cur.llmSpend = { usd: 0, capUsd: Number(s.capUsd) > 0 ? Number(s.capUsd) : 20 };
+    pendingClaudeCost = 0;
+    configCorrupt = false; // 用户显式重置账本 → 解除损坏冻结，允许重建 config.json
   }
   if (Number(llmSpendCap) > 0) {
     const s = cur.llmSpend && typeof cur.llmSpend === 'object' ? cur.llmSpend : {};
@@ -671,25 +818,32 @@ function claudeCostUsd(model, usage) {
   );
 }
 
+// saveConfig 失败时暂存的未落盘 Claude 花费：计入硬顶闸门，下次成功写入时补记，绝不静默丢弃
+let pendingClaudeCost = 0;
+
 function getLlmSpend() {
   const cur = loadConfig();
   const s = cur.llmSpend && typeof cur.llmSpend === 'object' ? cur.llmSpend : {};
-  return { usd: Number(s.usd) || 0, capUsd: Number(s.capUsd) > 0 ? Number(s.capUsd) : 20 };
+  return { usd: (Number(s.usd) || 0) + pendingClaudeCost, capUsd: Number(s.capUsd) > 0 ? Number(s.capUsd) : 20 };
 }
 
 /** 成功调用后累计花费（重新读盘再写，避免覆盖并发变更） */
 function trackClaudeSpend(model, usage) {
+  const cost = claudeCostUsd(model, usage);
+  if (!cost && !pendingClaudeCost) return;
   try {
-    const cost = claudeCostUsd(model, usage);
-    if (!cost) return;
     const cur = loadConfig();
     const s = cur.llmSpend && typeof cur.llmSpend === 'object' ? cur.llmSpend : {};
     cur.llmSpend = {
-      usd: Math.round(((Number(s.usd) || 0) + cost) * 1e6) / 1e6,
+      usd: Math.round(((Number(s.usd) || 0) + cost + pendingClaudeCost) * 1e6) / 1e6,
       capUsd: Number(s.capUsd) > 0 ? Number(s.capUsd) : 20,
     };
     saveConfig(cur);
-  } catch {}
+    pendingClaudeCost = 0;
+  } catch (e) {
+    pendingClaudeCost += cost;
+    console.error(`Claude 花费记账写入失败（$${cost.toFixed(6)} 已暂存，计入硬顶并待下次写入补记）:`, String(e.message || e));
+  }
 }
 
 const CLAUDE_CAP_MSG = 'CLAUDE_SPEND_CAP_REACHED';
@@ -706,8 +860,13 @@ function tolerantJsonParse(s) {
 }
 
 function validScriptAnalysis(a) {
+  // 数组字段若存在必须真是数组（LLM 常把 characters 写成逗号字符串），
+  // 不合格就走既有的一轮修复循环，把已付费的调用救回来
+  const optArray = (v) => v === undefined || Array.isArray(v);
   return !!(a && Array.isArray(a.scenes) && a.scenes.length > 0 &&
-    a.scenes.every((sc) => sc && typeof sc === 'object' && Array.isArray(sc.shots)));
+    optArray(a.characters) && optArray(a.locations) &&
+    a.scenes.every((sc) => sc && typeof sc === 'object' && Array.isArray(sc.shots) &&
+      sc.shots.every((sh) => sh && typeof sh === 'object' && optArray(sh.characters))));
 }
 
 /** 单轮 LLM 补全（三提供商统一入口），返回纯文本 */
@@ -841,7 +1000,7 @@ app.post('/api/script/analyze', async (req, res) => {
     if (!validScriptAnalysis(analysis)) {
       const repair = {
         role: 'user',
-        content: `Your previous output was not valid against the schema (parse result: ${analysis ? 'missing/empty scenes[].shots[]' : 'not parseable JSON'}). Previous output begins:\n${String(reply).slice(0, 1500)}\n\nOutput ONLY the corrected complete JSON object now.`,
+        content: `Your previous output was not valid against the schema (parse result: ${analysis ? 'missing/empty scenes[].shots[], or characters/locations/shot.characters is not a JSON array' : 'not parseable JSON'}). Previous output begins:\n${String(reply).slice(0, 1500)}\n\nOutput ONLY the corrected complete JSON object now.`,
       };
       reply = await llmComplete(cfg, provider, [userMsg, { role: 'assistant', content: String(reply).slice(0, 6000) }, repair]);
       analysis = tolerantJsonParse(reply);
@@ -1342,9 +1501,17 @@ app.get('/api/segments/:id', async (req, res) => {
   if (task.mode === 'ark' && task.status === 'running') {
     try {
       await arkPoll(loadConfig(), task, req.params.id);
+      task.pollFails = 0; // 只统计连续失败
+      delete task.warning;
     } catch (e) {
-      task.status = 'failed';
-      task.error = String(e.message || e);
+      // 单次轮询/下载出错（网络抖动、429/5xx）不判死刑：任务在远端可能仍在跑甚至已成功
+      task.pollFails = (task.pollFails || 0) + 1;
+      if (task.pollFails >= 10) {
+        task.status = 'failed';
+        task.error = String(e.message || e);
+      } else {
+        task.warning = String(e.message || e); // 保持 running，下次轮询自动重试
+      }
     }
   }
   // 公开站：任务失败自动退还积分（一次性）
@@ -1352,26 +1519,27 @@ app.get('/api/segments/:id', async (req, res) => {
     task.refunded = true;
     pm.refund(task.uid, task.cost, 'task-failed');
   }
-  res.json({ status: task.status, videoUrl: task.videoUrl, error: task.error, mode: task.mode });
+  res.json({ status: task.status, videoUrl: task.videoUrl, error: task.error, mode: task.mode, warning: task.warning });
 });
 
 // 顺序拼接导出 mp4（统一重编码，保证不同分段能接上）
 app.post('/api/concat', async (req, res) => {
   const { urls, fps } = req.body || {};
   if (!Array.isArray(urls) || urls.length === 0) return res.status(400).json({ error: '没有可拼接的分段' });
+  if (!FFMPEG) return res.status(400).json({ error: '未找到 ffmpeg，请安装（winget install Gyan.FFmpeg）或设置 FFMPEG_DIR 环境变量' });
   const files = urls.map((u) => path.join(VIDEO_DIR, path.basename(u)));
   for (const f of files) if (!fs.existsSync(f)) return res.status(400).json({ error: '分段文件缺失: ' + path.basename(f) });
-  const { w, h } = probeSize(files[0]);
   const id = 'export_' + newId();
   const out = path.join(VIDEO_DIR, id + '.mp4');
-  const args = ['-y'];
-  for (const f of files) args.push('-i', f);
-  const fit = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:white,setsar=1,fps=${Number(fps) || 24}`;
-  const chains = files.map((_, i) => `[${i}:v]${fit}[v${i}]`).join(';');
-  const inputs = files.map((_, i) => `[v${i}]`).join('');
-  args.push('-filter_complex', `${chains};${inputs}concat=n=${files.length}:v=1:a=0,format=yuv420p`,
-    '-c:v', 'libx264', '-preset', 'fast', out);
   try {
+    const { w, h } = probeSize(files[0]);
+    const args = ['-y'];
+    for (const f of files) args.push('-i', f);
+    const fit = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:white,setsar=1,fps=${Number(fps) || 24}`;
+    const chains = files.map((_, i) => `[${i}:v]${fit}[v${i}]`).join(';');
+    const inputs = files.map((_, i) => `[v${i}]`).join('');
+    args.push('-filter_complex', `${chains};${inputs}concat=n=${files.length}:v=1:a=0,format=yuv420p`,
+      '-c:v', 'libx264', '-preset', 'fast', out);
     await runFfmpeg(args);
     res.json({ url: '/videos/' + id + '.mp4' });
   } catch (e) {
@@ -1381,11 +1549,14 @@ app.post('/api/concat', async (req, res) => {
 
 // webm（浏览器录制）→ mp4
 app.post('/api/convert', express.raw({ type: '*/*', limit: '800mb' }), async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    return res.status(400).json({ error: '需要原始视频字节流（请求需带 Content-Type，如 video/webm）' });
+  }
   const id = 'export_' + newId();
   const src = path.join(TMP_DIR, id + '.webm');
   const out = path.join(VIDEO_DIR, id + '.mp4');
-  fs.writeFileSync(src, req.body);
   try {
+    fs.writeFileSync(src, req.body);
     await runFfmpeg(['-y', '-i', src, '-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p', out]);
     res.json({ url: '/videos/' + id + '.mp4' });
   } catch (e) {
