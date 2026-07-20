@@ -7,3 +7,6 @@ config.json
 public/testframes/
 
 studio-site/
+config.json.bak
+config.json.corrupt-*
+config.json.tmp*

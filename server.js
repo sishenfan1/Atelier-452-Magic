@@ -629,7 +629,7 @@ const CORS_ALLOW = new Set([
   'http://localhost:3452', 'http://127.0.0.1:3452',
   'http://localhost:3453', 'http://127.0.0.1:3453', // planner dev fallback port
 ]);
-app.use(['/api/projects', '/api/style-json', '/api/script'], (req, res, next) => {
+app.use(['/api/projects', '/api/style-json', '/api/script', '/api/style', '/api/prompt-library'], (req, res, next) => {
   const origin = req.headers.origin;
   if (origin && CORS_ALLOW.has(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -869,8 +869,9 @@ function validScriptAnalysis(a) {
       sc.shots.every((sh) => sh && typeof sh === 'object' && optArray(sh.characters))));
 }
 
-/** 单轮 LLM 补全（三提供商统一入口），返回纯文本 */
-async function llmComplete(cfg, provider, messages) {
+/** 单轮 LLM 补全（三提供商统一入口），返回纯文本。system 可覆盖（默认剧本智能体） */
+async function llmComplete(cfg, provider, messages, systemPrompt) {
+  const sys = systemPrompt || SCRIPT_AGENT_SYS;
   if (provider === 'anthropic') {
     // 硬顶闸门：达到上限即拒绝，任何一分钱都不再花
     const spend = getLlmSpend();
@@ -888,7 +889,7 @@ async function llmComplete(cfg, provider, messages) {
       body: JSON.stringify({
         model,
         max_tokens: 16000,
-        system: SCRIPT_AGENT_SYS,
+        system: sys,
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
       }),
     });
@@ -907,7 +908,7 @@ async function llmComplete(cfg, provider, messages) {
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
     body: JSON.stringify({
       model,
-      messages: [{ role: 'system', content: SCRIPT_AGENT_SYS }, ...messages],
+      messages: [{ role: 'system', content: sys }, ...messages],
       max_tokens: 16000,
     }),
   });
@@ -1020,6 +1021,90 @@ app.post('/api/script/analyze', async (req, res) => {
       capped: note.includes(CLAUDE_CAP_MSG),
       spendUsd: spend.usd, spendCap: spend.capUsd,
       analysis: heuristicScriptAnalysis(text),
+    });
+  }
+});
+
+// 提示词库只读镜像：仅返回 promptFolders（绝不含任何密钥），供规划器 Style DNA 页浏览
+app.get('/api/prompt-library', (req, res) => {
+  const cfg = loadConfig();
+  res.json({ ok: true, folders: Array.isArray(cfg.promptFolders) ? cfg.promptFolders : [] });
+});
+
+// ---------------- 风格参考图解读：视觉 LLM 融合全部参考图 → StyleDNA ----------------
+const STYLE_DNA_KEYS = ['medium', 'qualityTarget', 'colorLanguage', 'lightingLanguage', 'lensLanguage', 'cameraRhythm', 'compositionRules', 'animationStyle', 'negativeDefaults', 'renderNotes'];
+
+const STYLE_INTERPRET_SYS = `You are a world-class animation art director and AI-video prompt engineer. You will be shown a set of style reference images. Interpret ALL of them together — find the shared visual language across every image (medium, rendering technique, palette, light, line, texture, composition, implied motion) and COMBINE those elements into one coherent Style DNA for an AI video generator.
+
+Output ONLY a JSON object with exactly these string fields:
+{"medium": "", "qualityTarget": "", "colorLanguage": "", "lightingLanguage": "", "lensLanguage": "", "cameraRhythm": "", "compositionRules": "", "animationStyle": "", "negativeDefaults": "", "renderNotes": ""}
+
+Field rules:
+- Every field is a comma-friendly phrase cluster (8-20 words), extremely precise, zero generic filler — "masterpiece", "best quality", "4k", "trending on artstation" are banned.
+- Use professional technique vocabulary where the images support it (cel two-tone shadow, line boil, halftone dot screens, subsurface scattering, gouache wash, inverted-hull outlines, animated on twos…). Never invent traits the images do not show; when images disagree, keep what is shared and note deliberate contrasts.
+- negativeDefaults: what generators must avoid to protect THIS look (the failure directions opposite to the images).
+- renderNotes: practical generator guidance — frame-rate feel, texture treatment, edge handling, drift risks.
+- cameraRhythm: pacing/movement grammar implied by the style (used by editors, not joined into image prompts).`;
+
+function validStyleDna(d) {
+  return !!(d && typeof d === 'object' && STYLE_DNA_KEYS.every((k) => typeof d[k] === 'string') &&
+    STYLE_DNA_KEYS.filter((k) => d[k].trim()).length >= 6);
+}
+
+app.post('/api/style/interpret', async (req, res) => {
+  const cfg = loadConfig();
+  const images = Array.isArray(req.body && req.body.images) ? req.body.images : [];
+  const hint = String((req.body && req.body.hint) || '').slice(0, 500);
+  const valid = images.filter((s) => typeof s === 'string' && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(s)).slice(0, 20);
+  if (!valid.length) return res.status(400).json({ error: 'no valid reference images (data:image/... base64, max 20)' });
+
+  // 提供商选择与剧本智能体一致：显式配置优先，auto 按 Claude → OpenAI 排序（Ark 无视觉对话模型）
+  let provider = cfg.llmProvider || 'auto';
+  if (provider === 'auto' || provider === 'ark') {
+    provider = cfg.anthropicKey ? 'anthropic' : cfg.openaiKey ? 'openai' : 'none';
+  }
+  if (provider === 'anthropic' && !cfg.anthropicKey) provider = 'none';
+  if (provider === 'openai' && !cfg.openaiKey) provider = 'none';
+  if (provider === 'none') {
+    return res.status(400).json({ error: 'no vision-capable LLM key configured — add a Claude or OpenAI key in ⚙ API Settings' });
+  }
+
+  const instruction = `Interpret these ${valid.length} style reference images together and combine their shared elements into one Style DNA JSON.${hint ? `\nCreator's note: ${hint}` : ''}\nOutput ONLY the JSON object.`;
+  const content = provider === 'anthropic'
+    ? [
+        ...valid.map((s) => {
+          const m = s.match(/^data:(image\/(?:png|jpe?g|webp|gif));base64,(.+)$/);
+          return { type: 'image', source: { type: 'base64', media_type: m[1] === 'image/jpg' ? 'image/jpeg' : m[1], data: m[2] } };
+        }),
+        { type: 'text', text: instruction },
+      ]
+    : [
+        ...valid.map((s) => ({ type: 'image_url', image_url: { url: s } })),
+        { type: 'text', text: instruction },
+      ];
+
+  try {
+    // 一轮生成 → 解析校验 → 失败带反馈修复一轮（与剧本智能体同构）
+    let reply = await llmComplete(cfg, provider, [{ role: 'user', content }], STYLE_INTERPRET_SYS);
+    let dna = tolerantJsonParse(reply);
+    if (!validStyleDna(dna)) {
+      reply = await llmComplete(cfg, provider, [
+        { role: 'user', content },
+        { role: 'assistant', content: String(reply).slice(0, 4000) },
+        { role: 'user', content: 'Your previous output was not a valid Style DNA JSON (all ten fields must be strings, at least six non-empty). Output ONLY the corrected complete JSON object now.' },
+      ], STYLE_INTERPRET_SYS);
+      dna = tolerantJsonParse(reply);
+    }
+    if (!validStyleDna(dna)) throw new Error('LLM 两轮输出均无法解析为有效 Style DNA JSON');
+    const out = {};
+    for (const k of STYLE_DNA_KEYS) out[k] = String(dna[k] || '').trim();
+    const spend = getLlmSpend();
+    res.json({ ok: true, provider, model: cfg.llmModel || undefined, imageCount: valid.length, dna: out, spendUsd: spend.usd, spendCap: spend.capUsd });
+  } catch (e) {
+    const note = String(e.message || e).replace(/\s+/g, ' ').slice(0, 300);
+    const spend = getLlmSpend();
+    res.status(note.includes(CLAUDE_CAP_MSG) ? 402 : 502).json({
+      error: note, capped: note.includes(CLAUDE_CAP_MSG), spendUsd: spend.usd, spendCap: spend.capUsd,
     });
   }
 });
