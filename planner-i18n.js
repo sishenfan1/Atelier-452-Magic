@@ -215,6 +215,22 @@
     'Original prompts — as found (verbatim)': ['原始提示词——按发现原样保留（逐字）', '原文プロンプト — 発見時のまま（逐語）'],
     '+ Add to my library': ['+ 加入我的库', '+ 自分のライブラリへ追加'],
     'Copy JSON': ['复制 JSON', 'JSONをコピー'],
+    // style refs + vision interpreter + prompt library
+    'Reference images': ['参考图', '参考画像'],
+    '+ Add images': ['+ 添加图片', '+ 画像を追加'],
+    '🔮 Interpret & combine all refs': ['🔮 解读并融合全部参考图', '🔮 全参考画像を解釈・統合'],
+    '🔮 Interpreting…': ['🔮 解读中…', '🔮 解釈中…'],
+    'Vision agent reads every reference image and combines their shared elements into all ten DNA fields':
+      ['视觉智能体读取每张参考图，把它们的共同元素融合进全部十个 DNA 字段', 'ビジョンエージェントが全参考画像を読み取り、共通要素を10のDNAフィールドへ統合します'],
+    'Add up to 20 style reference images — the agent will interpret ALL of them together and fill every DNA field with their combined language.':
+      ['最多添加 20 张风格参考图——智能体会一起解读全部图片，用它们融合后的视觉语言填满每个 DNA 字段。', '最大20枚のスタイル参考画像を追加 — エージェントが全画像をまとめて解釈し、統合された視覚言語で全DNAフィールドを埋めます。'],
+    'Prompt Library': ['提示词库', 'プロンプトライブラリ'],
+    'saved in Gen Studio': ['保存于生成工作室', '生成スタジオに保存'],
+    '↻ Refresh': ['↻ 刷新', '↻ 更新'],
+    'Prompt library lives in the desktop app': ['提示词库存放在桌面应用中', 'プロンプトライブラリはデスクトップアプリにあります'],
+    'No saved prompts yet': ['还没有保存的提示词', '保存済みプロンプトがありません'],
+    'Save prompts into the Gen Studio 提示词库 and they will appear here.': ['在生成工作室的提示词库里保存提示词后，会显示在这里。', '生成スタジオの提示词库にプロンプトを保存すると、ここに表示されます。'],
+    'Untitled prompt': ['未命名提示词', '無題プロンプト'],
     'New DNA': ['新建 DNA', '新規DNA'],
     'Set active': ['设为当前', 'アクティブにする'],
     'Set active profile': ['设为当前档案', 'プロファイルをアクティブにする'],
