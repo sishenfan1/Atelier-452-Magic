@@ -165,8 +165,14 @@
     </section>
 
     <section class="panel">
-      <h2>⏱ 宏观时间轴 <span class="hint">— 左右拖动关键帧调整间距（改变与前一帧的时长）；点击两帧之间的段落条编辑该段动作与演技</span></h2>
-      <div id="macroTimeline" class="macro-timeline"></div>
+      <h2>KEYFRAME TIMELINE <span class="hint">— 拖动手柄：左右 = 调时距 · 上下 = 调缓动（上 = 缓出 ease-out，下 = 缓入 ease-in）；点击段落打开动作编辑</span></h2>
+      <canvas id="macroCanvas" class="kf-canvas" height="170" hidden></canvas>
+      <div class="kf-legend" id="kfLegend" hidden>
+        <span><i class="kf-dot start"></i>起点</span>
+        <span><i class="kf-dot mid"></i>極点</span>
+        <span><i class="kf-dot end"></i>終点</span>
+        <span class="kf-legend-hint">曲线 = 每段速度分布 · 前高 = 缓出 · 后高 = 缓入 · 平顶 = 线性</span>
+      </div>
       <div class="hint" id="macroHint">上传至少 2 张关键帧后显示</div>
     </section>
 
@@ -540,6 +546,11 @@
     <div class="field">
       <label>本段演技 <b id="gapDlgActingVal">全局</b></label>
       <input type="range" id="gapDlgActing" min="0" max="100" step="1" value="0">
+    </div>
+    <div class="field">
+      <label>插值缓动 <b id="gapDlgEaseVal">线性</b></label>
+      <input type="range" id="gapDlgEase" min="-100" max="100" step="5" value="0">
+      <div class="hint">左 = 缓入 ease-in（先慢后快）· 中 = 线性 · 右 = 缓出 ease-out（先快后慢）</div>
     </div>
   </div>
   <div class="field">

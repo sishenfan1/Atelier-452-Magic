@@ -313,12 +313,13 @@ document.addEventListener('mouseout', (e) => {
   if (e.target.closest && e.target.closest('img')) imgPeek.classList.remove('show');
 });
 
-// ---------------- 宏观时间轴：关键帧标记可拖拽调间距 ----------------
-const MT_PAD = 44;        // 左右留白，容纳首尾缩略图
+// ---------------- KEYFRAME TIMELINE：canvas 时间轴（时距 + 缓动双轴拖拽） ----------------
+// 左右拖手柄 = 调与前帧的时距（涟漪式）；上下拖 = 调该段插值缓动 gapEase ∈ [-1,1]
+// （+ = ease-out 先快后慢，- = ease-in 先慢后快）。段曲线绘制该段速度分布。
+const KF_PAD = 16;
 const MT_MIN_GAP = 0.1;   // 段最短 0.1s
 const MT_MAX_GAP = 6;     // 段最长 6s
-let mtKeyNodes = [];
-let mtGapNodes = [];
+const KF_H = 170;
 
 function mtTimes() {
   const times = [0];
@@ -326,90 +327,231 @@ function mtTimes() {
   return times;
 }
 
-// 全量重建（结构变化时）
-function renderMacroTimeline() {
-  const el = $('macroTimeline');
-  const hint = $('macroHint');
-  mtKeyNodes = [];
-  mtGapNodes = [];
-  if (state.images.length < 2) {
-    el.innerHTML = '';
-    el.classList.remove('active');
-    hint.hidden = false;
-    return;
-  }
-  hint.hidden = true;
-  el.classList.add('active');
-  el.innerHTML = '<div class="mt-track"></div>';
-  for (let i = 0; i < state.images.length - 1; i++) {
-    const gap = document.createElement('div');
-    gap.className = 'mt-gap';
-    gap.onclick = () => openGapDialog(i);
-    el.appendChild(gap);
-    mtGapNodes.push(gap);
-  }
-  state.images.forEach((im, i) => {
-    const k = document.createElement('div');
-    k.className = 'mt-key' + (i === 0 ? ' fixed' : '');
-    k.innerHTML = `<img src="${im.url}" draggable="false"><span class="mt-idx">${i + 1}</span><span class="mt-time"></span>`;
-    if (i > 0) attachKeyDrag(k, i);
-    el.appendChild(k);
-    mtKeyNodes.push(k);
-  });
-  layoutMacroTimeline();
+/** 段速度形状：幂缓动 s=uᵖ（入）/ 1-(1-u)ᵖ（出）的导数，e≈0 时为常速 */
+function easeVelocity(u, e) {
+  if (Math.abs(e) < 0.03) return 1;
+  const p = 1 + 2 * Math.abs(e);
+  return e < 0 ? p * Math.pow(u, p - 1) : p * Math.pow(1 - u, p - 1);
+}
+function easeLabel(e) {
+  if (Math.abs(e) < 0.03) return '线性';
+  return (e > 0 ? 'ease-out ' : 'ease-in ') + Math.round(Math.abs(e) * 100) + '%';
+}
+/** 生成提示词用的缓动措辞（拼入段动作描述，让模型理解节奏意图） */
+function easePromptText(e) {
+  if (Math.abs(e) < 0.03) return '';
+  const strength = Math.abs(e) >= 0.66 ? '强烈' : Math.abs(e) >= 0.33 ? '明显' : '轻微';
+  return e > 0 ? `${strength}缓出节奏（起势快，收势渐慢定格）` : `${strength}缓入节奏（起势缓慢蓄力，加速冲向下一帧）`;
 }
 
-// 轻量布局（数值变化时，拖拽中高频调用）
-function layoutMacroTimeline() {
-  const el = $('macroTimeline');
-  if (!el.classList.contains('active') || el.clientWidth === 0) return;
+let kfDrag = null;   // {i, startX, startY, origHold, origEase, scale}
+let kfHover = null;  // {type:'key'|'gap', i}
+
+function kfGeom() {
+  const canvas = $('macroCanvas');
+  const W = canvas.clientWidth;
   const times = mtTimes();
   const total = Math.max(times[times.length - 1], 0.001);
-  const scale = (el.clientWidth - MT_PAD * 2) / total;
-  mtKeyNodes.forEach((k, i) => {
-    k.style.left = (MT_PAD + times[i] * scale) + 'px';
-    k.querySelector('.mt-time').textContent = times[i].toFixed(1) + 's';
-  });
-  mtGapNodes.forEach((g, i) => {
-    const im = state.images[i];
-    g.style.left = (MT_PAD + times[i] * scale) + 'px';
-    g.style.width = Math.max(10, (times[i + 1] - times[i]) * scale) + 'px';
-    const dur = (times[i + 1] - times[i]).toFixed(1);
-    g.innerHTML = `<span>${dur}s${(im.gapPrompt || '').trim() ? ' ✎' : ''}${im.gapActing > 0 ? ' ★' + im.gapActing : ''}</span>`;
-    g.title = (im.gapPrompt || '').trim() || '点击编辑本段动作 / 演技 / 时长';
-  });
+  return {
+    canvas, W, H: KF_H, times, total,
+    x: (t) => KF_PAD + (t / total) * (W - KF_PAD * 2),
+    yTop: 24, yBase: KF_H - 26, curveH: KF_H - 26 - 42,
+  };
 }
 
-// 拖动关键帧 i：改变它与前一帧的间距（涟漪式，后续帧整体平移）
-function attachKeyDrag(node, i) {
-  node.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    node.setPointerCapture(e.pointerId);
-    node.classList.add('dragging');
-    const el = $('macroTimeline');
-    const startTotal = Math.max(wholeTotalSeconds(), 0.001);
-    const scale = (el.clientWidth - MT_PAD * 2) / startTotal; // 用按下瞬间的比例做换算
-    const startX = e.clientX;
-    const origGap = Number(state.images[i - 1].hold ?? 2);
-    const onMove = (ev) => {
-      const delta = (ev.clientX - startX) / scale;
-      const g = Math.min(MT_MAX_GAP, Math.max(MT_MIN_GAP, origGap + delta));
-      state.images[i - 1].hold = Math.round(g * 10) / 10;
-      layoutMacroTimeline();
-      updateWholeTotal();
-    };
-    const onUp = (ev) => {
-      node.releasePointerCapture(ev.pointerId);
-      node.classList.remove('dragging');
-      node.removeEventListener('pointermove', onMove);
-      node.removeEventListener('pointerup', onUp);
-      renderImageList(); // 同步左侧小滑杆并触发保存
-      scheduleSave();
-    };
-    node.addEventListener('pointermove', onMove);
-    node.addEventListener('pointerup', onUp);
-  });
+function renderMacroTimeline() {
+  const show = state.images.length >= 2;
+  $('macroCanvas').hidden = !show;
+  $('kfLegend').hidden = !show;
+  $('macroHint').hidden = show;
+  if (show) drawKeyframeTimeline();
 }
+function layoutMacroTimeline() {
+  if (!$('macroCanvas').hidden) drawKeyframeTimeline();
+}
+
+function drawKeyframeTimeline() {
+  const g = kfGeom();
+  const { canvas, W, H, times, x } = g;
+  if (W === 0) return;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  // 微网格 + 基线
+  ctx.strokeStyle = 'rgba(148,163,184,.07)';
+  ctx.lineWidth = 1;
+  for (let gx = KF_PAD; gx <= W - KF_PAD; gx += 40) {
+    ctx.beginPath(); ctx.moveTo(gx, 15); ctx.lineTo(gx, g.yBase); ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(148,163,184,.35)';
+  ctx.fillRect(KF_PAD, g.yBase, W - KF_PAD * 2, 1);
+
+  // 每段速度曲线（面积图）
+  for (let i = 0; i < state.images.length - 1; i++) {
+    const im = state.images[i];
+    const e = Number(im.gapEase || 0);
+    const x0 = x(times[i]), x1 = x(times[i + 1]);
+    const hovered = kfHover && kfHover.type === 'gap' && kfHover.i === i;
+    const p = 1 + 2 * Math.abs(e);
+    const maxV = Math.abs(e) < 0.03 ? 1 : p;
+    ctx.beginPath();
+    ctx.moveTo(x0, g.yBase);
+    const N = Math.max(14, Math.floor((x1 - x0) / 4));
+    for (let k = 0; k <= N; k++) {
+      const u = k / N;
+      const v = easeVelocity(u, e) / maxV;
+      const hgt = (0.16 + 0.84 * v) * g.curveH * (Math.abs(e) < 0.03 ? 0.6 : 1);
+      const edge = Math.min(1, Math.min(k, N - k) / (N * 0.12)); // 端点平滑落地
+      ctx.lineTo(x0 + u * (x1 - x0), g.yBase - hgt * edge);
+    }
+    ctx.lineTo(x1, g.yBase);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, 15, 0, g.yBase);
+    grad.addColorStop(0, hovered ? 'rgba(200,246,93,.5)' : 'rgba(200,246,93,.32)');
+    grad.addColorStop(1, 'rgba(200,246,93,.04)');
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.strokeStyle = hovered ? 'rgba(214,255,117,.95)' : 'rgba(200,246,93,.6)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    // 段信息标签
+    ctx.fillStyle = hovered ? 'rgba(255,255,255,.92)' : 'rgba(148,163,184,.8)';
+    ctx.font = '10px ui-monospace, Consolas, monospace';
+    ctx.textAlign = 'center';
+    const info = (times[i + 1] - times[i]).toFixed(1) + 's'
+      + ((im.gapPrompt || '').trim() ? ' ✎' : '')
+      + (im.gapActing > 0 ? ' ★' : '')
+      + (Math.abs(e) >= 0.03 ? ' · ' + easeLabel(e) : '');
+    ctx.fillText(info, (x0 + x1) / 2, g.yBase + 14);
+  }
+
+  // 关键帧竖线 + 缓动手柄圆点（起点/終点绿，中间白 — 対応 起点/極点/終点）
+  state.images.forEach((im, i) => {
+    const xi = x(times[i]);
+    const isEnd = i === 0 || i === state.images.length - 1;
+    const e = i > 0 ? Number(state.images[i - 1].gapEase || 0) : 0;
+    const hy = g.yTop - e * 10; // 上 = ease-out
+    const hovered = (kfHover && kfHover.type === 'key' && kfHover.i === i) || (kfDrag && kfDrag.i === i);
+    ctx.strokeStyle = hovered ? 'rgba(255,255,255,.95)' : 'rgba(229,231,235,.5)';
+    ctx.lineWidth = hovered ? 2 : 1.2;
+    ctx.beginPath(); ctx.moveTo(xi, hy + 5); ctx.lineTo(xi, g.yBase); ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(xi, hy, hovered ? 6 : 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = isEnd ? '#7BC618' : '#E5E7EB';
+    ctx.fill();
+    if (hovered && i > 0) {
+      ctx.strokeStyle = 'rgba(200,246,93,.9)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(148,163,184,.85)';
+    ctx.font = '9.5px ui-monospace, Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(times[i].toFixed(1) + 's', xi, 10);
+  });
+
+  // 拖动中的浮动标签：时距 + 缓动
+  if (kfDrag) {
+    const im = state.images[kfDrag.i - 1];
+    const label = Number(im.hold ?? 2).toFixed(1) + 's · ' + easeLabel(Number(im.gapEase || 0));
+    const xi = x(times[kfDrag.i]);
+    ctx.font = '11px ui-monospace, Consolas, monospace';
+    const tw = ctx.measureText(label).width + 14;
+    const bx = Math.min(Math.max(xi - tw / 2, 4), W - tw - 4);
+    ctx.fillStyle = 'rgba(5,6,15,.94)';
+    ctx.strokeStyle = 'rgba(200,246,93,.85)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(bx, 30, tw, 20, 5);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#C8F65D';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, bx + tw / 2, 44);
+  }
+}
+
+// 命中检测：手柄圆点/竖线优先，其次段落区
+function kfHitTest(mx, my) {
+  const g = kfGeom();
+  for (let i = state.images.length - 1; i >= 0; i--) {
+    const e = i > 0 ? Number(state.images[i - 1].gapEase || 0) : 0;
+    const hy = g.yTop - e * 10;
+    const xi = g.x(g.times[i]);
+    if (Math.hypot(mx - xi, my - hy) <= 10) return { type: 'key', i };
+    if (Math.abs(mx - xi) <= 5 && my > 14 && my < g.yBase) return { type: 'key', i };
+  }
+  for (let i = 0; i < state.images.length - 1; i++) {
+    if (mx > g.x(g.times[i]) + 7 && mx < g.x(g.times[i + 1]) - 7 && my > 14 && my < g.yBase + 18) {
+      return { type: 'gap', i };
+    }
+  }
+  return null;
+}
+
+(() => {
+  const canvas = $('macroCanvas');
+  const pos = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return { mx: e.clientX - r.left, my: e.clientY - r.top };
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    const { mx, my } = pos(e);
+    const hit = kfHitTest(mx, my);
+    if (!hit) return;
+    if (hit.type === 'gap') { openGapDialog(hit.i); return; }
+    if (hit.i === 0) return; // 首帧固定在 0s
+    e.preventDefault();
+    try { canvas.setPointerCapture(e.pointerId); } catch {}
+    const g = kfGeom();
+    kfDrag = {
+      i: hit.i,
+      startX: e.clientX,
+      startY: e.clientY,
+      origHold: Number(state.images[hit.i - 1].hold ?? 2),
+      origEase: Number(state.images[hit.i - 1].gapEase || 0),
+      scale: (g.W - KF_PAD * 2) / g.total, // 按下瞬间的像素/秒
+    };
+    canvas.style.cursor = 'grabbing';
+    drawKeyframeTimeline();
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const { mx, my } = pos(e);
+    if (kfDrag) {
+      const im = state.images[kfDrag.i - 1];
+      const dHold = (e.clientX - kfDrag.startX) / kfDrag.scale;
+      im.hold = Math.round(Math.min(MT_MAX_GAP, Math.max(MT_MIN_GAP, kfDrag.origHold + dHold)) * 10) / 10;
+      const dEase = (kfDrag.startY - e.clientY) / 40; // 上拖 40px = +1 缓出
+      im.gapEase = Math.round(Math.min(1, Math.max(-1, kfDrag.origEase + dEase)) * 20) / 20;
+      updateWholeTotal();
+      drawKeyframeTimeline();
+      return;
+    }
+    const hit = kfHitTest(mx, my);
+    const changed = JSON.stringify(hit) !== JSON.stringify(kfHover);
+    kfHover = hit;
+    canvas.style.cursor = hit ? (hit.type === 'key' ? (hit.i === 0 ? 'default' : 'grab') : 'pointer') : 'default';
+    if (changed) drawKeyframeTimeline();
+  });
+  const endDrag = (e) => {
+    if (!kfDrag) return;
+    try { canvas.releasePointerCapture(e.pointerId); } catch {}
+    kfDrag = null;
+    canvas.style.cursor = 'grab';
+    renderImageList(); // 同步左侧小滑杆并触发保存
+    scheduleSave();
+    drawKeyframeTimeline();
+  };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('pointerleave', () => {
+    if (!kfDrag && kfHover) { kfHover = null; drawKeyframeTimeline(); }
+  });
+})();
 
 // 段落编辑弹窗
 let gapDlgIdx = -1;
@@ -420,6 +562,8 @@ function openGapDialog(i) {
   $('gapDlgSeconds').value = Number(im.hold ?? 2).toFixed(1);
   $('gapDlgActing').value = im.gapActing ?? 0;
   $('gapDlgActingVal').textContent = (im.gapActing ?? 0) > 0 ? im.gapActing : '全局';
+  $('gapDlgEase').value = Math.round(Number(im.gapEase || 0) * 100);
+  $('gapDlgEaseVal').textContent = easeLabel(Number(im.gapEase || 0));
   $('gapDlgPrompt').value = im.gapPrompt || '';
   $('gapDialog').showModal();
 }
@@ -496,7 +640,10 @@ async function generateSegment(i, overrides = {}) {
   const seg = state.segments[i];
   if (!seg || seg.status === 'running') return;
   const first = state.images[i], last = state.images[i + 1];
-  const prompt = overrides.prompt ?? (seg.prompt || $('globalPrompt').value);
+  let prompt = overrides.prompt ?? (seg.prompt || $('globalPrompt').value);
+  // 段缓动措辞注入：让生成模型理解该段的节奏意图（KEYFRAME TIMELINE 上下拖调整）
+  const segEaseText = easePromptText(Number(first.gapEase || 0));
+  if (segEaseText && !String(prompt).includes(segEaseText)) prompt = prompt ? `${prompt}，${segEaseText}` : segEaseText;
   const seconds = overrides.seconds ?? (seg.seconds || Number($('segSeconds').value));
   seg.status = 'running';
   seg.error = null;
@@ -2264,11 +2411,15 @@ function gapActingText(v) {
 }
 // 组装每段设置：时长 + 本段动作 + 本段演技
 function wholeGaps() {
-  return state.images.slice(0, -1).map((im) => ({
-    seconds: Number(im.hold ?? 2),
-    prompt: (im.gapPrompt || '').trim(),
-    actingText: im.gapActing > 0 ? gapActingText(im.gapActing) : '',
-  }));
+  return state.images.slice(0, -1).map((im) => {
+    const easeText = easePromptText(Number(im.gapEase || 0));
+    const base = (im.gapPrompt || '').trim();
+    return {
+      seconds: Number(im.hold ?? 2),
+      prompt: easeText ? (base ? `${base}，${easeText}` : easeText) : base,
+      actingText: im.gapActing > 0 ? gapActingText(im.gapActing) : '',
+    };
+  });
 }
 function updateWholeTotal() {
   const el = $('wholeTotalVal');
@@ -2824,11 +2975,15 @@ document.addEventListener('focusout', (e) => {
 $('gapDlgActing').oninput = (e) => {
   $('gapDlgActingVal').textContent = Number(e.target.value) > 0 ? e.target.value : '全局';
 };
+$('gapDlgEase').oninput = (e) => {
+  $('gapDlgEaseVal').textContent = easeLabel(Number(e.target.value) / 100);
+};
 $('gapDlgSave').onclick = () => {
   const im = state.images[gapDlgIdx];
   if (im) {
     im.hold = Math.min(6, Math.max(0.1, Number($('gapDlgSeconds').value) || 2));
     im.gapActing = Number($('gapDlgActing').value) || 0;
+    im.gapEase = Math.round(Number($('gapDlgEase').value)) / 100;
     im.gapPrompt = $('gapDlgPrompt').value;
     renderImageList();
     scheduleSave();
@@ -3305,6 +3460,9 @@ function buildShotScript() {
       duration_seconds: timings[i],
       motion: (im.gapPrompt || '').trim() || null,
       acting_level: im.gapActing > 0 ? im.gapActing : null,
+      easing: Math.abs(Number(im.gapEase || 0)) >= 0.03
+        ? { type: Number(im.gapEase) > 0 ? 'ease-out' : 'ease-in', strength: Math.abs(Number(im.gapEase)) }
+        : { type: 'linear', strength: 0 },
     };
     cursor += timings[i];
     return seg;
