@@ -164,16 +164,9 @@
       </div>
     </section>
 
-    <section class="panel">
-      <h2>KEYFRAME TIMELINE <span class="hint">— 拖动手柄：左右 = 调时距 · 上下 = 调缓动（上 = 缓出 ease-out，下 = 缓入 ease-in）；点击段落打开动作编辑</span></h2>
-      <canvas id="macroCanvas" class="kf-canvas" height="170" hidden></canvas>
-      <div class="kf-legend" id="kfLegend" hidden>
-        <span><i class="kf-dot start"></i>起点</span>
-        <span><i class="kf-dot mid"></i>極点</span>
-        <span><i class="kf-dot end"></i>終点</span>
-        <span class="kf-legend-hint">曲线 = 每段速度分布 · 前高 = 缓出 · 后高 = 缓入 · 平顶 = 线性</span>
-      </div>
-      <div class="hint" id="macroHint">上传至少 2 张关键帧后显示</div>
+    <section class="panel kf-panel">
+      <canvas id="macroCanvas" class="kf-canvas" height="200" hidden></canvas>
+      <div class="hint" id="macroHint">上传至少 2 张关键帧后显示 — 竖线左右拖 = 调时距 · 上下拖 = 调缓动 · 点击段落 = 编辑动作</div>
     </section>
 
     <section class="panel">

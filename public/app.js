@@ -319,7 +319,7 @@ document.addEventListener('mouseout', (e) => {
 const KF_PAD = 16;
 const MT_MIN_GAP = 0.1;   // 段最短 0.1s
 const MT_MAX_GAP = 6;     // 段最长 6s
-const KF_H = 170;
+const KF_H = 200;
 
 function mtTimes() {
   const times = [0];
@@ -352,17 +352,31 @@ function kfGeom() {
   const W = canvas.clientWidth;
   const times = mtTimes();
   const total = Math.max(times[times.length - 1], 0.001);
+  // 视频版布局：上 34px 标题带（MOTION ENERGY / 图例），曲线区，下 16px 时间码带
   return {
     canvas, W, H: KF_H, times, total,
     x: (t) => KF_PAD + (t / total) * (W - KF_PAD * 2),
-    yTop: 24, yBase: KF_H - 26, curveH: KF_H - 26 - 42,
+    yTop: 42, yBase: KF_H - 18, curveH: KF_H - 18 - 52,
   };
+}
+
+/** 段丘形：钟形山丘，峰位随缓动偏移（缓出 = 峰偏左，缓入 = 峰偏右，线性 = 居中对称） */
+function kfHillHeight(u, e) {
+  const peak = 0.5 - Math.max(-1, Math.min(1, e)) * 0.32;
+  const a = 1 + 3 * peak, b = 1 + 3 * (1 - peak);
+  const raw = Math.pow(u, a - 1) * Math.pow(1 - u, b - 1);
+  const rawPeak = Math.pow(peak, a - 1) * Math.pow(1 - peak, b - 1) || 1;
+  return raw / rawPeak; // 0..1，峰值恒 1
+}
+
+function fmtTimecode(t) {
+  const s = Math.floor(t);
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }
 
 function renderMacroTimeline() {
   const show = state.images.length >= 2;
   $('macroCanvas').hidden = !show;
-  $('kfLegend').hidden = !show;
   $('macroHint').hidden = show;
   if (show) drawKeyframeTimeline();
 }
@@ -379,114 +393,149 @@ function drawKeyframeTimeline() {
   canvas.height = H * dpr;
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, W, H);
+  // 近纯黑底（视频同款）
+  ctx.fillStyle = '#0A0D0A';
+  ctx.fillRect(0, 0, W, H);
 
-  // 微网格 + 基线
-  ctx.strokeStyle = 'rgba(148,163,184,.07)';
-  ctx.lineWidth = 1;
-  for (let gx = KF_PAD; gx <= W - KF_PAD; gx += 40) {
-    ctx.beginPath(); ctx.moveTo(gx, 15); ctx.lineTo(gx, g.yBase); ctx.stroke();
+  // 内嵌标题带：MOTION ENERGY / 副标题（视频左上角样式）
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(140,150,140,.85)';
+  ctx.font = '8px ui-monospace, Consolas, monospace';
+  ctx.fillText('M O T I O N   E N E R G Y', KF_PAD, 15);
+  ctx.fillStyle = 'rgba(240,244,240,.95)';
+  ctx.font = 'bold 11px "Segoe UI", system-ui, sans-serif';
+  ctx.fillText('关键帧节奏 · 補正後の動き量', KF_PAD, 30);
+
+  // 右上图例：● 起点(绿) ● 極点(白) ● 終点(绿) ● カット(红)
+  const legend = [
+    ['起点', '#8DE31A'], ['極点', '#E5E7EB'], ['終点', '#8DE31A'], ['カット', '#E5484D'],
+  ];
+  ctx.font = '9px "Segoe UI", system-ui, sans-serif';
+  let lx = W - KF_PAD;
+  for (let li = legend.length - 1; li >= 0; li--) {
+    const [name, color] = legend[li];
+    const tw = ctx.measureText(name).width;
+    lx -= tw;
+    ctx.fillStyle = 'rgba(200,205,200,.8)';
+    ctx.textAlign = 'left';
+    ctx.fillText(name, lx, 15);
+    lx -= 9;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(lx + 3, 11.5, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    lx -= 14;
   }
-  ctx.fillStyle = 'rgba(148,163,184,.35)';
+
+  // 基线（极淡）
+  ctx.fillStyle = 'rgba(148,163,184,.22)';
   ctx.fillRect(KF_PAD, g.yBase, W - KF_PAD * 2, 1);
 
-  // 每段速度曲线（面积图）
-  for (let i = 0; i < state.images.length - 1; i++) {
-    const im = state.images[i];
-    const e = Number(im.gapEase || 0);
+  // 连续运动能量曲线：逐段钟形丘连成一条平滑曲线（峰位随缓动偏移），
+  // 一次路径完成，暗军绿渐变填充 + 亮描边（视频同款）
+  const nSeg = state.images.length - 1;
+  const pts = [];
+  for (let i = 0; i < nSeg; i++) {
+    const e = Number(state.images[i].gapEase || 0);
     const x0 = x(times[i]), x1 = x(times[i + 1]);
-    const hovered = kfHover && kfHover.type === 'gap' && kfHover.i === i;
-    const p = 1 + 2 * Math.abs(e);
-    const maxV = Math.abs(e) < 0.03 ? 1 : p;
-    ctx.beginPath();
-    ctx.moveTo(x0, g.yBase);
-    const N = Math.max(14, Math.floor((x1 - x0) / 4));
-    for (let k = 0; k <= N; k++) {
+    const N = Math.max(16, Math.floor((x1 - x0) / 3));
+    for (let k = i === 0 ? 0 : 1; k <= N; k++) {
       const u = k / N;
-      const v = easeVelocity(u, e) / maxV;
-      const hgt = (0.16 + 0.84 * v) * g.curveH * (Math.abs(e) < 0.03 ? 0.6 : 1);
-      const edge = Math.min(1, Math.min(k, N - k) / (N * 0.12)); // 端点平滑落地
-      ctx.lineTo(x0 + u * (x1 - x0), g.yBase - hgt * edge);
+      pts.push([x0 + u * (x1 - x0), g.yBase - (0.06 + 0.94 * kfHillHeight(u, e)) * g.curveH * 0.92]);
     }
-    ctx.lineTo(x1, g.yBase);
+  }
+  if (pts.length) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], g.yBase);
+    for (const [px, py] of pts) ctx.lineTo(px, py);
+    ctx.lineTo(pts[pts.length - 1][0], g.yBase);
     ctx.closePath();
-    const grad = ctx.createLinearGradient(0, 15, 0, g.yBase);
-    grad.addColorStop(0, hovered ? 'rgba(200,246,93,.5)' : 'rgba(200,246,93,.32)');
-    grad.addColorStop(1, 'rgba(200,246,93,.04)');
+    const grad = ctx.createLinearGradient(0, g.yTop, 0, g.yBase);
+    grad.addColorStop(0, 'rgba(92,128,58,.66)');   // 暗军绿（视频色）
+    grad.addColorStop(0.7, 'rgba(60,86,42,.30)');
+    grad.addColorStop(1, 'rgba(40,58,30,.06)');
     ctx.fillStyle = grad;
     ctx.fill();
-    ctx.strokeStyle = hovered ? 'rgba(214,255,117,.95)' : 'rgba(200,246,93,.6)';
-    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (const [px, py] of pts) ctx.lineTo(px, py);
+    ctx.strokeStyle = 'rgba(222,232,214,.85)'; // 亮描边
+    ctx.lineWidth = 1.3;
     ctx.stroke();
-    // 段信息标签
-    ctx.fillStyle = hovered ? 'rgba(255,255,255,.92)' : 'rgba(148,163,184,.8)';
-    ctx.font = '10px ui-monospace, Consolas, monospace';
-    ctx.textAlign = 'center';
-    const info = (times[i + 1] - times[i]).toFixed(1) + 's'
-      + ((im.gapPrompt || '').trim() ? ' ✎' : '')
-      + (im.gapActing > 0 ? ' ★' : '')
-      + (Math.abs(e) >= 0.03 ? ' · ' + easeLabel(e) : '');
-    ctx.fillText(info, (x0 + x1) / 2, g.yBase + 14);
   }
 
-  // 关键帧竖线 + 缓动手柄圆点（起点/終点绿，中间白 — 対応 起点/極点/終点）
+  // hover 段：轻微提亮该段区域
+  if (kfHover && kfHover.type === 'gap') {
+    const x0 = x(times[kfHover.i]), x1 = x(times[kfHover.i + 1]);
+    ctx.fillStyle = 'rgba(200,246,93,.06)';
+    ctx.fillRect(x0, g.yTop - 6, x1 - x0, g.yBase - g.yTop + 6);
+    // 光标处小提示：时长 + 缓动 + 标记
+    const im = state.images[kfHover.i];
+    const info = (times[kfHover.i + 1] - times[kfHover.i]).toFixed(1) + 's'
+      + ((im.gapPrompt || '').trim() ? ' ✎' : '') + (im.gapActing > 0 ? ' ★' : '')
+      + (Math.abs(Number(im.gapEase || 0)) >= 0.03 ? ' · ' + easeLabel(Number(im.gapEase)) : '');
+    ctx.fillStyle = 'rgba(200,205,200,.75)';
+    ctx.font = '9px ui-monospace, Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(info, (x0 + x1) / 2, g.yTop - 10);
+  }
+
+  // 关键帧竖线：全高细线 + 顶端小圆点（固定高度；首尾绿・中间白・拖动/悬停黄）
   state.images.forEach((im, i) => {
     const xi = x(times[i]);
     const isEnd = i === 0 || i === state.images.length - 1;
-    const e = i > 0 ? Number(state.images[i - 1].gapEase || 0) : 0;
-    const hy = g.yTop - e * 10; // 上 = ease-out
-    const hovered = (kfHover && kfHover.type === 'key' && kfHover.i === i) || (kfDrag && kfDrag.i === i);
-    ctx.strokeStyle = hovered ? 'rgba(255,255,255,.95)' : 'rgba(229,231,235,.5)';
-    ctx.lineWidth = hovered ? 2 : 1.2;
-    ctx.beginPath(); ctx.moveTo(xi, hy + 5); ctx.lineTo(xi, g.yBase); ctx.stroke();
+    const active = (kfDrag && kfDrag.i === i) || (!kfDrag && kfHover && kfHover.type === 'key' && kfHover.i === i);
+    const color = active ? '#E8F566' : isEnd ? '#8DE31A' : '#E5E7EB';
+    ctx.strokeStyle = active ? 'rgba(232,245,102,.95)' : isEnd ? 'rgba(141,227,26,.8)' : 'rgba(229,231,235,.75)';
+    ctx.lineWidth = active ? 1.8 : 1;
     ctx.beginPath();
-    ctx.arc(xi, hy, hovered ? 6 : 4.5, 0, Math.PI * 2);
-    ctx.fillStyle = isEnd ? '#7BC618' : '#E5E7EB';
+    ctx.moveTo(xi, g.yTop - 2);
+    ctx.lineTo(xi, g.yBase);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(xi, g.yTop - 5, active ? 4 : 3, 0, Math.PI * 2);
+    ctx.fillStyle = color;
     ctx.fill();
-    if (hovered && i > 0) {
-      ctx.strokeStyle = 'rgba(200,246,93,.9)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-    ctx.fillStyle = 'rgba(148,163,184,.85)';
-    ctx.font = '9.5px ui-monospace, Consolas, monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(times[i].toFixed(1) + 's', xi, 10);
   });
+
+  // 底部时间码：仅左右两端（视频同款极简）
+  ctx.fillStyle = 'rgba(140,150,140,.7)';
+  ctx.font = '8.5px ui-monospace, Consolas, monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(fmtTimecode(0), KF_PAD, H - 5);
+  ctx.textAlign = 'right';
+  ctx.fillText(fmtTimecode(g.total), W - KF_PAD, H - 5);
 
   // 拖动中的浮动标签：时距 + 缓动
   if (kfDrag) {
     const im = state.images[kfDrag.i - 1];
     const label = Number(im.hold ?? 2).toFixed(1) + 's · ' + easeLabel(Number(im.gapEase || 0));
     const xi = x(times[kfDrag.i]);
-    ctx.font = '11px ui-monospace, Consolas, monospace';
+    ctx.font = '10.5px ui-monospace, Consolas, monospace';
     const tw = ctx.measureText(label).width + 14;
     const bx = Math.min(Math.max(xi - tw / 2, 4), W - tw - 4);
-    ctx.fillStyle = 'rgba(5,6,15,.94)';
-    ctx.strokeStyle = 'rgba(200,246,93,.85)';
+    ctx.fillStyle = 'rgba(5,8,5,.94)';
+    ctx.strokeStyle = 'rgba(232,245,102,.85)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(bx, 30, tw, 20, 5);
+    ctx.roundRect(bx, g.yTop + 4, tw, 19, 4);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = '#C8F65D';
+    ctx.fillStyle = '#E8F566';
     ctx.textAlign = 'center';
-    ctx.fillText(label, bx + tw / 2, 44);
+    ctx.fillText(label, bx + tw / 2, g.yTop + 17);
   }
 }
 
-// 命中检测：手柄圆点/竖线优先，其次段落区
+// 命中检测：竖线（全高 ±6px）优先，其次段落区
 function kfHitTest(mx, my) {
   const g = kfGeom();
   for (let i = state.images.length - 1; i >= 0; i--) {
-    const e = i > 0 ? Number(state.images[i - 1].gapEase || 0) : 0;
-    const hy = g.yTop - e * 10;
     const xi = g.x(g.times[i]);
-    if (Math.hypot(mx - xi, my - hy) <= 10) return { type: 'key', i };
-    if (Math.abs(mx - xi) <= 5 && my > 14 && my < g.yBase) return { type: 'key', i };
+    if (Math.abs(mx - xi) <= 6 && my > g.yTop - 12 && my < g.yBase + 4) return { type: 'key', i };
   }
   for (let i = 0; i < state.images.length - 1; i++) {
-    if (mx > g.x(g.times[i]) + 7 && mx < g.x(g.times[i + 1]) - 7 && my > 14 && my < g.yBase + 18) {
+    if (mx > g.x(g.times[i]) + 8 && mx < g.x(g.times[i + 1]) - 8 && my > g.yTop - 8 && my < g.yBase + 4) {
       return { type: 'gap', i };
     }
   }

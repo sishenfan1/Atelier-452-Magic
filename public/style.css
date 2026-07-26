@@ -593,3 +593,7 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .kf-dot.start, .kf-dot.end { background: #7BC618; }
 .kf-dot.mid { background: #E5E7EB; }
 .kf-legend-hint { margin-left: auto; letter-spacing: .05em; opacity: .7; }
+
+/* EXACT 复刻版：图表内嵌标题/图例，面板收紧 */
+.kf-panel { padding: 10px; }
+.kf-panel .kf-canvas { height: 200px; border-radius: 8px; }
