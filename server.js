@@ -1031,6 +1031,87 @@ app.get('/api/prompt-library', (req, res) => {
   res.json({ ok: true, folders: Array.isArray(cfg.promptFolders) ? cfg.promptFolders : [] });
 });
 
+// ---------------- 動作分析：视频运动能量序列 + 原画帧提取（纯 ffmpeg 灰度差分，无外部依赖） ----------------
+const MOTION_W = 160; // 分析分辨率：160px 宽灰度足以量化整体运动
+function motionVideoPath(url) {
+  const file = localFileOf(String(url || ''));
+  if (!file || !fs.existsSync(file)) throw new Error('视频不存在或无法解析: ' + String(url).slice(0, 80));
+  return file;
+}
+
+/** 抽灰度帧序列做相邻帧 SAD 差分 → 归一化运动能量曲线 */
+app.post('/api/motion/analyze', async (req, res) => {
+  try {
+    if (!FFMPEG) return res.status(400).json({ error: '未找到 ffmpeg —— 動作分析需要安装 ffmpeg' });
+    const file = motionVideoPath(req.body && req.body.videoUrl);
+    const fps = Math.max(4, Math.min(24, Number(req.body && req.body.fps) || 12));
+    // 探测时长与分辨率（竖屏也统一缩放到 160 宽）
+    let duration = 0;
+    if (FFPROBE) {
+      const p = spawnSync(FFPROBE, ['-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { encoding: 'utf8' });
+      duration = Number(String(p.stdout || '').trim()) || 0;
+    }
+    if (duration > 120) return res.status(400).json({ error: `视频过长（${Math.round(duration)}s）—— 動作分析上限 120 秒` });
+    const args = ['-i', file, '-vf', `fps=${fps},scale=${MOTION_W}:-2,format=gray`, '-f', 'rawvideo', '-v', 'error', 'pipe:1'];
+    const child = spawn(FFMPEG, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const chunks = [];
+    let errTail = '';
+    child.stdout.on('data', (c) => chunks.push(c));
+    child.stderr.on('data', (c) => { errTail = (errTail + c.toString()).slice(-400); });
+    await new Promise((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', (code) => (code === 0 ? resolve() : reject(new Error('ffmpeg 抽帧失败: ' + errTail))));
+    });
+    const raw = Buffer.concat(chunks);
+    // 高度按 160:-2 缩放未知 → 由总字节数与帧数反推：先猜 h = raw.length / (n*W)。
+    // 稳妥做法：用探测到的时长×fps 估帧数，取整除关系找出帧大小。
+    const approxFrames = Math.max(1, Math.round((duration || 1) * fps));
+    let frameSize = Math.round(raw.length / approxFrames);
+    // frameSize 必须是 W 的倍数；修正到最近的合法值
+    frameSize = Math.max(MOTION_W, Math.round(frameSize / MOTION_W) * MOTION_W);
+    const n = Math.floor(raw.length / frameSize);
+    if (n < 2) return res.status(400).json({ error: '视频太短，无法分析（不足 2 帧）' });
+    const energyRaw = [0];
+    for (let i = 1; i < n; i++) {
+      const a = (i - 1) * frameSize, b = i * frameSize;
+      let sad = 0;
+      // 隔 2 像素采样，速度换精度损失可忽略
+      for (let o = 0; o < frameSize; o += 2) sad += Math.abs(raw[b + o] - raw[a + o]);
+      energyRaw.push(sad / (frameSize / 2) / 255); // 0..1 归一化
+    }
+    // 3 点滑动平均平滑
+    const energy = energyRaw.map((v, i) => {
+      const a = energyRaw[Math.max(0, i - 1)], b2 = energyRaw[Math.min(n - 1, i + 1)];
+      return Math.round(((a + v + b2) / 3) * 10000) / 10000;
+    });
+    res.json({ ok: true, fps, duration: duration || n / fps, frames: n, energy });
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e).slice(0, 300) });
+  }
+});
+
+/** 按时间点批量抽帧存入 assets，返回可用作关键帧的图片 URL */
+app.post('/api/motion/extract', async (req, res) => {
+  try {
+    if (!FFMPEG) return res.status(400).json({ error: '未找到 ffmpeg' });
+    const file = motionVideoPath(req.body && req.body.videoUrl);
+    const times = (Array.isArray(req.body && req.body.times) ? req.body.times : [])
+      .map(Number).filter((t) => Number.isFinite(t) && t >= 0).slice(0, 40);
+    if (!times.length) return res.status(400).json({ error: 'times 为空' });
+    const out = [];
+    for (const t of times) {
+      const name = `pose_${Date.now().toString(36)}_${Math.round(t * 1000)}.jpg`;
+      const dest = path.join(ASSET_DIR, name);
+      const r = spawnSync(FFMPEG, ['-ss', String(t), '-i', file, '-frames:v', '1', '-q:v', '3', '-v', 'error', '-y', dest]);
+      if (r.status === 0 && fs.existsSync(dest)) out.push({ t, url: '/assets/' + name });
+    }
+    if (!out.length) return res.status(500).json({ error: '抽帧全部失败' });
+    res.json({ ok: true, frames: out });
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e).slice(0, 300) });
+  }
+});
+
 // ---------------- 风格参考图解读：视觉 LLM 融合全部参考图 → StyleDNA ----------------
 const STYLE_DNA_KEYS = ['medium', 'qualityTarget', 'colorLanguage', 'lightingLanguage', 'lensLanguage', 'cameraRhythm', 'compositionRules', 'animationStyle', 'negativeDefaults', 'renderNotes'];
 

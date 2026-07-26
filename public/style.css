@@ -524,3 +524,54 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 }
 .onion-swatch.red { background: rgba(255,45,85,.75); }
 .onion-swatch.green { background: rgba(48,209,88,.75); }
+
+/* ---------------- 動作分析 Motion Analysis ---------------- */
+.motion-layout { grid-template-columns: 300px 1fr; }
+.motion-side .motion-cta {
+  margin-top: 10px; background: #C8F65D; color: #10250A; font-weight: 700;
+  letter-spacing: .08em;
+}
+.motion-side .motion-cta:hover:not(:disabled) { background: #D6FF75; }
+.motion-side .motion-cta:disabled { opacity: .4; }
+.motion-video { width: 100%; max-height: 46vh; background: #05060F; border-radius: 10px; display: block; }
+.motion-chart {
+  width: 100%; height: 150px; display: block; background: #05060F;
+  border: 1px solid #0F172A; border-radius: 10px; cursor: pointer;
+}
+.motion-stats { display: flex; gap: 8px; }
+.motion-stat {
+  flex: 1; text-align: center; padding: 8px 4px; border: 1px solid var(--line, #E5EDF5);
+  border-radius: 10px;
+}
+.motion-stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+.motion-stat span { font-size: 9px; text-transform: uppercase; letter-spacing: .18em; opacity: .55; }
+.motion-sheet {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px;
+}
+.pose-card {
+  position: relative; border: 2px solid var(--line, #E5EDF5); border-radius: 10px;
+  overflow: hidden; cursor: pointer; background: #05060F; transition: border-color .12s;
+}
+.pose-card img { width: 100%; aspect-ratio: 16/10; object-fit: cover; display: block; }
+.pose-card .pose-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 3px 7px; font-size: 9.5px; font-variant-numeric: tabular-nums;
+  text-transform: uppercase; letter-spacing: .1em;
+}
+.pose-card.accepted { border-color: #7BC618; }
+.pose-card.accepted .pose-meta { background: rgba(200, 246, 93, .16); }
+.pose-card .pose-tick {
+  position: absolute; top: 5px; right: 5px; width: 18px; height: 18px; border-radius: 5px;
+  display: flex; align-items: center; justify-content: center; font-size: 11px;
+  background: rgba(0, 0, 0, .5); color: #fff;
+}
+.pose-card.accepted .pose-tick { background: #7BC618; color: #10250A; }
+
+/* JSON 脚本导出 — coding 质感（黑底荧光绿等宽） */
+.json-script-dialog { width: min(760px, 92vw); }
+.json-script-pre {
+  max-height: 56vh; overflow: auto; margin: 0;
+  background: #05060F; color: #C8F65D; border: 1px solid #0F172A; border-radius: 10px;
+  padding: 14px; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 12px; line-height: 1.55; white-space: pre; tab-size: 2;
+}

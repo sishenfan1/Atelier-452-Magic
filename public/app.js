@@ -33,6 +33,12 @@ const state = {
   presets: [],       // {id, name, text}
   usedPrompts: [],   // 自动记录的已用提示词 {t, kind, text}
   pendingTasks: [],  // 已提交未完成的生成任务 {id, kind, ...提交时元数据}，刷新后恢复轮询
+  motion: {
+    srcUrl: null, srcName: '',
+    fps: 0, duration: 0,
+    energy: [],      // 归一化运动能量序列（分析结果缓存，参数变化不必重新差分）
+    poses: [],       // 原画候補 {t, url, accepted}
+  },
 };
 let nextImgId = 1;
 let nextRefId = 1;
@@ -127,6 +133,14 @@ function snapshot() {
       refs: state.refine.refs,
       history: state.refine.history,
     },
+    motion: {
+      srcUrl: state.motion.srcUrl,
+      srcName: state.motion.srcName,
+      fps: state.motion.fps,
+      duration: state.motion.duration,
+      energy: state.motion.energy,
+      poses: state.motion.poses,
+    },
     pendingTasks: state.pendingTasks,
   };
 }
@@ -209,6 +223,14 @@ async function loadProject() {
     state.refine.history = rf.history || [];
     state.refine.current = state.refine.history.length ? 0 : -1;
     state.pendingTasks = Array.isArray(p.pendingTasks) ? p.pendingTasks : [];
+    const mo = p.motion || {};
+    state.motion.srcUrl = mo.srcUrl || null;
+    state.motion.srcName = mo.srcName || '';
+    state.motion.fps = Number(mo.fps) || 0;
+    state.motion.duration = Number(mo.duration) || 0;
+    state.motion.energy = Array.isArray(mo.energy) ? mo.energy : [];
+    state.motion.poses = Array.isArray(mo.poses) ? mo.poses : [];
+    restoreMotionUI();
     renderRefine();
     syncSliderLabels();
     rebuildSegments();
@@ -409,12 +431,18 @@ function switchMode(mode) {
   $('viewV2V').hidden = mode !== 'v2v';
   $('viewRefine').hidden = mode !== 'refine';
   $('viewLibrary').hidden = mode !== 'library';
+  $('viewMotion').hidden = mode !== 'motion';
   $('tabInbetween').classList.toggle('active', mode === 'inbetween');
   $('tabV2V').classList.toggle('active', mode === 'v2v');
   $('tabRefine').classList.toggle('active', mode === 'refine');
   $('tabLibrary').classList.toggle('active', mode === 'library');
+  $('tabMotion').classList.toggle('active', mode === 'motion');
   if (mode === 'inbetween') layoutMacroTimeline(); // 隐藏时宽度为 0，回来时重排
   if (mode === 'library') renderLibraryPage();
+  if (mode === 'motion') {
+    $('motionUseV2V').hidden = !state.v2v.sourceUrl || !!state.motion.srcUrl;
+    drawMotionChart(); // 隐藏时 canvas 宽度为 0
+  }
 }
 
 // ---------------- 关键帧管理 ----------------
@@ -2367,6 +2395,7 @@ $('tabInbetween').onclick = () => switchMode('inbetween');
 $('tabV2V').onclick = () => switchMode('v2v');
 $('tabRefine').onclick = () => switchMode('refine');
 $('tabLibrary').onclick = () => switchMode('library');
+$('tabMotion').onclick = () => switchMode('motion');
 
 // 精修：源图上传 / 生成 / 结果操作
 $('refineFileInput').onchange = async (e) => {
@@ -2985,6 +3014,331 @@ $('onionDialog').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowLeft') { e.preventDefault(); onionIdx--; drawOnion(); }
   else if (e.key === 'ArrowRight') { e.preventDefault(); onionIdx++; drawOnion(); }
 });
+
+// ---------------- 動作分析：视频 → 运动能量曲线 → 原画拾取 ----------------
+// 「動きの句読点を、原画として拾う」——上传参考视频，差分出运动能量，
+// 在极值处自动拾取关键姿势，联络表逐张确认后一键送入中割关键帧。
+let motionAnalyzing = false;
+
+function motionFmtTime(t) {
+  const s = Math.floor(t);
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}.${String(Math.round((t - s) * 10))}`;
+}
+
+function restoreMotionUI() {
+  const m = state.motion;
+  if (m.srcUrl) {
+    $('motionVideo').src = m.srcUrl;
+    $('motionVideo').hidden = false;
+    $('motionEmpty').hidden = true;
+    $('motionSrcInfo').textContent = m.srcName || '';
+    $('btnAnalyzeMotion').disabled = false;
+  }
+  if (m.energy.length) $('motionChartPanel').hidden = false;
+  if (m.poses.length) {
+    $('motionSheetPanel').hidden = false;
+    renderMotionSheet();
+  }
+  updateMotionStats();
+  drawMotionChart();
+}
+
+function updateMotionStats() {
+  const m = state.motion;
+  const show = m.poses.length > 0 || m.energy.length > 0;
+  $('motionStats').hidden = !show;
+  $('statPoses').textContent = m.poses.length;
+  $('statAccepted').textContent = m.poses.filter((p) => p.accepted).length;
+  const d = Math.round(m.duration);
+  $('statDuration').textContent = `${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`;
+  const nAcc = m.poses.filter((p) => p.accepted).length;
+  $('poseSendCount').textContent = nAcc;
+  $('btnPosesToKeys').disabled = nAcc === 0;
+}
+
+async function motionSetSource(url, name) {
+  state.motion.srcUrl = url;
+  state.motion.srcName = name;
+  state.motion.energy = [];
+  state.motion.poses = [];
+  $('motionVideo').src = url;
+  $('motionVideo').hidden = false;
+  $('motionEmpty').hidden = true;
+  $('motionSrcInfo').textContent = name;
+  $('btnAnalyzeMotion').disabled = false;
+  $('motionChartPanel').hidden = true;
+  $('motionSheetPanel').hidden = true;
+  $('motionStatus').textContent = '';
+  updateMotionStats();
+  scheduleSave();
+}
+
+$('motionFile').onchange = async (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  if (!f.type.startsWith('video/')) { $('motionStatus').textContent = '请选择视频文件'; return; }
+  $('motionStatus').textContent = '上传中…';
+  try {
+    const url = await uploadAsset(f);
+    await motionSetSource(url, f.name);
+  } catch (err) {
+    $('motionStatus').textContent = '上传失败: ' + (err && err.message || err);
+  }
+};
+
+$('motionUseV2V').onclick = () => {
+  if (state.v2v.sourceUrl) motionSetSource(state.v2v.sourceUrl, state.v2v.sourceName || 'v2v 源视频');
+};
+
+// 原画选点：能量局部极大值 + 感度阈值 + 最小间隔贪心 + 上限 + 可选首尾帧
+function pickKeyTimes() {
+  const m = state.motion;
+  const e = m.energy;
+  if (!e.length || !m.fps) return [];
+  const sens = Number($('motionSens').value);              // 10..100 高=多拾
+  const minGap = Number($('motionGap').value) / 10;        // 0.2..2.0s
+  const maxN = Number($('motionMax').value);
+  const keepEnds = $('motionEnds').checked;
+  const maxE = Math.max(...e, 0.0001);
+  const thr = maxE * (1 - sens / 100) * 0.9;               // 感度 100 → 阈值≈0
+  const cand = [];
+  for (let i = 1; i < e.length - 1; i++) {
+    if (e[i] >= e[i - 1] && e[i] >= e[i + 1] && e[i] > thr) cand.push({ t: i / m.fps, v: e[i] });
+  }
+  cand.sort((a, b) => b.v - a.v);
+  const picked = [];
+  const ends = keepEnds ? [0, Math.max(0, m.duration - 0.05)] : [];
+  const clash = (t) => picked.some((p) => Math.abs(p - t) < minGap) || ends.some((p) => Math.abs(p - t) < minGap);
+  for (const c of cand) {
+    if (picked.length >= maxN) break;
+    if (!clash(c.t)) picked.push(c.t);
+  }
+  return [...ends, ...picked].sort((a, b) => a - b);
+}
+
+$('btnAnalyzeMotion').onclick = async () => {
+  const m = state.motion;
+  if (!m.srcUrl || motionAnalyzing) return;
+  motionAnalyzing = true;
+  $('btnAnalyzeMotion').disabled = true;
+  try {
+    if (!m.energy.length) {
+      $('motionStatus').textContent = '差分运动能量中…';
+      const r = await fetch('/api/motion/analyze', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoUrl: m.srcUrl, fps: 12 }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(j.error || `分析失败 (${r.status})`);
+      m.fps = j.fps; m.duration = j.duration; m.energy = j.energy;
+      $('motionChartPanel').hidden = false;
+    }
+    const times = pickKeyTimes();
+    if (!times.length) throw new Error('没有拾取到原画 — 调高抽出感度试试');
+    $('motionStatus').textContent = `抽取 ${times.length} 张原画帧中…`;
+    const r2 = await fetch('/api/motion/extract', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoUrl: m.srcUrl, times }),
+    });
+    const j2 = await r2.json().catch(() => ({}));
+    if (!r2.ok || !j2.ok) throw new Error(j2.error || `抽帧失败 (${r2.status})`);
+    m.poses = j2.frames.map((f) => ({ t: f.t, url: f.url, accepted: true }));
+    $('motionSheetPanel').hidden = false;
+    renderMotionSheet();
+    updateMotionStats();
+    drawMotionChart();
+    $('motionStatus').textContent = `完成 — ${m.poses.length} 张原画候補 ✓`;
+    scheduleSave();
+  } catch (err) {
+    $('motionStatus').textContent = String(err && err.message || err);
+  } finally {
+    motionAnalyzing = false;
+    $('btnAnalyzeMotion').disabled = !state.motion.srcUrl;
+  }
+};
+
+// 参数变化 → 实时更新标签；已有能量时按钮转为重新拾取
+$('motionSens').oninput = (e) => { $('motionSensVal').textContent = e.target.value; };
+$('motionGap').oninput = (e) => { $('motionGapVal').textContent = (e.target.value / 10).toFixed(1) + 's'; };
+$('motionMax').oninput = (e) => { $('motionMaxVal').textContent = e.target.value; };
+
+// ---- MOTION ENERGY 图表：能量面积图 + 原画竖线（点击跳帧/切换选用） ----
+function drawMotionChart() {
+  const canvas = $('motionChart');
+  const m = state.motion;
+  if (!canvas || canvas.clientWidth === 0) return;
+  const W = (canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1));
+  const H = (canvas.height = 150 * (window.devicePixelRatio || 1));
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  if (!m.energy.length) return;
+  const maxE = Math.max(...m.energy, 0.0001);
+  const px = (i) => (i / (m.energy.length - 1)) * W;
+  const py = (v) => H - 12 - (v / maxE) * (H - 34);
+  // 面积
+  ctx.beginPath();
+  ctx.moveTo(0, H - 12);
+  m.energy.forEach((v, i) => ctx.lineTo(px(i), py(v)));
+  ctx.lineTo(W, H - 12);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, 'rgba(200,246,93,.55)');
+  grad.addColorStop(1, 'rgba(200,246,93,.06)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+  // 轮廓线
+  ctx.beginPath();
+  m.energy.forEach((v, i) => (i ? ctx.lineTo(px(i), py(v)) : ctx.moveTo(px(0), py(v))));
+  ctx.strokeStyle = 'rgba(200,246,93,.9)';
+  ctx.lineWidth = 1.5 * (window.devicePixelRatio || 1);
+  ctx.stroke();
+  // 底线
+  ctx.fillStyle = 'rgba(148,163,184,.35)';
+  ctx.fillRect(0, H - 12, W, 1);
+  // 原画竖线
+  for (const p of m.poses) {
+    const x = (p.t / Math.max(m.duration, 0.001)) * W;
+    ctx.fillStyle = p.accepted ? 'rgba(200,246,93,.95)' : 'rgba(148,163,184,.4)';
+    ctx.fillRect(x - 1, 8, 2, H - 20);
+    if (p.accepted) {
+      ctx.beginPath();
+      ctx.arc(x, 8, 3.5 * (window.devicePixelRatio || 1), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // 播放头
+  const vid = $('motionVideo');
+  if (vid && !vid.hidden && vid.duration) {
+    const x = (vid.currentTime / vid.duration) * W;
+    ctx.fillStyle = 'rgba(255,255,255,.85)';
+    ctx.fillRect(x - 0.5, 0, 1, H);
+  }
+}
+
+$('motionChart').onclick = (e) => {
+  const m = state.motion;
+  if (!m.duration) return;
+  const rect = $('motionChart').getBoundingClientRect();
+  const t = ((e.clientX - rect.left) / rect.width) * m.duration;
+  // 命中原画竖线（±2% 时长）→ 跳帧并切换选用；否则仅跳帧
+  const hit = m.poses.find((p) => Math.abs(p.t - t) < m.duration * 0.02);
+  $('motionVideo').currentTime = hit ? hit.t : t;
+  if (hit) {
+    hit.accepted = !hit.accepted;
+    renderMotionSheet();
+    updateMotionStats();
+    scheduleSave();
+  }
+  drawMotionChart();
+};
+$('motionVideo').addEventListener('timeupdate', () => { if (!$('viewMotion').hidden) drawMotionChart(); });
+window.addEventListener('resize', () => { if (!$('viewMotion').hidden) drawMotionChart(); });
+
+// ---- 原画候補联络表 ----
+function renderMotionSheet() {
+  const sheet = $('motionSheet');
+  sheet.innerHTML = '';
+  state.motion.poses.forEach((p, i) => {
+    const card = document.createElement('div');
+    card.className = 'pose-card' + (p.accepted ? ' accepted' : '');
+    card.innerHTML = `<img src="${p.url}" alt="pose ${i + 1}" draggable="false">
+      <span class="pose-tick">${p.accepted ? '✓' : ''}</span>
+      <div class="pose-meta"><span>${String(i + 1).padStart(2, '0')}${i === 0 ? ' / 開始' : ''}</span><span>${motionFmtTime(p.t)}</span></div>`;
+    card.onclick = () => {
+      p.accepted = !p.accepted;
+      $('motionVideo').currentTime = p.t;
+      renderMotionSheet();
+      updateMotionStats();
+      drawMotionChart();
+      scheduleSave();
+    };
+    sheet.appendChild(card);
+  });
+}
+
+$('btnPosesAll').onclick = () => { state.motion.poses.forEach((p) => (p.accepted = true)); renderMotionSheet(); updateMotionStats(); drawMotionChart(); scheduleSave(); };
+$('btnPosesNone').onclick = () => { state.motion.poses.forEach((p) => (p.accepted = false)); renderMotionSheet(); updateMotionStats(); drawMotionChart(); scheduleSave(); };
+
+// 送入中割：接受的原画按时间序作为关键帧加入工作区 1
+$('btnPosesToKeys').onclick = async () => {
+  const picked = state.motion.poses.filter((p) => p.accepted).sort((a, b) => a.t - b.t);
+  if (!picked.length) return;
+  $('motionSheetStatus').textContent = '送入中…';
+  let n = 0;
+  for (const p of picked) {
+    // 帧已在 assets 里 — 直接推入关键帧序列，无需重新上传
+    state.images.push({ id: nextImgId++, name: `pose_${motionFmtTime(p.t)}.jpg`, url: p.url, hold: 2 });
+    n++;
+  }
+  rebuildSegments();
+  renderAll();
+  scheduleSave();
+  $('motionSheetStatus').textContent = '';
+  switchMode('inbetween');
+  setWholeStatus(`已从動作分析送入 ${n} 张原画关键帧 ✓`);
+};
+
+// ---------------- ⟨/⟩ JSON 脚本导出：MARS-LSP 式时间轴结构 ----------------
+function buildShotScript() {
+  const timings = wholeTimings();
+  let t = 0;
+  const keyframes = state.images.map((im, i) => {
+    const entry = {
+      index: i + 1,
+      time_seconds: Math.round(t * 100) / 100,
+      hold_to_next_seconds: i < timings.length ? timings[i] : null,
+      name: im.name,
+      url: im.url,
+    };
+    if (i < timings.length) t += timings[i];
+    return entry;
+  });
+  let cursor = 0;
+  const timeline = state.images.slice(0, -1).map((im, i) => {
+    const seg = {
+      beat: i + 1,
+      from_keyframe: i + 1,
+      to_keyframe: i + 2,
+      start_seconds: Math.round(cursor * 100) / 100,
+      end_seconds: Math.round((cursor + timings[i]) * 100) / 100,
+      duration_seconds: timings[i],
+      motion: (im.gapPrompt || '').trim() || null,
+      acting_level: im.gapActing > 0 ? im.gapActing : null,
+    };
+    cursor += timings[i];
+    return seg;
+  });
+  return {
+    format: 'a452-mars-lsp',
+    version: 1,
+    source: 'Atelier452 Gen Studio · 中割生成',
+    duration_seconds: Math.round(wholeTotalSeconds() * 100) / 100,
+    global_prompt: $('globalPrompt').value.trim() || null,
+    acting_level_default: Number($('acting').value),
+    keyframe_count: state.images.length,
+    keyframes,
+    timeline,
+  };
+}
+
+$('btnJsonScript').onclick = () => {
+  if (!state.images.length) { setWholeStatus('先上传关键帧，再导出 JSON 脚本'); return; }
+  $('jsonScriptPre').textContent = JSON.stringify(buildShotScript(), null, 2);
+  $('jsonScriptDialog').showModal();
+};
+$('jsonScriptCopy').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($('jsonScriptPre').textContent);
+    $('jsonScriptCopy').textContent = '已复制 ✓';
+    setTimeout(() => ($('jsonScriptCopy').textContent = '复制 JSON'), 1400);
+  } catch {}
+};
+$('jsonScriptDownload').onclick = () => {
+  const blob = new Blob([$('jsonScriptPre').textContent], { type: 'application/json' });
+  download(URL.createObjectURL(blob), 'shot-script.json');
+};
+$('jsonScriptClose').onclick = () => $('jsonScriptDialog').close();
 
 // ---------------- 镜头包直通：Scene Setup → Gen Studio 全量入位 ----------------
 async function dataUrlToFile(src, name) {

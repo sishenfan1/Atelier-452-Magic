@@ -32,6 +32,11 @@
       <span class="mode-title">提示词库</span>
       <small>存储 · 分区 · JSON</small>
     </button>
+    <button id="tabMotion" class="mode-tab">
+      <span class="mode-kicker">工作区 5</span>
+      <span class="mode-title">動作分析</span>
+      <small>视频 → 原画拾取</small>
+    </button>
   </nav>
   <div class="top-actions">
     <span id="userArea" class="user-area" hidden></span>
@@ -152,6 +157,7 @@
         <div class="row">
           <button id="btnExportMp4" class="btn">⬇ 拼接导出 (mp4)</button>
           <button id="btnExportZip" class="btn">⬇ PNG 序列导出 (zip)</button>
+          <button id="btnJsonScript" class="btn" title="把关键帧序列、每段时长与动作描述导出为带时间戳的结构化 JSON 脚本">⟨/⟩ JSON 脚本</button>
           <label class="check"><input type="checkbox" id="chkExportRemap"> 按重映射导出</label>
           <span id="exportStatus" class="hint accent"></span>
         </div>
@@ -364,6 +370,76 @@
     </section>
   </aside>
 </main>
+
+<!-- ============ 模式五：動作分析（视频 → 原画拾取） ============ -->
+<main class="layout motion-layout" id="viewMotion" hidden>
+  <aside class="col-left motion-side">
+    <section class="panel">
+      <h2>参考视频</h2>
+      <label class="filedrop" id="motionDrop">
+        <input type="file" id="motionFile" accept="video/*">
+        <span>＋ 拖入或点击上传<br><small>≤120 秒 · mp4 / webm / mov</small></span>
+      </label>
+      <div id="motionSrcInfo" class="hint"></div>
+      <button id="motionUseV2V" class="btn wide" hidden>⇊ 使用「视频转绘」源视频</button>
+    </section>
+    <section class="panel">
+      <h2>原画選定</h2>
+      <div class="field">
+        <label>抽出感度 <b id="motionSensVal">60</b></label>
+        <input type="range" id="motionSens" min="10" max="100" value="60">
+      </div>
+      <div class="field">
+        <label>最小ポーズ間隔 <b id="motionGapVal">0.4s</b></label>
+        <input type="range" id="motionGap" min="2" max="20" value="4">
+      </div>
+      <div class="field">
+        <label>拾点数上限 <b id="motionMaxVal">12</b></label>
+        <input type="range" id="motionMax" min="3" max="24" value="12">
+      </div>
+      <label class="check"><input type="checkbox" id="motionEnds" checked> 首尾帧作为原画保留</label>
+      <button id="btnAnalyzeMotion" class="btn primary wide motion-cta" disabled>ANALYZE MOTION →</button>
+      <div id="motionStatus" class="hint accent"></div>
+    </section>
+    <section class="panel motion-stats" id="motionStats" hidden>
+      <div class="motion-stat"><b id="statPoses">0</b><span>poses</span></div>
+      <div class="motion-stat"><b id="statAccepted">0</b><span>accepted</span></div>
+      <div class="motion-stat"><b id="statDuration">0:00</b><span>duration</span></div>
+    </section>
+  </aside>
+  <div class="col-main">
+    <section class="panel motion-viewer-panel">
+      <h2>MOTION VIEWER <span class="hint">— 動きの句読点を、原画として拾う</span></h2>
+      <video id="motionVideo" class="motion-video" controls muted hidden></video>
+      <div id="motionEmpty" class="empty-note">上传参考视频后，这里会显示运动能量曲线与自动拾取的原画候补</div>
+    </section>
+    <section class="panel" id="motionChartPanel" hidden>
+      <h2>MOTION ENERGY <span class="hint">— 运动量曲线 · 竖线为原画位置，点击竖线跳帧 / 再点取消选用</span></h2>
+      <canvas id="motionChart" class="motion-chart" height="150"></canvas>
+    </section>
+    <section class="panel" id="motionSheetPanel" hidden>
+      <h2>原画候補 <span class="hint">— KEY POSE CONTACT SHEET · 点选保留，✓ 后一键送入中割关键帧</span></h2>
+      <div id="motionSheet" class="motion-sheet"></div>
+      <div class="row" style="margin-top:10px">
+        <button id="btnPosesToKeys" class="btn primary" disabled>⇈ 送入中割关键帧（<span id="poseSendCount">0</span>）</button>
+        <button id="btnPosesAll" class="btn">全选</button>
+        <button id="btnPosesNone" class="btn ghost">全不选</button>
+        <span id="motionSheetStatus" class="hint accent"></span>
+      </div>
+    </section>
+  </div>
+</main>
+
+<!-- MARS-LSP 风格 JSON 脚本导出 -->
+<dialog id="jsonScriptDialog" class="json-script-dialog">
+  <h3>⟨/⟩ JSON 脚本 <span class="hint">— MARS-LSP 式时间轴结构：关键帧 + 分段动作 + 演技强度，可直接喂给程序化生成管线</span></h3>
+  <pre id="jsonScriptPre" class="json-script-pre"></pre>
+  <div class="dialog-actions">
+    <button id="jsonScriptCopy" class="btn primary">复制 JSON</button>
+    <button id="jsonScriptDownload" class="btn">⬇ 下载 .json</button>
+    <button id="jsonScriptClose" class="btn ghost">关闭</button>
+  </div>
+</dialog>
 
 <!-- 保存提示词：选择目标分区 -->
 <dialog id="plSaveDialog">
