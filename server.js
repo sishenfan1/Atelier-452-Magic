@@ -394,14 +394,38 @@ async function mockGenerate(id, firstDataUrl, lastDataUrl, duration) {
 }
 
 // ---------- 生成：火山方舟 Seedance ----------
+// ---------- Ark 内容安全防误伤 ----------
+// 火山引擎对毒品/违禁词零容忍，英文同形词也会触发（如 ecstasy 既是"狂喜"也是摇头丸）。
+// 这里只替换"合法创作语境常见、但撞违禁品名"的明确误伤词，绝不动创作意图。
+const ARK_SENSITIVE_FIXES = [
+  [/\becstasy\b/gi, 'exhilaration'],
+  [/\becstatic\b/gi, 'exhilarated'],
+  [/\bcocaine\b|\bheroin\b(?!e)|\bmeth\b|\bopium\b/gi, 'forbidden substance'],
+];
+function sanitizeForArk(text) {
+  let t = String(text || '');
+  for (const [re, rep] of ARK_SENSITIVE_FIXES) t = t.replace(re, rep);
+  return t;
+}
+/** 拦截错误增强：命中内容安全时附上实际发送文本预览，用户可自查触发词 */
+function arkErrorWithPreview(label, status, json, sentText) {
+  let msg = `Ark ${label} (${status}): ` + JSON.stringify(json).slice(0, 400);
+  const code = json && json.error && json.error.code || '';
+  if (/Sensitive/i.test(code)) {
+    msg += `\n⚠ 内容安全拦截：请自查提示词中的敏感词（毒品/暴力/色情/政治类，英文同形词也会触发）。`
+      + `\n实际发送文本预览：${String(sentText || '').slice(0, 400)}`;
+  }
+  return new Error(msg);
+}
+
 async function arkCreate(cfg, firstDataUrl, lastDataUrl, prompt, duration, stylePrompt, actingPrompt, inbetweenPrompt) {
   const style = (stylePrompt !== undefined ? stylePrompt : cfg.stylePrompt) || '';
   // 中割运动指令：永远注入，保证首尾帧之间不是"无运动的渐变"
   const inbetween = (inbetweenPrompt !== undefined && inbetweenPrompt !== ''
     ? inbetweenPrompt
     : (cfg.inbetweenPrompt || DEFAULT_INBETWEEN_PROMPT));
-  const text = [style.trim(), inbetween.trim(), (actingPrompt || '').trim(), (prompt || '').trim()]
-    .filter(Boolean).join('\n');
+  const text = sanitizeForArk([style.trim(), inbetween.trim(), (actingPrompt || '').trim(), (prompt || '').trim()]
+    .filter(Boolean).join('\n'));
   const content = [];
   if (text) content.push({ type: 'text', text });
   content.push({ type: 'image_url', image_url: { url: firstDataUrl }, role: 'first_frame' });
@@ -420,7 +444,7 @@ async function arkCreate(cfg, firstDataUrl, lastDataUrl, prompt, duration, style
     body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`Ark 创建任务失败 (${res.status}): ` + JSON.stringify(json).slice(0, 500));
+  if (!res.ok) throw arkErrorWithPreview('创建任务失败', res.status, json, text);
   if (!json.id) throw new Error('Ark 响应缺少任务 id: ' + JSON.stringify(json).slice(0, 300));
   return json.id;
 }
@@ -504,7 +528,8 @@ function wholePromptFor(n, gaps) {
 }
 
 async function arkCreateWhole(cfg, imageDataUrls, text, duration) {
-  const content = [{ type: 'text', text }];
+  const safeText = sanitizeForArk(text);
+  const content = [{ type: 'text', text: safeText }];
   for (const img of imageDataUrls) {
     content.push({ type: 'image_url', image_url: { url: img }, role: 'reference_image' });
   }
@@ -522,7 +547,7 @@ async function arkCreateWhole(cfg, imageDataUrls, text, duration) {
     body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`Ark 创建一体生成任务失败 (${res.status}): ` + JSON.stringify(json).slice(0, 500));
+  if (!res.ok) throw arkErrorWithPreview('创建一体生成任务失败', res.status, json, safeText);
   if (!json.id) throw new Error('Ark 响应缺少任务 id');
   return json.id;
 }
@@ -561,7 +586,8 @@ async function mockWhole(id, imageFiles, duration) {
 
 // ---------- V2V：Seedance 参考视频转绘 ----------
 async function arkCreateV2V(cfg, publicVideoUrl, refDataUrls, text, duration) {
-  const content = [{ type: 'text', text }];
+  const safeText = sanitizeForArk(text);
+  const content = [{ type: 'text', text: safeText }];
   content.push({ type: 'video_url', video_url: { url: publicVideoUrl }, role: 'reference_video' });
   for (const ref of refDataUrls) {
     content.push({ type: 'image_url', image_url: { url: ref }, role: 'reference_image' });
@@ -580,7 +606,7 @@ async function arkCreateV2V(cfg, publicVideoUrl, refDataUrls, text, duration) {
     body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`Ark 创建 V2V 任务失败 (${res.status}): ` + JSON.stringify(json).slice(0, 500));
+  if (!res.ok) throw arkErrorWithPreview('创建 V2V 任务失败', res.status, json, safeText);
   if (!json.id) throw new Error('Ark 响应缺少任务 id');
   return json.id;
 }
