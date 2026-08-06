@@ -37,6 +37,11 @@
       <span class="mode-title">動作分析</span>
       <small>视频 → 原画拾取</small>
     </button>
+    <button id="tabDirector" class="mode-tab">
+      <span class="mode-kicker">工作区 6</span>
+      <span class="mode-title">导演生成</span>
+      <small>首尾帧 + 参考视频 · 2.5</small>
+    </button>
   </nav>
   <div class="top-actions">
     <span id="userArea" class="user-area" hidden></span>
@@ -426,6 +431,95 @@
         <button id="btnPosesNone" class="btn ghost">全不选</button>
         <span id="motionSheetStatus" class="hint accent"></span>
       </div>
+    </section>
+  </div>
+</main>
+
+<!-- ============ 模式六：导演生成（首尾帧 + 参考视频 + 参考图 · Seedance 2.0/2.5） ============ -->
+<main class="layout" id="viewDirector" hidden>
+  <aside class="col-left">
+    <section class="panel highlight">
+      <h2>🎬 首帧 / 尾帧</h2>
+      <div class="dir-frame-row">
+        <div class="dir-frame" id="dirFirstDrop" title="点击上传首帧（必选）">
+          <img id="dirFirstImg" hidden alt="首帧">
+          <span class="dir-frame-label" id="dirFirstLabel">＋ 首帧<br><small>必选</small></span>
+        </div>
+        <span class="dir-frame-arrow">→</span>
+        <div class="dir-frame" id="dirLastDrop" title="点击上传尾帧（可选）">
+          <img id="dirLastImg" hidden alt="尾帧">
+          <span class="dir-frame-label" id="dirLastLabel">＋ 尾帧<br><small>可选</small></span>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="dirLastClear" class="btn ghost" hidden>✕ 清除尾帧</button>
+      </div>
+      <input type="file" id="dirFirstFile" accept="image/*" hidden>
+      <input type="file" id="dirLastFile" accept="image/*" hidden>
+    </section>
+    <section class="panel">
+      <h2>🎞 参考视频 <span class="hint">— 可选 · 动作/运镜参考</span></h2>
+      <div class="row">
+        <button id="dirRefVideoBtn" class="btn">上传参考视频</button>
+        <button id="dirRefVideoClear" class="btn ghost" hidden>✕</button>
+      </div>
+      <div class="hint" id="dirRefVideoName">未选择 — Seedance 会参考它的运动与节奏</div>
+      <video id="dirRefVideoPreview" class="v2v-result" controls muted hidden style="margin-top:8px"></video>
+      <input type="file" id="dirRefVideoFile" accept="video/*" hidden>
+    </section>
+    <section class="panel">
+      <h2>🖼 参考图 <span class="hint">— 角色/场景/风格 ≤10</span></h2>
+      <div id="dirRefList" class="image-list-mini"></div>
+      <button id="dirRefAdd" class="btn wide">＋ 添加参考图</button>
+      <input type="file" id="dirRefFiles" accept="image/*" multiple hidden>
+    </section>
+  </aside>
+
+  <div class="col-center">
+    <section class="panel">
+      <h2>✍ 动作描述 <span class="hint">— 2.5 建议四拍结构：主体→动作→运镜→风格，一条连续动作弧</span></h2>
+      <textarea id="dirPrompt" rows="4" placeholder="例：她从静止起步，先缓慢迈出第一步（00-06s），逐渐加速冲刺（06-14s），镜头横移跟拍（14-24s），最终跃起定格（24-30s）。画面流畅稳定，无抖动无闪烁。"></textarea>
+    </section>
+    <section class="panel">
+      <h2>🎭 演技滑杆 <span class="hint">— 表演的四个维度，全部注入提示词</span></h2>
+      <div class="dir-sliders">
+        <label class="dir-slider"><span class="lbl">表演强度</span>
+          <input type="range" id="dirActOverall" min="0" max="100" step="1" value="0">
+          <b id="dirActOverallVal">关</b></label>
+        <label class="dir-slider"><span class="lbl">表情幅度</span>
+          <input type="range" id="dirActFace" min="0" max="100" step="1" value="0">
+          <b id="dirActFaceVal">关</b></label>
+        <label class="dir-slider"><span class="lbl">肢体幅度</span>
+          <input type="range" id="dirActBody" min="0" max="100" step="1" value="0">
+          <b id="dirActBodyVal">关</b></label>
+        <label class="dir-slider"><span class="lbl">节奏张力</span>
+          <input type="range" id="dirActTempo" min="0" max="100" step="1" value="0">
+          <b id="dirActTempoVal">关</b></label>
+      </div>
+      <div class="hint" id="dirActPreview"></div>
+    </section>
+    <section class="panel highlight">
+      <h2>⚡ 生成</h2>
+      <div class="row">
+        <label class="check">模型
+          <select id="dirModel" class="btn" style="margin-left:6px">
+            <option value="">Seedance 2.0（当前配置）</option>
+            <option value="doubao-seedance-2-5-260628">Seedance 2.5（API 开放即用）</option>
+          </select>
+        </label>
+        <span class="inline-slider"><span class="lbl">时长</span>
+          <input type="range" id="dirDuration" min="4" max="15" step="1" value="5">
+          <b id="dirDurationVal">5 秒</b></span>
+        <button id="btnDirectorGen" class="btn primary">🎬 导演生成</button>
+      </div>
+      <div class="hint" id="dirModelHint">2.5：4-30 秒 · 480P/720P（1080P 自动降档）· 方舟 API 尚未开放调用，开放后此处即插即用</div>
+      <span id="dirStatus" class="hint accent"></span>
+    </section>
+    <section class="panel">
+      <h2>🎥 生成结果</h2>
+      <video id="dirResult" class="v2v-result" controls loop hidden></video>
+      <div id="dirResultEmpty" class="empty-note">还没有结果 — 上传首帧后点「🎬 导演生成」</div>
+      <div id="dirHistory" class="history-list" style="margin-top:10px"></div>
     </section>
   </div>
 </main>

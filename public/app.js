@@ -33,6 +33,14 @@ const state = {
   presets: [],       // {id, name, text}
   usedPrompts: [],   // 自动记录的已用提示词 {t, kind, text}
   pendingTasks: [],  // 已提交未完成的生成任务 {id, kind, ...提交时元数据}，刷新后恢复轮询
+  director: {
+    first: null, last: null,          // 首/尾帧 {url, name}
+    refVideo: null, refVideoName: '', // 参考视频 url
+    refs: [],                         // 参考图 {id, name, url} ≤10
+    history: [],                      // {videoUrl, time, duration, model, note}
+    current: -1,
+    running: false,
+  },
   motion: {
     srcUrl: null, srcName: '',
     fps: 0, duration: 0,
@@ -141,6 +149,14 @@ function snapshot() {
       energy: state.motion.energy,
       poses: state.motion.poses,
     },
+    director: {
+      first: state.director.first,
+      last: state.director.last,
+      refVideo: state.director.refVideo,
+      refVideoName: state.director.refVideoName,
+      refs: state.director.refs,
+      history: state.director.history,
+    },
     pendingTasks: state.pendingTasks,
   };
 }
@@ -231,6 +247,15 @@ async function loadProject() {
     state.motion.energy = Array.isArray(mo.energy) ? mo.energy : [];
     state.motion.poses = Array.isArray(mo.poses) ? mo.poses : [];
     restoreMotionUI();
+    const dr = p.director || {};
+    state.director.first = dr.first || null;
+    state.director.last = dr.last || null;
+    state.director.refVideo = dr.refVideo || null;
+    state.director.refVideoName = dr.refVideoName || '';
+    state.director.refs = Array.isArray(dr.refs) ? dr.refs : [];
+    state.director.history = Array.isArray(dr.history) ? dr.history : [];
+    state.director.current = state.director.history.length ? 0 : -1;
+    restoreDirectorUI();
     renderRefine();
     syncSliderLabels();
     rebuildSegments();
@@ -625,11 +650,13 @@ function switchMode(mode) {
   $('viewRefine').hidden = mode !== 'refine';
   $('viewLibrary').hidden = mode !== 'library';
   $('viewMotion').hidden = mode !== 'motion';
+  $('viewDirector').hidden = mode !== 'director';
   $('tabInbetween').classList.toggle('active', mode === 'inbetween');
   $('tabV2V').classList.toggle('active', mode === 'v2v');
   $('tabRefine').classList.toggle('active', mode === 'refine');
   $('tabLibrary').classList.toggle('active', mode === 'library');
   $('tabMotion').classList.toggle('active', mode === 'motion');
+  $('tabDirector').classList.toggle('active', mode === 'director');
   if (mode === 'inbetween') layoutMacroTimeline(); // 隐藏时宽度为 0，回来时重排
   if (mode === 'library') renderLibraryPage();
   if (mode === 'motion') {
@@ -1355,6 +1382,23 @@ async function resumePendingTask(entry) {
         });
         state.v2v.current = 0;
         renderV2V();
+        finishJob(job, true);
+      } catch (e) {
+        finishJob(job, false, String(e.message || e));
+      }
+    } else if (entry.kind === 'director') {
+      const job = addJob(`🎬 导演生成 ${entry.duration || '?'}s（恢复）`, 60 + (entry.duration || 8) * 25);
+      try {
+        const p = await pollUntilDone(entry.id);
+        state.director.history.unshift({
+          videoUrl: p.videoUrl,
+          time: new Date().toLocaleString('zh-CN', { hour12: false }),
+          duration: entry.duration || 0,
+          model: entry.model || '',
+          note: entry.note || '',
+        });
+        state.director.current = 0;
+        renderDirector();
         finishJob(job, true);
       } catch (e) {
         finishJob(job, false, String(e.message || e));
@@ -2596,6 +2640,7 @@ $('tabV2V').onclick = () => switchMode('v2v');
 $('tabRefine').onclick = () => switchMode('refine');
 $('tabLibrary').onclick = () => switchMode('library');
 $('tabMotion').onclick = () => switchMode('motion');
+$('tabDirector').onclick = () => switchMode('director');
 
 // 精修：源图上传 / 生成 / 结果操作
 $('refineFileInput').onchange = async (e) => {
@@ -2987,6 +3032,211 @@ const adwPromptParam = (() => {
   if (p) history.replaceState(null, '', location.pathname);
   return p || '';
 })();
+
+// ---------------- 工作区 6：导演生成（首尾帧 + 参考视频 + 参考图 · 演技滑杆组） ----------------
+function setDirStatus(t) { $('dirStatus').textContent = t || ''; }
+
+/** 四维演技滑杆 → 中文提示词片段（0 = 关闭该维度） */
+function directorActingText() {
+  const parts = [];
+  const overall = Number($('dirActOverall').value);
+  const face = Number($('dirActFace').value);
+  const body = Number($('dirActBody').value);
+  const tempo = Number($('dirActTempo').value);
+  if (overall > 0) parts.push(`表演强度${overall}/100，${actingTier(overall).name}`);
+  if (face > 0) parts.push(face >= 66 ? '表情大开大合、情绪外放到极致' : face >= 33 ? '表情鲜明、情绪清晰可读' : '微表情细腻克制');
+  if (body > 0) parts.push(body >= 66 ? '肢体动作极度夸张、全身戏剧化表演' : body >= 33 ? '肢体语言丰富、动作幅度明显' : '肢体收敛、小幅度动作');
+  if (tempo > 0) parts.push(tempo >= 66 ? '节奏急促爆发、动作干脆凌厉' : tempo >= 33 ? '节奏明快有张力' : '节奏沉稳缓慢、留白呼吸');
+  return parts.join('，');
+}
+function syncDirActing() {
+  const label = (v) => (v > 0 ? v : '关');
+  $('dirActOverallVal').textContent = label(Number($('dirActOverall').value));
+  $('dirActFaceVal').textContent = label(Number($('dirActFace').value));
+  $('dirActBodyVal').textContent = label(Number($('dirActBody').value));
+  $('dirActTempoVal').textContent = label(Number($('dirActTempo').value));
+  const t = directorActingText();
+  $('dirActPreview').textContent = t ? '→ ' + t : '';
+}
+for (const id of ['dirActOverall', 'dirActFace', 'dirActBody', 'dirActTempo']) {
+  $(id).oninput = syncDirActing;
+}
+
+// 模型切换：时长上限联动（2.0 → 15s，2.5 → 30s）
+$('dirModel').onchange = () => {
+  const is25 = /2-5/.test($('dirModel').value);
+  const slider = $('dirDuration');
+  slider.max = is25 ? 30 : 15;
+  if (Number(slider.value) > Number(slider.max)) slider.value = slider.max;
+  $('dirDurationVal').textContent = slider.value + ' 秒';
+  $('dirModelHint').textContent = is25
+    ? '2.5：4-30 秒 · 480P/720P（1080P 自动降档）· 方舟 API 尚未开放调用，开放后此处即插即用'
+    : '2.0：4-15 秒 · 使用 ⚙ API 设置里的当前模型与分辨率';
+};
+$('dirDuration').oninput = (e) => { $('dirDurationVal').textContent = e.target.value + ' 秒'; };
+
+// 首帧 / 尾帧上传
+function setDirFrame(slot, url, name) {
+  state.director[slot] = url ? { url, name: name || '' } : null;
+  const img = $(slot === 'first' ? 'dirFirstImg' : 'dirLastImg');
+  const lbl = $(slot === 'first' ? 'dirFirstLabel' : 'dirLastLabel');
+  if (url) { img.src = url; img.hidden = false; lbl.hidden = true; }
+  else { img.hidden = true; img.removeAttribute('src'); lbl.hidden = false; }
+  if (slot === 'last') $('dirLastClear').hidden = !url;
+  scheduleSave();
+}
+$('dirFirstDrop').onclick = () => $('dirFirstFile').click();
+$('dirLastDrop').onclick = () => $('dirLastFile').click();
+$('dirFirstFile').onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try { setDirFrame('first', await uploadAsset(f), f.name); setDirStatus(''); }
+  catch (err) { setDirStatus('首帧上传失败: ' + (err.message || err)); }
+};
+$('dirLastFile').onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try { setDirFrame('last', await uploadAsset(f), f.name); setDirStatus(''); }
+  catch (err) { setDirStatus('尾帧上传失败: ' + (err.message || err)); }
+};
+$('dirLastClear').onclick = () => setDirFrame('last', null);
+
+// 参考视频
+$('dirRefVideoBtn').onclick = () => $('dirRefVideoFile').click();
+$('dirRefVideoFile').onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  setDirStatus('参考视频上传中…');
+  try {
+    const url = await uploadAsset(f);
+    state.director.refVideo = url;
+    state.director.refVideoName = f.name;
+    restoreDirectorRefVideo();
+    setDirStatus('');
+    scheduleSave();
+  } catch (err) { setDirStatus('参考视频上传失败: ' + (err.message || err)); }
+};
+$('dirRefVideoClear').onclick = () => {
+  state.director.refVideo = null;
+  state.director.refVideoName = '';
+  restoreDirectorRefVideo();
+  scheduleSave();
+};
+function restoreDirectorRefVideo() {
+  const has = !!state.director.refVideo;
+  $('dirRefVideoName').textContent = has ? state.director.refVideoName || '参考视频已就绪' : '未选择 — Seedance 会参考它的运动与节奏';
+  $('dirRefVideoClear').hidden = !has;
+  const v = $('dirRefVideoPreview');
+  if (has) { v.src = state.director.refVideo; v.hidden = false; } else { v.hidden = true; v.removeAttribute('src'); }
+}
+
+// 参考图池（≤10）
+function renderDirRefs() {
+  const list = $('dirRefList');
+  list.innerHTML = '';
+  state.director.refs.forEach((r) => {
+    const cell = document.createElement('div');
+    cell.className = 'ref-cell';
+    cell.innerHTML = `<img src="${r.url}" alt="${escapeHtml(r.name)}" title="${escapeHtml(r.name)}"><button type="button" aria-label="移除">✕</button>`;
+    cell.querySelector('button').onclick = () => {
+      state.director.refs = state.director.refs.filter((x) => x.id !== r.id);
+      renderDirRefs();
+      scheduleSave();
+    };
+    list.appendChild(cell);
+  });
+  $('dirRefAdd').disabled = state.director.refs.length >= 10;
+}
+$('dirRefAdd').onclick = () => $('dirRefFiles').click();
+$('dirRefFiles').onchange = async (e) => {
+  const files = Array.from(e.target.files || []).slice(0, 10 - state.director.refs.length);
+  e.target.value = '';
+  for (const f of files) {
+    try {
+      const url = await uploadAsset(f);
+      state.director.refs.push({ id: nextRefId++, name: f.name, url });
+    } catch (err) { setDirStatus('参考图上传失败: ' + (err.message || err)); }
+  }
+  renderDirRefs();
+  scheduleSave();
+};
+
+// 生成
+async function directorGenerate() {
+  if (state.director.running) return;
+  if (!state.director.first) { setDirStatus('请先上传首帧'); return; }
+  const model = $('dirModel').value || undefined;
+  const duration = Number($('dirDuration').value);
+  const acting = directorActingText();
+  const prompt = [$('dirPrompt').value.trim(), acting].filter(Boolean).join('\n');
+  state.director.running = true;
+  $('btnDirectorGen').disabled = true;
+  setDirStatus('创建任务中…');
+  const job = addJob(`🎬 导演生成 ${duration}s${model ? ' · 2.5' : ''}`, 60 + duration * 25);
+  try {
+    const res = await fetch('/api/director', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        firstFrame: state.director.first.url,
+        lastFrame: state.director.last ? state.director.last.url : null,
+        refVideoUrl: state.director.refVideo || null,
+        refImages: state.director.refs.map((r) => r.url),
+        prompt, duration, model,
+      }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || ('请求失败 ' + res.status));
+    trackPendingTask({ id: json.id, kind: 'director', duration, model: model || '', note: $('dirPrompt').value.trim().slice(0, 80) });
+    setDirStatus('生成中…（可离开此页，结果会自动入历史）');
+    const p = await pollUntilDone(json.id);
+    untrackPendingTask(json.id);
+    state.director.history.unshift({
+      videoUrl: p.videoUrl,
+      time: new Date().toLocaleString('zh-CN', { hour12: false }),
+      duration, model: model || '2.0', note: $('dirPrompt').value.trim().slice(0, 120),
+    });
+    state.director.current = 0;
+    renderDirector();
+    setDirStatus('完成 ✓');
+    finishJob(job, true);
+    scheduleSave();
+  } catch (e) {
+    setDirStatus('失败: ' + String(e.message || e).slice(0, 400));
+    finishJob(job, false, String(e.message || e));
+  } finally {
+    state.director.running = false;
+    $('btnDirectorGen').disabled = false;
+  }
+}
+$('btnDirectorGen').onclick = directorGenerate;
+
+// 结果 + 历史
+function renderDirector() {
+  const h = state.director.history;
+  const cur = h[state.director.current];
+  const v = $('dirResult');
+  if (cur) { v.src = cur.videoUrl; v.hidden = false; $('dirResultEmpty').hidden = true; }
+  else { v.hidden = true; $('dirResultEmpty').hidden = false; }
+  const list = $('dirHistory');
+  list.innerHTML = '';
+  h.forEach((item, i) => {
+    const card = document.createElement('div');
+    card.className = 'gen-card' + (i === state.director.current ? ' playing' : '');
+    card.innerHTML = `<div class="head"><b>${item.model === 'doubao-seedance-2-5-260628' ? '2.5' : '2.0'} · ${item.duration}s</b><span class="hint">${item.time}</span></div>
+      <div class="hint">${escapeHtml(item.note || '')}</div>`;
+    card.onclick = () => { state.director.current = i; renderDirector(); };
+    list.appendChild(card);
+  });
+}
+function restoreDirectorUI() {
+  if (state.director.first) setDirFrame('first', state.director.first.url, state.director.first.name);
+  if (state.director.last) setDirFrame('last', state.director.last.url, state.director.last.name);
+  restoreDirectorRefVideo();
+  renderDirRefs();
+  renderDirector();
+  syncDirActing();
+}
 
 // ---------------- 模块化布局引擎：面板折叠 / 拖拽重排 / 栏宽调节（全部持久化） ----------------
 const LAYOUT_KEY = 'a452LayoutV1';

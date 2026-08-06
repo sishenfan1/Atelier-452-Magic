@@ -496,6 +496,44 @@ async function mockV2V(id, srcFile) {
   }
 }
 
+// ---------- 导演生成：首尾帧 + 参考视频 + 参考图混合单次生成（Seedance 2.0 / 2.5） ----------
+const SEEDANCE_25_MODEL = 'doubao-seedance-2-5-260628'; // 方舟模型卡已公开；API 开放即插即用
+function isSeedance25(model) { return /2-5/.test(String(model || '')); }
+function clampDurationFor(model, d) {
+  return isSeedance25(model) ? clampDuration(d, 5, 4, 30) : clampDuration(d);
+}
+
+async function arkCreateDirector(cfg, opts) {
+  const { firstDataUrl, lastDataUrl, refVideoPublicUrl, refDataUrls = [], text, duration, model } = opts;
+  const safeText = sanitizeForArk(text);
+  const content = [{ type: 'text', text: safeText }];
+  content.push({ type: 'image_url', image_url: { url: firstDataUrl }, role: 'first_frame' });
+  if (lastDataUrl) content.push({ type: 'image_url', image_url: { url: lastDataUrl }, role: 'last_frame' });
+  if (refVideoPublicUrl) content.push({ type: 'video_url', video_url: { url: refVideoPublicUrl }, role: 'reference_video' });
+  for (const r of refDataUrls) content.push({ type: 'image_url', image_url: { url: r }, role: 'reference_image' });
+  const useModel = model || cfg.model;
+  // 2.5 仅支持 480P/720P —— 1080p 配置自动降档
+  let resolution = cfg.resolution;
+  if (isSeedance25(useModel) && /1080/.test(String(resolution))) resolution = '720p';
+  const body = {
+    model: useModel,
+    content,
+    duration: clampDurationFor(useModel, duration),
+    resolution,
+    ratio: cfg.ratio,
+    watermark: false,
+  };
+  const res = await fetch(cfg.endpoint + '/contents/generations/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.apiKey },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw arkErrorWithPreview('创建导演生成任务失败', res.status, json, safeText);
+  if (!json.id) throw new Error('Ark 响应缺少任务 id');
+  return json.id;
+}
+
 // ---------- 一体生成：全部关键帧 → 单次连续动画 ----------
 function wholePromptFor(n, gaps) {
   let text = `共有 ${n} 张参考图片。图片1到图片${n}是同一段动画按时间顺序排列的关键帧原画：` +
@@ -1466,6 +1504,71 @@ app.post('/api/whole/preview', (req, res) => {
 });
 
 // 一体生成：全部关键帧一次生成一段连续动画
+app.post('/api/director', async (req, res) => {
+  const { firstFrame, lastFrame, refVideoUrl, refImages = [], prompt, duration, model } = req.body || {};
+  if (!firstFrame) return res.status(400).json({ error: '缺少首帧图片' });
+  const cfg = loadConfig();
+  const id = newId();
+  let bill = null;
+  if (pm) {
+    bill = pm.charge(req, 'whole', clampDurationFor(model, duration));
+    if (!bill.ok) return res.status(402).json({ error: bill.error });
+  }
+  logUsedPrompt(cfg, 'director', prompt);
+  if (cfg.apiKey) {
+    try {
+      const firstDataUrl = resolveToDataUrl(firstFrame);
+      const lastDataUrl = lastFrame ? resolveToDataUrl(lastFrame) : null;
+      const refDataUrls = (Array.isArray(refImages) ? refImages : []).slice(0, 10).map(resolveToDataUrl);
+      // 参考视频必须公网 URL（与 V2V 同一隧道流程）
+      let refVideoPublicUrl = null;
+      if (refVideoUrl) {
+        const srcFile = localFileOf(refVideoUrl);
+        if (!srcFile || !fs.existsSync(srcFile)) throw new Error('参考视频不存在，请重新上传');
+        let base = await ensureTunnel();
+        try {
+          await waitPublicReachable(base + refVideoUrl);
+        } catch (err) {
+          if (!tunnel.proc) throw err;
+          console.warn('隧道自检失败，重建隧道:', String(err.message || err).slice(0, 120));
+          try { tunnel.proc.kill(); } catch {}
+          tunnel.url = null; tunnel.proc = null;
+          base = await ensureTunnel();
+          await waitPublicReachable(base + refVideoUrl);
+        }
+        refVideoPublicUrl = base + refVideoUrl;
+      }
+      const arkId = await arkCreateDirector(cfg, {
+        firstDataUrl, lastDataUrl, refVideoPublicUrl, refDataUrls,
+        text: String(prompt || ''), duration, model,
+      });
+      tasks[id] = { mode: 'ark', status: 'running', arkId, cost: bill && bill.cost, uid: bill && bill.uid };
+    } catch (e) {
+      if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
+      return res.status(502).json({ error: String(e.message || e) });
+    }
+  } else {
+    // 无 key：首尾帧交叉溶解模拟（参考视频/参考图忽略）
+    const files = [];
+    try {
+      const f1 = localFileOf(firstFrame);
+      if (!f1 || !fs.existsSync(f1)) throw new Error('首帧文件缺失');
+      files.push(f1);
+      if (lastFrame) {
+        const f2 = localFileOf(lastFrame);
+        if (f2 && fs.existsSync(f2)) files.push(f2);
+      }
+      if (files.length < 2) files.push(files[0]);
+    } catch (e) {
+      if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
+      return res.status(400).json({ error: String(e.message || e) });
+    }
+    tasks[id] = { mode: 'mock', status: 'running', cost: bill && bill.cost, uid: bill && bill.uid };
+    mockWhole(id, files, clampDurationFor(model, duration));
+  }
+  res.json({ id, mode: tasks[id].mode, status: 'running' });
+});
+
 app.post('/api/whole', async (req, res) => {
   const { images = [], prompt, stylePrompt, actingPrompt, inbetweenPrompt, duration, timings, gaps } = req.body || {};
   const gapList = Array.isArray(gaps) ? gaps : (Array.isArray(timings) ? timings.map((s) => ({ seconds: s })) : null);
