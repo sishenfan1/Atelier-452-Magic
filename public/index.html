@@ -11,37 +11,44 @@
 <header class="topbar">
   <div class="brand">✦ Atelier452 Magic</div>
   <span id="verChip" class="ver-chip"></span>
-  <nav class="mode-tabs">
-    <button id="tabInbetween" class="mode-tab active">
-      <span class="mode-kicker">工作区 1</span>
-      <span class="mode-title">中割生成</span>
-      <small>关键帧 → 补间动画</small>
+  <nav class="mode-nav" id="modeNav">
+    <button class="mode-current" id="modeCurrent" aria-haspopup="true">
+      <span class="mode-kicker" id="modeCurrentKicker">工作区 1</span>
+      <span class="mode-title" id="modeCurrentTitle">中割生成</span>
+      <span class="mode-caret">▾</span>
     </button>
-    <button id="tabV2V" class="mode-tab">
-      <span class="mode-kicker">工作区 2</span>
-      <span class="mode-title">视频转绘上色</span>
-      <small>粗动画 → 参考图成片</small>
-    </button>
-    <button id="tabRefine" class="mode-tab">
-      <span class="mode-kicker">工作区 3</span>
-      <span class="mode-title">原画精修</span>
-      <small>草稿 → 完成版原画</small>
-    </button>
-    <button id="tabLibrary" class="mode-tab">
-      <span class="mode-kicker">工作区 4</span>
-      <span class="mode-title">提示词库</span>
-      <small>存储 · 分区 · JSON</small>
-    </button>
-    <button id="tabMotion" class="mode-tab">
-      <span class="mode-kicker">工作区 5</span>
-      <span class="mode-title">動作分析</span>
-      <small>视频 → 原画拾取</small>
-    </button>
-    <button id="tabDirector" class="mode-tab">
-      <span class="mode-kicker">工作区 6</span>
-      <span class="mode-title">导演生成</span>
-      <small>首尾帧 + 参考视频 · 2.5</small>
-    </button>
+    <div class="mode-tabs" id="modeTabs">
+      <button id="tabInbetween" class="mode-tab active">
+        <span class="mode-kicker">工作区 1</span>
+        <span class="mode-title">中割生成</span>
+        <small>关键帧 → 补间动画</small>
+      </button>
+      <button id="tabV2V" class="mode-tab">
+        <span class="mode-kicker">工作区 2</span>
+        <span class="mode-title">视频转绘上色</span>
+        <small>粗动画 → 参考图成片</small>
+      </button>
+      <button id="tabRefine" class="mode-tab">
+        <span class="mode-kicker">工作区 3</span>
+        <span class="mode-title">原画精修</span>
+        <small>草稿 → 完成版原画</small>
+      </button>
+      <button id="tabLibrary" class="mode-tab">
+        <span class="mode-kicker">工作区 4</span>
+        <span class="mode-title">提示词库</span>
+        <small>存储 · 分区 · JSON</small>
+      </button>
+      <button id="tabMotion" class="mode-tab">
+        <span class="mode-kicker">工作区 5</span>
+        <span class="mode-title">動作分析</span>
+        <small>视频 → 原画拾取</small>
+      </button>
+      <button id="tabDirector" class="mode-tab">
+        <span class="mode-kicker">工作区 6</span>
+        <span class="mode-title">REFERENCES TOOL</span>
+        <small>首尾帧 + 参考视频 · 2.5</small>
+      </button>
+    </div>
   </nav>
   <div class="top-actions">
     <span id="userArea" class="user-area" hidden></span>

@@ -656,3 +656,34 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
   background: rgba(0,0,0,.6); color: #fff; font-size: 9px; cursor: pointer; opacity: 0;
 }
 .image-list-mini .ref-cell:hover button { opacity: 1; }
+
+/* ---------------- 工作区导航：默认收起，hover 展开 3×2 网格浮层 ---------------- */
+.mode-nav { position: relative; flex: 1; display: flex; justify-content: center; min-width: 0; }
+.mode-current {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px; max-width: 100%;
+  background: var(--card2); color: var(--text);
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  font: inherit; cursor: pointer; transition: border-color .12s;
+}
+.mode-current:hover { border-color: var(--accent); }
+.mode-current .mode-kicker { border-right: 1px solid rgba(255,255,255,.1); padding-right: 10px; grid-row: auto; }
+.mode-current .mode-title { font-size: 15px; }
+.mode-caret { color: var(--dim); font-size: 10px; transition: transform .15s; }
+.mode-nav:hover .mode-caret, .mode-nav:focus-within .mode-caret { transform: rotate(180deg); }
+/* 浮层：2 行 × 3 列，仅 hover / 键盘聚焦时出现 */
+.mode-tabs {
+  display: none; position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  grid-template-columns: repeat(3, minmax(200px, 1fr));
+  gap: 8px; padding: 10px; z-index: 80;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.55);
+  width: max-content; max-width: min(92vw, 760px);
+  flex: none; justify-content: stretch;
+}
+.mode-nav:hover .mode-tabs, .mode-nav:focus-within .mode-tabs { display: grid; }
+.mode-tabs.force-hide { display: none !important; }
+.mode-tab { min-width: 0; padding: 9px 12px; }
+.mode-tab .mode-title { font-size: 13.5px; }
+.mode-tab small { font-size: 10px; }
+.mode-tab .mode-kicker { font-size: 9.5px; padding-right: 8px; }

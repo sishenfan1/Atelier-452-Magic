@@ -657,6 +657,23 @@ function switchMode(mode) {
   $('tabLibrary').classList.toggle('active', mode === 'library');
   $('tabMotion').classList.toggle('active', mode === 'motion');
   $('tabDirector').classList.toggle('active', mode === 'director');
+  // 收起式导航：同步当前工作区徽章，选择后浮层立即收起（离开 hover 前也不再挡视线）
+  const MODE_NAMES = {
+    inbetween: ['工作区 1', '中割生成'],
+    v2v: ['工作区 2', '视频转绘上色'],
+    refine: ['工作区 3', '原画精修'],
+    library: ['工作区 4', '提示词库'],
+    motion: ['工作区 5', '動作分析'],
+    director: ['工作区 6', 'REFERENCES TOOL'],
+  };
+  const nm = MODE_NAMES[mode];
+  if (nm) {
+    $('modeCurrentKicker').textContent = nm[0];
+    $('modeCurrentTitle').textContent = nm[1];
+  }
+  const tabsEl = $('modeTabs');
+  tabsEl.classList.add('force-hide');
+  setTimeout(() => tabsEl.classList.remove('force-hide'), 250);
   if (mode === 'inbetween') layoutMacroTimeline(); // 隐藏时宽度为 0，回来时重排
   if (mode === 'library') renderLibraryPage();
   if (mode === 'motion') {
