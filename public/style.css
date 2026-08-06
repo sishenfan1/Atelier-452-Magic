@@ -597,3 +597,34 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 /* EXACT 复刻版：图表内嵌标题/图例，面板收紧 */
 .kf-panel { padding: 10px; }
 .kf-panel .kf-canvas { height: 200px; border-radius: 8px; }
+
+/* ---------------- 模块化布局引擎：折叠 / 拖拽重排 / 栏宽调节 ---------------- */
+.layout {
+  grid-template-columns: var(--studio-colL, 300px) minmax(0, 1fr) var(--studio-colR, 340px);
+}
+.panel > h2 { cursor: grab; user-select: none; position: relative; padding-right: 18px; }
+.panel > h2:active { cursor: grabbing; }
+.panel > h2::after {
+  content: '▾'; position: absolute; right: 0; top: 1px;
+  font-size: 10px; color: var(--dim); transition: transform .15s;
+}
+.panel.collapsed > h2 { margin-bottom: 0; }
+.panel.collapsed > h2::after { transform: rotate(-90deg); }
+.panel.collapsed > *:not(h2) { display: none !important; }
+.panel.dragging { opacity: .45; }
+.panel.drop-before { box-shadow: 0 -3px 0 0 var(--accent2); }
+.panel.drop-after { box-shadow: 0 3px 0 0 var(--accent2); }
+.col-drop-tail { outline: 2px dashed var(--accent2); outline-offset: 4px; }
+
+.col-resizer {
+  position: absolute; top: 0; bottom: 0; width: 10px; z-index: 5;
+  cursor: col-resize; touch-action: none;
+}
+.col-resizer::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px;
+  background: transparent; transition: background .12s;
+}
+.col-resizer:hover::after, .col-resizer.active::after { background: var(--accent2); }
+.col-left, .col-right { position: sticky; }
+.col-left .col-resizer { right: -8px; }
+.col-right .col-resizer { left: -8px; }

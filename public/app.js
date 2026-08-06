@@ -2988,6 +2988,181 @@ const adwPromptParam = (() => {
   return p || '';
 })();
 
+// ---------------- 模块化布局引擎：面板折叠 / 拖拽重排 / 栏宽调节（全部持久化） ----------------
+const LAYOUT_KEY = 'a452LayoutV1';
+function layoutState() {
+  try { return JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch { return {}; }
+}
+function layoutSave(patch) {
+  const s = { ...layoutState(), ...patch };
+  try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(s)); } catch {}
+}
+
+(() => {
+  // 1) 给每个视图容器里的面板分配稳定 pid（视图 id + 初始序号）
+  const containers = [];
+  document.querySelectorAll('main.layout').forEach((main) => {
+    let idx = 0;
+    main.querySelectorAll('.col-left, .col-center, .col-right').forEach((col, ci) => {
+      const ckey = main.id + ':' + ci;
+      col.dataset.ckey = ckey;
+      containers.push(col);
+      col.querySelectorAll(':scope > .panel').forEach((p) => {
+        p.dataset.pid = main.id + ':' + idx++;
+      });
+    });
+    // col 不分栏的面板（直接挂在 main 下）也编号，避免遗漏
+    main.querySelectorAll(':scope > .panel').forEach((p) => {
+      p.dataset.pid = p.dataset.pid || main.id + ':' + idx++;
+    });
+  });
+
+  const st = layoutState();
+
+  // 2) 恢复顺序（模板结构变化时 pid 对不上就跳过该容器，绝不丢面板）
+  if (st.order) {
+    for (const col of containers) {
+      const want = st.order[col.dataset.ckey];
+      if (!Array.isArray(want)) continue;
+      const byPid = {};
+      col.querySelectorAll(':scope > .panel').forEach((p) => { byPid[p.dataset.pid] = p; });
+      for (const pid of want) if (byPid[pid]) col.appendChild(byPid[pid]);
+    }
+  }
+  // 3) 恢复折叠 + 栏宽
+  if (st.collapsed) {
+    document.querySelectorAll('.panel[data-pid]').forEach((p) => {
+      if (st.collapsed[p.dataset.pid] && p.querySelector(':scope > h2')) p.classList.add('collapsed');
+    });
+  }
+  if (st.colL) document.documentElement.style.setProperty('--studio-colL', st.colL + 'px');
+  if (st.colR) document.documentElement.style.setProperty('--studio-colR', st.colR + 'px');
+
+  function persistOrder() {
+    const order = {};
+    for (const col of containers) {
+      order[col.dataset.ckey] = Array.from(col.querySelectorAll(':scope > .panel')).map((p) => p.dataset.pid);
+    }
+    layoutSave({ order });
+  }
+  function persistCollapsed() {
+    const collapsed = {};
+    document.querySelectorAll('.panel.collapsed[data-pid]').forEach((p) => { collapsed[p.dataset.pid] = 1; });
+    layoutSave({ collapsed });
+  }
+
+  // 4) h2 = 折叠开关 + 拖拽把手
+  let dragPanel = null;
+  let didDrag = false;
+  document.querySelectorAll('.panel[data-pid] > h2').forEach((h2) => {
+    h2.setAttribute('draggable', 'true');
+    h2.title = (h2.title ? h2.title + ' · ' : '') + '点击折叠 / 拖动移动面板';
+  });
+  document.addEventListener('click', (e) => {
+    const h2 = e.target.closest('.panel[data-pid] > h2');
+    if (!h2 || didDrag) { didDrag = false; return; }
+    if (e.target.closest('button, input, select, a')) return; // h2 内控件不触发折叠
+    h2.parentElement.classList.toggle('collapsed');
+    persistCollapsed();
+    layoutMacroTimeline(); // 展开后 canvas 需要重排
+  });
+  document.addEventListener('dragstart', (e) => {
+    const h2 = e.target.closest && e.target.closest('.panel[data-pid] > h2');
+    if (!h2) return;
+    dragPanel = h2.parentElement;
+    didDrag = true;
+    dragPanel.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', dragPanel.dataset.pid); } catch {}
+  });
+  const clearDropMarks = () => {
+    document.querySelectorAll('.panel.drop-before, .panel.drop-after').forEach((p) => p.classList.remove('drop-before', 'drop-after'));
+    document.querySelectorAll('.col-drop-tail').forEach((c) => c.classList.remove('col-drop-tail'));
+  };
+  document.addEventListener('dragover', (e) => {
+    if (!dragPanel) return;
+    const col = e.target.closest && e.target.closest('[data-ckey]');
+    if (!col || col.closest('main') !== dragPanel.closest('main')) return; // 只允许同视图内移动
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    clearDropMarks();
+    const over = e.target.closest('.panel[data-pid]');
+    if (over && over !== dragPanel) {
+      const r = over.getBoundingClientRect();
+      over.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after');
+    } else if (!over) {
+      col.classList.add('col-drop-tail'); // 空白区 → 追加到该栏末尾
+    }
+  });
+  document.addEventListener('drop', (e) => {
+    if (!dragPanel) return;
+    const col = e.target.closest && e.target.closest('[data-ckey]');
+    if (!col || col.closest('main') !== dragPanel.closest('main')) return;
+    e.preventDefault();
+    const over = e.target.closest('.panel[data-pid]');
+    if (over && over !== dragPanel) {
+      const r = over.getBoundingClientRect();
+      col.insertBefore(dragPanel, e.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+    } else if (!over) {
+      col.appendChild(dragPanel);
+    }
+    clearDropMarks();
+    persistOrder();
+    layoutMacroTimeline();
+  });
+  document.addEventListener('dragend', () => {
+    if (dragPanel) dragPanel.classList.remove('dragging');
+    dragPanel = null;
+    clearDropMarks();
+    setTimeout(() => { didDrag = false; }, 0);
+  });
+
+  // 5) 栏宽拖把手（左栏右缘 / 右栏左缘；双击重置该栏）
+  document.querySelectorAll('main.layout .col-left, main.layout .col-right').forEach((col) => {
+    const isLeft = col.classList.contains('col-left');
+    const grip = document.createElement('div');
+    grip.className = 'col-resizer';
+    grip.title = '拖动调整栏宽 · 双击恢复默认';
+    col.appendChild(grip);
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      try { grip.setPointerCapture(e.pointerId); } catch {}
+      grip.classList.add('active');
+      const varName = isLeft ? '--studio-colL' : '--studio-colR';
+      const startW = col.getBoundingClientRect().width;
+      const startX = e.clientX;
+      const onMove = (ev) => {
+        const dw = isLeft ? ev.clientX - startX : startX - ev.clientX;
+        const w = Math.round(Math.min(560, Math.max(200, startW + dw)));
+        document.documentElement.style.setProperty(varName, w + 'px');
+        layoutSave(isLeft ? { colL: w } : { colR: w });
+      };
+      const onUp = (ev) => {
+        try { grip.releasePointerCapture(ev.pointerId); } catch {}
+        grip.classList.remove('active');
+        grip.removeEventListener('pointermove', onMove);
+        grip.removeEventListener('pointerup', onUp);
+        layoutMacroTimeline();
+      };
+      grip.addEventListener('pointermove', onMove);
+      grip.addEventListener('pointerup', onUp);
+    });
+    grip.addEventListener('dblclick', () => {
+      const varName = isLeft ? '--studio-colL' : '--studio-colR';
+      document.documentElement.style.removeProperty(varName);
+      layoutSave(isLeft ? { colL: 0 } : { colR: 0 });
+      layoutMacroTimeline();
+    });
+  });
+
+  // 6) 一键重置
+  $('btnLayoutReset').onclick = () => {
+    if (!confirm('重置所有面板布局（折叠状态 / 排列顺序 / 栏宽）？')) return;
+    try { localStorage.removeItem(LAYOUT_KEY); } catch {}
+    location.reload();
+  };
+})();
+
 syncSliderLabels();
 refreshConfig();
 // 所有多行文本框：聚焦自动展开（事件委托，动态创建的框也生效）
