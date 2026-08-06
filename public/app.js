@@ -3159,8 +3159,8 @@ function renderDirRefs() {
       <div class="ref-cell"><img src="${r.url}" alt="${escapeHtml(r.name)}" title="${escapeHtml(r.name)}"><button type="button" aria-label="移除">✕</button></div>
       <div class="dir-ref-meta">
         <span class="dir-ref-idx">参考图 ${i + 1}</span>
-        <input type="text" class="dir-ref-note" placeholder="这张图是什么？例：主角正面全身设定图 / 场景夜景氛围"
-          value="${escapeHtml(r.note || '')}" maxlength="120">
+        <textarea class="dir-ref-note" rows="1" data-min-grow="80" maxlength="120"
+          placeholder="这张图是什么？例：主角正面全身设定图 / 场景夜景氛围">${escapeHtml(r.note || '')}</textarea>
       </div>`;
     row.querySelector('.ref-cell button').onclick = () => {
       state.director.refs = state.director.refs.filter((x) => x.id !== r.id);
@@ -3217,7 +3217,7 @@ async function directorGenerate() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        firstFrame: state.director.first.url,
+        firstFrame: state.director.first ? state.director.first.url : null,
         lastFrame: state.director.last ? state.director.last.url : null,
         refVideoUrl: state.director.refVideo || null,
         refImages: state.director.refs.map((r) => r.url),
