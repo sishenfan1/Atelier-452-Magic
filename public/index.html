@@ -12,9 +12,10 @@
   <div class="brand">✦ Atelier452 Magic</div>
   <span id="verChip" class="ver-chip"></span>
   <nav class="mode-nav" id="modeNav">
-    <button class="mode-current" id="modeCurrent" aria-haspopup="true">
+    <button class="mode-current" id="modeCurrent" aria-haspopup="true" title="悬停查看全部 6 个工作区">
       <span class="mode-kicker" id="modeCurrentKicker">工作区 1</span>
       <span class="mode-title" id="modeCurrentTitle">中割生成</span>
+      <span class="mode-count" id="modeCount">1 / 6</span>
       <span class="mode-caret">▾</span>
     </button>
     <div class="mode-tabs" id="modeTabs">
@@ -446,11 +447,17 @@
 <main class="layout" id="viewDirector" hidden>
   <aside class="col-left">
     <section class="panel highlight">
-      <h2>🎬 首帧 / 尾帧</h2>
+      <h2>🖼 参考图 <span class="hint">— 本工具的核心：只传参考图即可生成 · ≤10</span></h2>
+      <div id="dirRefList" class="image-list-mini"></div>
+      <button id="dirRefAdd" class="btn wide primary">＋ 添加参考图</button>
+      <input type="file" id="dirRefFiles" accept="image/*" multiple hidden>
+    </section>
+    <section class="panel">
+      <h2>🎬 首帧 / 尾帧 <span class="hint">— 均为可选，需要锁定首尾画面时再用</span></h2>
       <div class="dir-frame-row">
-        <div class="dir-frame" id="dirFirstDrop" title="点击上传首帧（必选）">
+        <div class="dir-frame" id="dirFirstDrop" title="点击上传首帧（可选）">
           <img id="dirFirstImg" hidden alt="首帧">
-          <span class="dir-frame-label" id="dirFirstLabel">＋ 首帧<br><small>必选</small></span>
+          <span class="dir-frame-label" id="dirFirstLabel">＋ 首帧<br><small>可选</small></span>
         </div>
         <span class="dir-frame-arrow">→</span>
         <div class="dir-frame" id="dirLastDrop" title="点击上传尾帧（可选）">
@@ -473,12 +480,6 @@
       <div class="hint" id="dirRefVideoName">未选择 — Seedance 会参考它的运动与节奏</div>
       <video id="dirRefVideoPreview" class="v2v-result" controls muted hidden style="margin-top:8px"></video>
       <input type="file" id="dirRefVideoFile" accept="video/*" hidden>
-    </section>
-    <section class="panel">
-      <h2>🖼 参考图 <span class="hint">— 角色/场景/风格 ≤10</span></h2>
-      <div id="dirRefList" class="image-list-mini"></div>
-      <button id="dirRefAdd" class="btn wide">＋ 添加参考图</button>
-      <input type="file" id="dirRefFiles" accept="image/*" multiple hidden>
     </section>
   </aside>
 
@@ -525,7 +526,7 @@
     <section class="panel">
       <h2>🎥 生成结果</h2>
       <video id="dirResult" class="v2v-result" controls loop hidden></video>
-      <div id="dirResultEmpty" class="empty-note">还没有结果 — 上传首帧后点「🎬 导演生成」</div>
+      <div id="dirResultEmpty" class="empty-note">还没有结果 — 添加参考图（写好每张图的说明）后点「🎬 导演生成」</div>
       <div id="dirHistory" class="history-list" style="margin-top:10px"></div>
     </section>
   </div>

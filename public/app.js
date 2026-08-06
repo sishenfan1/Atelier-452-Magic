@@ -326,7 +326,7 @@ function positionPeek(e) {
 document.addEventListener('mouseover', (e) => {
   const img = e.target.closest('img');
   if (!img || img.closest('#imgPeek')) return;
-  if (!img.closest('.image-item, .input-cell, .seg-card .pair')) return;
+  if (!img.closest('.image-item, .input-cell, .seg-card .pair, .ref-cell, .dir-frame')) return;
   imgPeekImg.src = img.src;
   imgPeek.classList.add('show');
   positionPeek(e);
@@ -659,17 +659,18 @@ function switchMode(mode) {
   $('tabDirector').classList.toggle('active', mode === 'director');
   // 收起式导航：同步当前工作区徽章，选择后浮层立即收起（离开 hover 前也不再挡视线）
   const MODE_NAMES = {
-    inbetween: ['工作区 1', '中割生成'],
-    v2v: ['工作区 2', '视频转绘上色'],
-    refine: ['工作区 3', '原画精修'],
-    library: ['工作区 4', '提示词库'],
-    motion: ['工作区 5', '動作分析'],
-    director: ['工作区 6', 'REFERENCES TOOL'],
+    inbetween: ['工作区 1', '中割生成', 1],
+    v2v: ['工作区 2', '视频转绘上色', 2],
+    refine: ['工作区 3', '原画精修', 3],
+    library: ['工作区 4', '提示词库', 4],
+    motion: ['工作区 5', '動作分析', 5],
+    director: ['工作区 6', 'REFERENCES TOOL', 6],
   };
   const nm = MODE_NAMES[mode];
   if (nm) {
     $('modeCurrentKicker').textContent = nm[0];
     $('modeCurrentTitle').textContent = nm[1];
+    $('modeCount').textContent = nm[2] + ' / 6';
   }
   const tabsEl = $('modeTabs');
   tabsEl.classList.add('force-hide');
@@ -3147,20 +3148,30 @@ function restoreDirectorRefVideo() {
   if (has) { v.src = state.director.refVideo; v.hidden = false; } else { v.hidden = true; v.removeAttribute('src'); }
 }
 
-// 参考图池（≤10）
+// 参考图池（≤10）：每张图带独立说明词（这张图是什么 → 注入生成提示词）
 function renderDirRefs() {
   const list = $('dirRefList');
   list.innerHTML = '';
-  state.director.refs.forEach((r) => {
-    const cell = document.createElement('div');
-    cell.className = 'ref-cell';
-    cell.innerHTML = `<img src="${r.url}" alt="${escapeHtml(r.name)}" title="${escapeHtml(r.name)}"><button type="button" aria-label="移除">✕</button>`;
-    cell.querySelector('button').onclick = () => {
+  state.director.refs.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'dir-ref-row';
+    row.innerHTML = `
+      <div class="ref-cell"><img src="${r.url}" alt="${escapeHtml(r.name)}" title="${escapeHtml(r.name)}"><button type="button" aria-label="移除">✕</button></div>
+      <div class="dir-ref-meta">
+        <span class="dir-ref-idx">参考图 ${i + 1}</span>
+        <input type="text" class="dir-ref-note" placeholder="这张图是什么？例：主角正面全身设定图 / 场景夜景氛围"
+          value="${escapeHtml(r.note || '')}" maxlength="120">
+      </div>`;
+    row.querySelector('.ref-cell button').onclick = () => {
       state.director.refs = state.director.refs.filter((x) => x.id !== r.id);
       renderDirRefs();
       scheduleSave();
     };
-    list.appendChild(cell);
+    row.querySelector('.dir-ref-note').onchange = (e) => {
+      r.note = e.target.value;
+      scheduleSave();
+    };
+    list.appendChild(row);
   });
   $('dirRefAdd').disabled = state.director.refs.length >= 10;
 }
@@ -3181,11 +3192,22 @@ $('dirRefFiles').onchange = async (e) => {
 // 生成
 async function directorGenerate() {
   if (state.director.running) return;
-  if (!state.director.first) { setDirStatus('请先上传首帧'); return; }
+  if (!state.director.first && !state.director.refs.length && !state.director.refVideo) {
+    setDirStatus('至少需要一张参考图（或首帧 / 参考视频）');
+    return;
+  }
   const model = $('dirModel').value || undefined;
   const duration = Number($('dirDuration').value);
   const acting = directorActingText();
-  const prompt = [$('dirPrompt').value.trim(), acting].filter(Boolean).join('\n');
+  // 每张参考图的单独说明 → @引用式描述块，告诉模型"这张图是什么"
+  const refNotes = state.director.refs
+    .map((r, i) => ((r.note || '').trim() ? `参考图${i + 1}：${r.note.trim()}` : null))
+    .filter(Boolean);
+  const prompt = [
+    $('dirPrompt').value.trim(),
+    refNotes.length ? '参考图说明：\n' + refNotes.join('\n') : '',
+    acting,
+  ].filter(Boolean).join('\n');
   state.director.running = true;
   $('btnDirectorGen').disabled = true;
   setDirStatus('创建任务中…');

@@ -687,3 +687,37 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .mode-tab .mode-title { font-size: 13.5px; }
 .mode-tab small { font-size: 10px; }
 .mode-tab .mode-kicker { font-size: 9.5px; padding-right: 8px; }
+
+/* 导航浮层：hover 断层修复 + 收起宽限 + 更多工具提示 */
+.mode-count {
+  font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--accent2); background: rgba(55,164,255,.12);
+  border: 1px solid rgba(55,164,255,.35); border-radius: 999px;
+  padding: 2px 8px; letter-spacing: .05em; white-space: nowrap;
+}
+/* 浮层常驻 grid，用 visibility/opacity 切换：离开后 250ms 宽限，期间移回不消失 */
+.mode-tabs {
+  display: grid; visibility: hidden; opacity: 0;
+  transition: opacity .12s ease, visibility 0s linear .25s;
+}
+.mode-nav:hover .mode-tabs, .mode-nav:focus-within .mode-tabs {
+  visibility: visible; opacity: 1; transition-delay: 0s, 0s;
+}
+/* 徽章与浮层之间 8px 间隙的透明桥：鼠标穿越时 hover 不断链 */
+.mode-tabs::before {
+  content: ''; position: absolute; left: 0; right: 0; top: -12px; height: 12px;
+}
+.mode-tabs.force-hide { visibility: hidden !important; opacity: 0 !important; }
+
+/* 参考图行：缩略图 + 独立说明词输入 */
+.image-list-mini { display: flex; flex-direction: column; gap: 8px; }
+.dir-ref-row { display: grid; grid-template-columns: 64px 1fr; gap: 8px; align-items: start; }
+.dir-ref-row .ref-cell { aspect-ratio: 1; width: 64px; }
+.dir-ref-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.dir-ref-idx { font-size: 10px; color: var(--accent2); font-weight: 700; letter-spacing: .06em; }
+.dir-ref-note {
+  width: 100%; padding: 5px 8px; font-size: 11.5px;
+  background: var(--card2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.dir-ref-note:focus { border-color: var(--accent); outline: none; }

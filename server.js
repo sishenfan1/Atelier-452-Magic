@@ -507,7 +507,7 @@ async function arkCreateDirector(cfg, opts) {
   const { firstDataUrl, lastDataUrl, refVideoPublicUrl, refDataUrls = [], text, duration, model } = opts;
   const safeText = sanitizeForArk(text);
   const content = [{ type: 'text', text: safeText }];
-  content.push({ type: 'image_url', image_url: { url: firstDataUrl }, role: 'first_frame' });
+  if (firstDataUrl) content.push({ type: 'image_url', image_url: { url: firstDataUrl }, role: 'first_frame' });
   if (lastDataUrl) content.push({ type: 'image_url', image_url: { url: lastDataUrl }, role: 'last_frame' });
   if (refVideoPublicUrl) content.push({ type: 'video_url', video_url: { url: refVideoPublicUrl }, role: 'reference_video' });
   for (const r of refDataUrls) content.push({ type: 'image_url', image_url: { url: r }, role: 'reference_image' });
@@ -1506,7 +1506,9 @@ app.post('/api/whole/preview', (req, res) => {
 // 一体生成：全部关键帧一次生成一段连续动画
 app.post('/api/director', async (req, res) => {
   const { firstFrame, lastFrame, refVideoUrl, refImages = [], prompt, duration, model } = req.body || {};
-  if (!firstFrame) return res.status(400).json({ error: '缺少首帧图片' });
+  // 首帧可选：纯参考图 + 提示词即可生成（这正是 REFERENCES TOOL 的本职）
+  const hasAnyInput = firstFrame || (Array.isArray(refImages) && refImages.length) || refVideoUrl;
+  if (!hasAnyInput) return res.status(400).json({ error: '至少需要一张参考图、首帧或参考视频' });
   const cfg = loadConfig();
   const id = newId();
   let bill = null;
@@ -1517,7 +1519,7 @@ app.post('/api/director', async (req, res) => {
   logUsedPrompt(cfg, 'director', prompt);
   if (cfg.apiKey) {
     try {
-      const firstDataUrl = resolveToDataUrl(firstFrame);
+      const firstDataUrl = firstFrame ? resolveToDataUrl(firstFrame) : null;
       const lastDataUrl = lastFrame ? resolveToDataUrl(lastFrame) : null;
       const refDataUrls = (Array.isArray(refImages) ? refImages : []).slice(0, 10).map(resolveToDataUrl);
       // 参考视频必须公网 URL（与 V2V 同一隧道流程）
@@ -1548,16 +1550,16 @@ app.post('/api/director', async (req, res) => {
       return res.status(502).json({ error: String(e.message || e) });
     }
   } else {
-    // 无 key：首尾帧交叉溶解模拟（参考视频/参考图忽略）
+    // 无 key：可用图片（首帧/尾帧/参考图）交叉溶解模拟
     const files = [];
     try {
-      const f1 = localFileOf(firstFrame);
-      if (!f1 || !fs.existsSync(f1)) throw new Error('首帧文件缺失');
-      files.push(f1);
-      if (lastFrame) {
-        const f2 = localFileOf(lastFrame);
-        if (f2 && fs.existsSync(f2)) files.push(f2);
+      for (const u of [firstFrame, lastFrame, ...(Array.isArray(refImages) ? refImages : [])]) {
+        if (!u) continue;
+        const f = localFileOf(u);
+        if (f && fs.existsSync(f)) files.push(f);
+        if (files.length >= 4) break;
       }
+      if (!files.length) throw new Error('没有可用的图片输入');
       if (files.length < 2) files.push(files[0]);
     } catch (e) {
       if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
