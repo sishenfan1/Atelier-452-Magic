@@ -744,14 +744,23 @@ filesApp.listen(FILES_PORT).on('error', (e) => {
 
 // ---------- 资源上传 / 工程持久化 ----------
 app.post('/api/upload', (req, res) => {
-  const { dataUrl, name } = req.body || {};
-  const m = /^data:(image|video)\/([\w.+-]+);base64,(.+)$/s.exec(dataUrl || '');
-  if (!m) return res.status(400).json({ error: '仅支持 base64 图片或视频' });
-  const extMap = { jpeg: 'jpg', quicktime: 'mov', 'x-matroska': 'mkv' };
-  const ext = extMap[m[2]] || m[2];
-  const file = newId() + '.' + ext;
-  fs.writeFileSync(path.join(ASSET_DIR, file), Buffer.from(m[3], 'base64'));
-  res.json({ url: '/assets/' + file, name: name || file });
+  try {
+    const { dataUrl, name } = req.body || {};
+    const m = /^data:(image|video)\/([\w.+-]+);base64,(.+)$/s.exec(dataUrl || '');
+    if (!m) return res.status(400).json({ error: '仅支持 base64 图片或视频' });
+    const extMap = { jpeg: 'jpg', quicktime: 'mov', 'x-matroska': 'mkv' };
+    const ext = extMap[m[2]] || m[2];
+    const file = newId() + '.' + ext;
+    fs.writeFileSync(path.join(ASSET_DIR, file), Buffer.from(m[3], 'base64'));
+    res.json({ url: '/assets/' + file, name: name || file });
+  } catch (e) {
+    // 磁盘满 / 权限 / 路径异常：给出人能读懂的原因，绝不让前端拿到空错误
+    const raw = String(e && e.message || e);
+    const hint = /ENOSPC/.test(raw) ? '磁盘空间不足'
+      : /EACCES|EPERM/.test(raw) ? '没有写入权限'
+      : /ENOENT/.test(raw) ? '存储目录不存在' : '';
+    res.status(500).json({ error: `保存文件失败${hint ? '（' + hint + '）' : ''}: ${raw.slice(0, 160)}` });
+  }
 });
 
 app.get('/api/project', (req, res) => {
@@ -1887,6 +1896,16 @@ app.post('/api/convert', express.raw({ type: '*/*', limit: '800mb' }), async (re
   } finally {
     fs.rm(src, { force: true }, () => {});
   }
+});
+
+// 全局兜底：任何路由的未捕获异常 / body 解析错误（含超限）一律返回 JSON，
+// 绝不吐 Express 默认 HTML 错误页——前端因此永远能解析出 error 字段。
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const raw = String(err && err.message || err || '服务器内部错误');
+  const status = err && (err.status || err.statusCode) || 500;
+  const hint = err && err.type === 'entity.too.large' ? '请求体超过 300MB 上限' : '';
+  res.status(status).json({ error: hint || raw.slice(0, 300) });
 });
 
 const PORT = process.env.PORT || 5893;

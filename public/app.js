@@ -56,9 +56,23 @@ function fileToDataUrl(file) {
   return new Promise((res, rej) => {
     const r = new FileReader();
     r.onload = () => res(r.result);
-    r.onerror = rej;
+    // 根因修复：FileReader 失败给的是 ProgressEvent（无 message）——曾导致「上传失败: undefined」。
+    // 这里必须包成带可读信息的真 Error。
+    r.onerror = () => rej(new Error(`读取文件「${file.name}」失败：${(r.error && r.error.message) || '文件可能已被移动、占用或损坏'}`));
+    r.onabort = () => rej(new Error(`读取文件「${file.name}」被中断`));
     r.readAsDataURL(file);
   });
+}
+
+/** 任何异常值 → 可读错误文案（杜绝 undefined/null/[object Object] 出现在提示里） */
+function errMsg(e) {
+  if (e == null) return '未知错误';
+  if (typeof e === 'string') return e || '未知错误';
+  if (e.message) return e.message;
+  if (e.error) return errMsg(e.error);
+  if (e.name && e.name !== 'Error') return e.name;
+  try { const s = JSON.stringify(e); if (s && s !== '{}') return s.slice(0, 200); } catch {}
+  return String(e) === '[object Object]' ? '未知错误' : String(e);
 }
 const fmt = (n, d = 2) => n.toFixed(d);
 function escapeHtml(value) {
@@ -691,7 +705,7 @@ async function addFiles(files) {
       const url = await uploadAsset(f);
       state.images.push({ id: nextImgId++, name: f.name, url, hold: 2 });
     } catch (e) {
-      alert('上传失败: ' + e.message);
+      alert('上传失败: ' + errMsg(e));
     }
   }
   rebuildSegments();
@@ -766,7 +780,7 @@ async function generateSegment(i, overrides = {}) {
     }
   } catch (e) {
     seg.status = 'error';
-    seg.error = String(e.message || e);
+    seg.error = errMsg(e);
   }
   renderTimeline();
   scheduleSave();
@@ -1077,7 +1091,7 @@ async function exportMp4() {
       setExportStatus('已导出拼接 mp4');
     }
   } catch (e) {
-    setExportStatus('导出失败: ' + (e.message || e));
+    setExportStatus('导出失败: ' + errMsg(e));
   } finally {
     state.exporting = false;
   }
@@ -1271,7 +1285,7 @@ async function openProjSave(payload) {
       list.appendChild(row);
     }
   } catch (e) {
-    list.innerHTML = `<div class="hint">${t('保存失败')}: ${escapeHtml(String(e.message || e))}</div>`;
+    list.innerHTML = `<div class="hint">${t('保存失败')}: ${escapeHtml(errMsg(e))}</div>`;
   }
 }
 
@@ -1289,7 +1303,7 @@ async function saveToProject(p) {
     if (!res.ok || !json.ok) throw new Error(json.error || res.statusText);
     showSaveToast(`${t('已存入')} 📁 ${p.name}`);
   } catch (e) {
-    showSaveToast(t('保存失败') + ': ' + String(e.message || e), false);
+    showSaveToast(t('保存失败') + ': ' + errMsg(e), false);
   }
 }
 
@@ -1382,7 +1396,7 @@ async function resumePendingTask(entry) {
         renderWhole();
         finishJob(job, true);
       } catch (e) {
-        finishJob(job, false, String(e.message || e));
+        finishJob(job, false, errMsg(e));
       }
     } else if (entry.kind === 'v2v') {
       const job = addJob(`🎨 转绘上色 ${entry.duration || '?'}s（恢复）`, 90 + (entry.duration || 8) * 30);
@@ -1402,7 +1416,7 @@ async function resumePendingTask(entry) {
         renderV2V();
         finishJob(job, true);
       } catch (e) {
-        finishJob(job, false, String(e.message || e));
+        finishJob(job, false, errMsg(e));
       }
     } else if (entry.kind === 'director') {
       const job = addJob(`🎬 导演生成 ${entry.duration || '?'}s（恢复）`, 60 + (entry.duration || 8) * 25);
@@ -1419,7 +1433,7 @@ async function resumePendingTask(entry) {
         renderDirector();
         finishJob(job, true);
       } catch (e) {
-        finishJob(job, false, String(e.message || e));
+        finishJob(job, false, errMsg(e));
       }
     } else if (entry.kind === 'segment' && entry.segKey) {
       const seg = state.segCache.get(entry.segKey);
@@ -1431,7 +1445,7 @@ async function resumePendingTask(entry) {
           await pollTask(seg, entry.id, { prompt: entry.prompt || '', seconds: entry.seconds || null });
         } catch (e) {
           seg.status = 'error';
-          seg.error = String(e.message || e);
+          seg.error = errMsg(e);
         }
         renderTimeline();
       }
@@ -1499,7 +1513,7 @@ async function wholeGenerate() {
     scheduleSave();
     finishJob(job, true);
   } catch (e) {
-    finishJob(job, false, String(e.message || e));
+    finishJob(job, false, errMsg(e));
   }
 }
 
@@ -1663,7 +1677,7 @@ async function refineGenerate() {
     scheduleSave();
     finishJob(job, true);
   } catch (e) {
-    finishJob(job, false, String(e.message || e));
+    finishJob(job, false, errMsg(e));
   }
 }
 
@@ -2315,7 +2329,7 @@ async function v2vAddRefs(files) {
       const url = await uploadAsset(f);
       state.v2v.refs.push({ id: nextRefId++, name: f.name, url });
     } catch (e) {
-      alert('上传失败: ' + e.message);
+      alert('上传失败: ' + errMsg(e));
     }
   }
   renderV2V();
@@ -2369,7 +2383,7 @@ async function v2vGenerate() {
     scheduleSave();
     finishJob(job, true);
   } catch (e) {
-    finishJob(job, false, String(e.message || e));
+    finishJob(job, false, errMsg(e));
   }
 }
 
@@ -2669,7 +2683,7 @@ $('refineFileInput').onchange = async (e) => {
     const url = await uploadAsset(f);
     setRefineSource(url, f.name);
   } catch (err) {
-    alert('上传失败: ' + err.message);
+    alert('上传失败: ' + errMsg(err));
   }
 };
 const rfz = $('refineDropZone');
@@ -2680,7 +2694,7 @@ rfz.addEventListener('drop', async (e) => {
   rfz.classList.remove('over');
   const f = [...e.dataTransfer.files].find((x) => x.type.startsWith('image/'));
   if (f) {
-    try { setRefineSource(await uploadAsset(f), f.name); } catch (err) { alert('上传失败: ' + err.message); }
+    try { setRefineSource(await uploadAsset(f), f.name); } catch (err) { alert('上传失败: ' + errMsg(err)); }
   }
 });
 // 精修参考图（角色设定/色卡）上传
@@ -2692,7 +2706,7 @@ $('refineRefInput').onchange = async (e) => {
     try {
       const url = await uploadAsset(f);
       state.refine.refs.push({ id: nextRefId++, name: f.name, url });
-    } catch (err) { alert('上传失败: ' + err.message); }
+    } catch (err) { alert('上传失败: ' + errMsg(err)); }
   }
   renderRefine();
   scheduleSave();
@@ -2708,7 +2722,7 @@ rrdz.addEventListener('drop', async (e) => {
     try {
       const url = await uploadAsset(f);
       state.refine.refs.push({ id: nextRefId++, name: f.name, url });
-    } catch (err) { alert('上传失败: ' + err.message); }
+    } catch (err) { alert('上传失败: ' + errMsg(err)); }
   }
   renderRefine();
   scheduleSave();
@@ -2898,7 +2912,7 @@ $('v2vFileInput').onchange = async (e) => {
     const url = await uploadAsset(f);
     setV2VSource(url, f.name);
   } catch (err) {
-    alert('上传失败: ' + err.message);
+    alert('上传失败: ' + errMsg(err));
   }
 };
 const vdz = $('v2vDropZone');
@@ -2909,7 +2923,7 @@ vdz.addEventListener('drop', async (e) => {
   vdz.classList.remove('over');
   const f = [...e.dataTransfer.files].find((x) => x.type.startsWith('video/'));
   if (f) {
-    try { setV2VSource(await uploadAsset(f), f.name); } catch (err) { alert('上传失败: ' + err.message); }
+    try { setV2VSource(await uploadAsset(f), f.name); } catch (err) { alert('上传失败: ' + errMsg(err)); }
   }
 });
 $('btnUseConcat').onclick = async () => {
@@ -2920,7 +2934,7 @@ $('btnUseConcat').onclick = async () => {
     await setV2VSource(url, '中割拼接结果');
     setV2VStatus('');
   } catch (e) {
-    setV2VStatus('失败: ' + e.message);
+    setV2VStatus('失败: ' + errMsg(e));
   }
 };
 $('refFileInput').onchange = (e) => { v2vAddRefs([...e.target.files]); e.target.value = ''; };
@@ -2975,7 +2989,7 @@ $('btnPlaySeq').onclick = () => startPlayback('seq');
 $('btnPlayRemap').onclick = () => startPlayback('remap');
 $('btnStop').onclick = () => stopPlayback();
 $('btnExportMp4').onclick = exportMp4;
-$('btnExportZip').onclick = () => exportZip().catch((e) => setExportStatus('导出失败: ' + e.message));
+$('btnExportZip').onclick = () => exportZip().catch((e) => setExportStatus('导出失败: ' + errMsg(e)));
 
 $('detailClose').onclick = () => $('detailDialog').close();
 $('detailRegen').onclick = () => {
@@ -3109,13 +3123,13 @@ $('dirFirstFile').onchange = async (e) => {
   const f = e.target.files[0]; e.target.value = '';
   if (!f) return;
   try { setDirFrame('first', await uploadAsset(f), f.name); setDirStatus(''); }
-  catch (err) { setDirStatus('首帧上传失败: ' + (err.message || err)); }
+  catch (err) { setDirStatus('首帧上传失败: ' + errMsg(err)); }
 };
 $('dirLastFile').onchange = async (e) => {
   const f = e.target.files[0]; e.target.value = '';
   if (!f) return;
   try { setDirFrame('last', await uploadAsset(f), f.name); setDirStatus(''); }
-  catch (err) { setDirStatus('尾帧上传失败: ' + (err.message || err)); }
+  catch (err) { setDirStatus('尾帧上传失败: ' + errMsg(err)); }
 };
 $('dirLastClear').onclick = () => setDirFrame('last', null);
 
@@ -3132,7 +3146,7 @@ $('dirRefVideoFile').onchange = async (e) => {
     restoreDirectorRefVideo();
     setDirStatus('');
     scheduleSave();
-  } catch (err) { setDirStatus('参考视频上传失败: ' + (err.message || err)); }
+  } catch (err) { setDirStatus('参考视频上传失败: ' + errMsg(err)); }
 };
 $('dirRefVideoClear').onclick = () => {
   state.director.refVideo = null;
@@ -3183,7 +3197,7 @@ $('dirRefFiles').onchange = async (e) => {
     try {
       const url = await uploadAsset(f);
       state.director.refs.push({ id: nextRefId++, name: f.name, url });
-    } catch (err) { setDirStatus('参考图上传失败: ' + (err.message || err)); }
+    } catch (err) { setDirStatus('参考图上传失败: ' + errMsg(err)); }
   }
   renderDirRefs();
   scheduleSave();
@@ -3241,8 +3255,8 @@ async function directorGenerate() {
     finishJob(job, true);
     scheduleSave();
   } catch (e) {
-    setDirStatus('失败: ' + String(e.message || e).slice(0, 400));
-    finishJob(job, false, String(e.message || e));
+    setDirStatus('失败: ' + errMsg(e).slice(0, 400));
+    finishJob(job, false, errMsg(e));
   } finally {
     state.director.running = false;
     $('btnDirectorGen').disabled = false;
@@ -3663,7 +3677,7 @@ async function drawOnion() {
     if (next) ctx.drawImage(onionTint(next, 'rgba(48,209,88,.55)', w, h), 0, 0);
     ctx.globalAlpha = 1;
   } catch (err) {
-    if (seq === onionDrawSeq) setWholeStatus('洋葱皮绘制失败: ' + (err && err.message || err));
+    if (seq === onionDrawSeq) setWholeStatus('洋葱皮绘制失败: ' + errMsg(err));
   }
 }
 
@@ -3751,7 +3765,7 @@ $('motionFile').onchange = async (e) => {
     const url = await uploadAsset(f);
     await motionSetSource(url, f.name);
   } catch (err) {
-    $('motionStatus').textContent = '上传失败: ' + (err && err.message || err);
+    $('motionStatus').textContent = '上传失败: ' + errMsg(err);
   }
 };
 
@@ -3819,7 +3833,7 @@ $('btnAnalyzeMotion').onclick = async () => {
     $('motionStatus').textContent = `完成 — ${m.poses.length} 张原画候補 ✓`;
     scheduleSave();
   } catch (err) {
-    $('motionStatus').textContent = String(err && err.message || err);
+    $('motionStatus').textContent = StringerrMsg(err);
   } finally {
     motionAnalyzing = false;
     $('btnAnalyzeMotion').disabled = !state.motion.srcUrl;
@@ -4051,7 +4065,7 @@ async function receiveShotHandoff(d) {
         .filter(Boolean).join(' · ') + ' 已入位',
     );
   } catch (err) {
-    setWholeStatus('镜头包接收失败: ' + (err && err.message || err));
+    setWholeStatus('镜头包接收失败: ' + errMsg(err));
   }
 }
 
