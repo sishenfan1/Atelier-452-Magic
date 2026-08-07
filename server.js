@@ -289,6 +289,29 @@ function localFileOf(url) {
   return null;
 }
 
+// Ark 视频生成的图片入参统一压缩：原图多张 base64 直传会超 Ark 请求体上限（413）。
+// 长边压到 1536px JPEG（720P 生成绰绰有余），ffmpeg 不可用或压缩失败时回退原图。
+const ARK_IMG_MAX_EDGE = 1536;
+function resolveToArkImage(url) {
+  try {
+    const file = typeof url === 'string' && !url.startsWith('data:') ? localFileOf(url) : null;
+    if (!file || !fs.existsSync(file) || !FFMPEG) return resolveToDataUrl(url);
+    if (fs.statSync(file).size <= 900 * 1024) return resolveToDataUrl(url); // 已经够小
+    const out = path.join(TMP_DIR, 'ark_' + newId() + '.jpg');
+    const r = spawnSync(FFMPEG, [
+      '-i', file,
+      '-vf', `scale='min(${ARK_IMG_MAX_EDGE},iw)':-2`,
+      '-frames:v', '1', '-q:v', '4', '-v', 'error', '-y', out,
+    ]);
+    if (r.status !== 0 || !fs.existsSync(out)) return resolveToDataUrl(url);
+    const b64 = 'data:image/jpeg;base64,' + fs.readFileSync(out).toString('base64');
+    fs.rm(out, { force: true }, () => {});
+    return b64;
+  } catch {
+    return resolveToDataUrl(url);
+  }
+}
+
 // ---------- 公网隧道（只暴露 5894 端口的只读文件服务） ----------
 const FILES_PORT = 5894;
 function findCloudflared() {
@@ -414,6 +437,9 @@ function arkErrorWithPreview(label, status, json, sentText) {
   if (/Sensitive/i.test(code)) {
     msg += `\n⚠ 内容安全拦截：请自查提示词中的敏感词（毒品/暴力/色情/政治类，英文同形词也会触发）。`
       + `\n实际发送文本预览：${String(sentText || '').slice(0, 400)}`;
+  }
+  if (Number(status) === 413) {
+    msg += '\n⚠ 请求体超限：图片总体积过大（已自动压缩仍超限）——请减少参考图数量或使用更小的图片。';
   }
   return new Error(msg);
 }
@@ -1462,8 +1488,8 @@ app.post('/api/segments', async (req, res) => {
   const id = newId();
   let firstData, lastData;
   try {
-    firstData = resolveToDataUrl(first);
-    lastData = resolveToDataUrl(last);
+    firstData = resolveToArkImage(first);
+    lastData = resolveToArkImage(last);
   } catch (e) {
     return res.status(400).json({ error: String(e.message || e) });
   }
@@ -1519,9 +1545,9 @@ app.post('/api/director', async (req, res) => {
   logUsedPrompt(cfg, 'director', prompt);
   if (cfg.apiKey) {
     try {
-      const firstDataUrl = firstFrame ? resolveToDataUrl(firstFrame) : null;
-      const lastDataUrl = lastFrame ? resolveToDataUrl(lastFrame) : null;
-      const refDataUrls = (Array.isArray(refImages) ? refImages : []).slice(0, 10).map(resolveToDataUrl);
+      const firstDataUrl = firstFrame ? resolveToArkImage(firstFrame) : null;
+      const lastDataUrl = lastFrame ? resolveToArkImage(lastFrame) : null;
+      const refDataUrls = (Array.isArray(refImages) ? refImages : []).slice(0, 10).map(resolveToArkImage);
       // 参考视频必须公网 URL（与 V2V 同一隧道流程）
       let refVideoPublicUrl = null;
       if (refVideoUrl) {
@@ -1597,7 +1623,7 @@ app.post('/api/whole', async (req, res) => {
         (actingPrompt || '').trim(),
         (prompt || '').trim(),
       ].map((s) => s.trim()).filter(Boolean).join('\n');
-      const imageDataUrls = images.map(resolveToDataUrl);
+      const imageDataUrls = images.map(resolveToArkImage);
       const arkId = await arkCreateWhole(cfg, imageDataUrls, text, duration);
       tasks[id] = { mode: 'ark', status: 'running', arkId, cost: bill && bill.cost, uid: bill && bill.uid };
     } catch (e) {
@@ -1763,7 +1789,7 @@ app.post('/api/v2v', async (req, res) => {
         ((colorPrompt !== undefined ? colorPrompt : cfg.colorPrompt) || '').trim(),
         (prompt || '').trim(),
       ].filter(Boolean).join('\n');
-      const refDataUrls = refs.map(resolveToDataUrl);
+      const refDataUrls = refs.map(resolveToArkImage);
       // reference_video 必须是公网 URL（Ark 明确拒绝 base64 视频）。
       // 刚建立的隧道 Cloudflare 边缘路由可能尚未生效 → 先自检可下载，再交给 Ark；
       // Ark 侧回源下载仍失败时自动重试（指数退避）。
