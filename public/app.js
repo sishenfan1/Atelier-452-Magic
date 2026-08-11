@@ -3158,11 +3158,18 @@ const DIR_ACT_TEXT = {
     '环境全面参与演出：烟尘、碎片、光效随动作喷薄而出、迅猛扫过画面，道具被大开大合地使用，但特效永远不遮挡角色的脸和关键姿势',
   ],
   physics: [
-    '低重力质感：物体飘浮般缓落，惯性绵长延展，碰撞轻柔无声',
-    '真实物理：重力、惯性、碰撞符合现实，布料与毛发滞后主体半拍，运动有可信的加速与减速',
-    '物理反馈迅猛：坠落干脆、碰撞反弹剧烈，重击有反冲与贯穿跟随，一切重量感拉满',
+    '低重力质感：物体如在水中般缓落，惯性绵长延展，接触轻柔——但仍保有质量感，是慢而有重量，不是失重乱飘',
+    '真实物理：重力、质量、惯性、摩擦全部符合现实，每次碰撞有因果与残留痕迹，运动有可信的加速与减速',
+    '物理反馈迅猛：坠落干脆、碰撞剧烈带反弹与碎屑，重击有反冲与贯穿跟随，武器道具有真实重量、手腕手臂随之受力反应',
   ],
 };
+// Higgsfield 工艺基座（CINEDANCE V4 物理锁 + 第一帧法则 + Lira 进行时状态律）：
+// 任一滑杆激活即注入，管住 AI 视频最常见的四种假——空帧起手、滑步漂浮、橡皮变形、朝向含糊
+const DIR_MOTION_QUALITY =
+  '【运动质量】动作从第一帧就已在进行——禁空帧起手、禁静置亮相、禁慢动作耍帅；' +
+  '一切姿态写作进行时状态；每个动作有蓄力、加速减速与跟随；' +
+  '脚下有真实的接触与重量转移（脚跟着地→重心转移→脚尖蹬地），绝不滑步、绝不漂浮、绝无橡皮般的变形；' +
+  '布料与头发滞后身体半拍；视线方向与躯干朝向分别清晰可读；构图遵循三分法。';
 function dirActTier3(v) { return v >= 66 ? 2 : v >= 33 ? 1 : 0; }
 function directorActingText() {
   const overall = Number($('dirActOverall').value);
@@ -3187,6 +3194,7 @@ function directorActingText() {
   const blocks = [];
   if (actor.length) blocks.push('【表演指导】' + actor.join('；') + '。角色全程保持同一张脸、同一套发型与服装，绝不变形走样。');
   if (scene.length) blocks.push('【画面运动】' + scene.join('；') + '。');
+  if (actor.length || scene.length) blocks.push(DIR_MOTION_QUALITY);
   if (actor.length) blocks.push('保持关键姿态，表演性格外强。');
   return blocks.join('\n');
 }
