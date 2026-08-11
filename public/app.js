@@ -2649,7 +2649,9 @@ async function artcraftTest(silent) {
     const r = await fetch('/api/artcraft/test');
     const j = await r.json().catch(() => ({}));
     if (r.ok && j.ok) {
-      el.textContent = `✓ 已连接 Artcraft · 余额 ${Number(j.credits).toLocaleString()} credits`;
+      el.textContent = j.credits == null
+        ? '✓ 已连接 Artcraft（key 验证通过）'
+        : `✓ 已连接 Artcraft · 余额 ${Number(j.credits).toLocaleString()} credits`;
       el.style.color = 'var(--accent2)';
       return true;
     }

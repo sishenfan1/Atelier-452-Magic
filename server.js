@@ -548,6 +548,7 @@ async function artcraftUploadImage(cfg, localUrl) {
   if (!m) throw new Error('图片编码失败');
   const buf = Buffer.from(m[2], 'base64');
   const fd = new FormData();
+  fd.append('uuid_idempotency_token', crypto.randomUUID());
   fd.append('file', new Blob([buf], { type: m[1] }), path.basename(file).replace(/\.[^.]+$/, '') + (m[1] === 'image/jpeg' ? '.jpg' : '.png'));
   const r = await fetch(ARTCRAFT_API + '/v1/media_files/upload/image', {
     method: 'POST',
@@ -567,6 +568,7 @@ async function artcraftUploadVideo(cfg, localUrl) {
   if (!file || !fs.existsSync(file)) throw new Error('视频不存在: ' + String(localUrl).slice(0, 80));
   const buf = fs.readFileSync(file);
   const fd = new FormData();
+  fd.append('uuid_idempotency_token', crypto.randomUUID());
   fd.append('file', new Blob([buf], { type: 'video/mp4' }), path.basename(file));
   const r = await fetch(ARTCRAFT_API + '/v1/media_files/upload/video', {
     method: 'POST',
@@ -602,7 +604,7 @@ function artcraftOmniAspectOf(cfg) {
 async function artcraftOmniGenerate(cfg, opts) {
   const { model, prompt, startToken, endToken, refTokens, duration, generateAudio } = opts;
   const body = {
-    idempotency_token: newId() + '-' + Date.now().toString(36),
+    idempotency_token: crypto.randomUUID(),
     model,
     prompt: String(prompt || '') || undefined,
     start_frame_image_media_token: startToken || undefined,
@@ -1626,7 +1628,8 @@ app.delete('/api/style-json/:filename', (req, res) => {
 });
 
 // 创建一段中割生成任务
-// Artcraft 连接测试：验证 key 并返回 credits 余额（不产生任何生成费用）
+// Artcraft 连接测试：优先查 credits 余额；credits 端点仅认网页会话时，
+// 退化为上传 1×1 微图做真实 key 验证（上传免费，且确定走 API key 认证）
 app.get('/api/artcraft/test', async (req, res) => {
   const cfg = loadConfig();
   if (!cfg.artcraftKey) return res.status(400).json({ error: '未配置 Artcraft API Key' });
@@ -1635,10 +1638,22 @@ app.get('/api/artcraft/test', async (req, res) => {
       headers: { Authorization: 'Bearer ' + cfg.artcraftKey },
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j.success) {
-      return res.status(502).json({ error: `Artcraft 连接失败 (${r.status}): ` + JSON.stringify(j).slice(0, 200) });
+    if (r.ok && j.success) {
+      return res.json({ ok: true, credits: j.sum_total_credits, free: j.free_credits, monthly: j.monthly_credits, banked: j.banked_credits });
     }
-    res.json({ ok: true, credits: j.sum_total_credits, free: j.free_credits, monthly: j.monthly_credits, banked: j.banked_credits });
+    // credits 不可用（cookie-only）→ 用微图上传验证 key 本身
+    const px = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+    const fd = new FormData();
+    fd.append('uuid_idempotency_token', crypto.randomUUID());
+    fd.append('file', new Blob([px], { type: 'image/png' }), 'connection-test.png');
+    const up = await fetch(ARTCRAFT_API + '/v1/media_files/upload/image', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + cfg.artcraftKey },
+      body: fd,
+    });
+    const uj = await up.json().catch(() => ({}));
+    if (up.ok && uj.success) return res.json({ ok: true, credits: null });
+    res.status(502).json({ error: `Artcraft 连接失败 (${up.status}): ` + JSON.stringify(uj).slice(0, 200) });
   } catch (e) {
     res.status(502).json({ error: 'Artcraft 网络不可达: ' + String(e.message || e).slice(0, 160) });
   }
@@ -2021,7 +2036,7 @@ app.post('/api/v2v', async (req, res) => {
       const refTokens = [];
       for (const u of refs.slice(0, 10)) refTokens.push(await artcraftUploadImage(cfg, u));
       const body = {
-        idempotency_token: newId() + '-' + Date.now().toString(36),
+        idempotency_token: crypto.randomUUID(),
         model: artcraftModelOf(cfg),
         prompt: v2vText || undefined,
         reference_video_media_tokens: [videoToken],
