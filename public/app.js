@@ -168,6 +168,7 @@ function snapshot() {
       last: state.director.last,
       refVideo: state.director.refVideo,
       refVideoName: state.director.refVideoName,
+      animMode: state.director.animMode,
       refs: state.director.refs,
       history: state.director.history,
     },
@@ -266,6 +267,7 @@ async function loadProject() {
     state.director.last = dr.last || null;
     state.director.refVideo = dr.refVideo || null;
     state.director.refVideoName = dr.refVideoName || '';
+    state.director.animMode = dr.animMode || '12fps';
     state.director.refs = Array.isArray(dr.refs) ? dr.refs : [];
     state.director.history = Array.isArray(dr.history) ? dr.history : [];
     state.director.current = state.director.history.length ? 0 : -1;
@@ -3170,8 +3172,10 @@ $('dirModel').onchange = () => {
     : is25
       ? '2.5：4-30 秒 · 480P/720P（1080P 自动降档）· 需已在方舟控制台开通该模型'
       : '2.0：4-15 秒 · 使用 ⚙ API 设置里的当前模型与分辨率';
+  renderDirRefs();
 };
 $('dirDuration').oninput = (e) => { $('dirDurationVal').textContent = e.target.value + ' 秒'; };
+$('dirAnimMode').onchange = () => { state.director.animMode = $('dirAnimMode').value; scheduleSave(); };
 
 // 首帧 / 尾帧上传
 function setDirFrame(slot, url, name) {
@@ -3199,71 +3203,99 @@ $('dirLastFile').onchange = async (e) => {
 };
 $('dirLastClear').onclick = () => setDirFrame('last', null);
 
-// 参考视频
-$('dirRefVideoBtn').onclick = () => $('dirRefVideoFile').click();
-$('dirRefVideoFile').onchange = async (e) => {
-  const f = e.target.files[0]; e.target.value = '';
-  if (!f) return;
-  setDirStatus('参考视频上传中…');
-  try {
-    const url = await uploadAsset(f);
-    state.director.refVideo = url;
-    state.director.refVideoName = f.name;
-    restoreDirectorRefVideo();
-    setDirStatus('');
-    scheduleSave();
-  } catch (err) { setDirStatus('参考视频上传失败: ' + errMsg(err)); }
+// ---------------- 参考素材体系：图/视频/音频三类，按模型精确上限，逐条 role + 说明词 ----------------
+// Seedance 2.5 官方参考上限：30 图 + 10 视频 + 10 音频（三个独立上限）；2.0：9 图 + 3 视频 + 3 音频
+function dirRefCaps() {
+  const val = $('dirModel').value;
+  const is25 = /2p5|2-5/.test(val) || (!val && modelIs25());
+  return is25 ? { image: 30, video: 10, audio: 10 } : { image: 9, video: 3, audio: 3 };
+}
+let dirRefKind = 'image'; // 当前分区 tab
+
+const DIR_REF_ROLES = {
+  style: ['风格参考', '沿用其画风、笔触与质感'],
+  action: ['动作参考', '模仿其肢体动态与运动轨迹'],
+  character: ['角色一致性', '严格保持该角色的外观、发型与服装不变'],
+  scene: ['场景环境', '沿用其环境、空间与光线氛围'],
+  performance: ['表演情绪', '模仿其表情、情绪与表演方式'],
+  rhythm: ['节奏韵律', '按其节奏与韵律驱动画面运动'],
 };
-$('dirRefVideoClear').onclick = () => {
-  state.director.refVideo = null;
-  state.director.refVideoName = '';
-  restoreDirectorRefVideo();
-  scheduleSave();
+const DIR_KIND_META = {
+  image: { icon: '🖼', name: '参考图', accept: 'image/*', defaultRole: 'style' },
+  video: { icon: '🎞', name: '参考视频', accept: 'video/*', defaultRole: 'action' },
+  audio: { icon: '🎵', name: '参考音频', accept: 'audio/*', defaultRole: 'rhythm' },
 };
-function restoreDirectorRefVideo() {
-  const has = !!state.director.refVideo;
-  $('dirRefVideoName').textContent = has ? state.director.refVideoName || '参考视频已就绪' : '未选择 — Seedance 会参考它的运动与节奏';
-  $('dirRefVideoClear').hidden = !has;
-  const v = $('dirRefVideoPreview');
-  if (has) { v.src = state.director.refVideo; v.hidden = false; } else { v.hidden = true; v.removeAttribute('src'); }
+
+function dirRefsOf(kind) {
+  return state.director.refs.filter((r) => (r.kind || 'image') === kind);
 }
 
-// 参考图池（≤10）：每张图带独立说明词（这张图是什么 → 注入生成提示词）
 function renderDirRefs() {
+  const caps = dirRefCaps();
+  for (const k of ['image', 'video', 'audio']) {
+    const el = $('dirCnt' + k[0].toUpperCase() + k.slice(1));
+    if (el) el.textContent = `${dirRefsOf(k).length}/${caps[k]}`;
+  }
+  $('dirRefCaps').textContent = `— 图 ≤${caps.image} · 视频 ≤${caps.video} · 音频 ≤${caps.audio}`;
+  document.querySelectorAll('#dirRefTabs button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.kind === dirRefKind);
+  });
+  const meta = DIR_KIND_META[dirRefKind];
+  $('dirRefFiles').accept = meta.accept;
+  $('dirRefAdd').textContent = `＋ 添加${meta.name}`;
+  $('dirRefAdd').disabled = dirRefsOf(dirRefKind).length >= caps[dirRefKind];
+
   const list = $('dirRefList');
   list.innerHTML = '';
-  state.director.refs.forEach((r, i) => {
+  dirRefsOf(dirRefKind).forEach((r, i) => {
     const row = document.createElement('div');
     row.className = 'dir-ref-row';
+    const thumb = (r.kind || 'image') === 'image'
+      ? `<img src="${r.url}" alt="${escapeHtml(r.name)}" title="${escapeHtml(r.name)}">`
+      : `<span class="dir-ref-icon" title="${escapeHtml(r.name)}">${DIR_KIND_META[r.kind].icon}</span>`;
+    const roleOpts = Object.entries(DIR_REF_ROLES)
+      .map(([k, [label]]) => `<option value="${k}" ${(r.role || meta.defaultRole) === k ? 'selected' : ''}>${label}</option>`)
+      .join('');
     row.innerHTML = `
-      <div class="ref-cell"><img src="${r.url}" alt="${escapeHtml(r.name)}" title="${escapeHtml(r.name)}"><button type="button" aria-label="移除">✕</button></div>
+      <div class="ref-cell">${thumb}<button type="button" aria-label="移除">✕</button></div>
       <div class="dir-ref-meta">
-        <span class="dir-ref-idx">参考图 ${i + 1}</span>
-        <textarea class="dir-ref-note" rows="1" data-min-grow="80" maxlength="120"
-          placeholder="这张图是什么？例：主角正面全身设定图 / 场景夜景氛围">${escapeHtml(r.note || '')}</textarea>
+        <div class="dir-ref-head">
+          <span class="dir-ref-idx">${DIR_KIND_META[r.kind || 'image'].icon} ${i + 1} · ${escapeHtml((r.name || '').slice(0, 18))}</span>
+          <select class="dir-ref-role" title="这份参考对模型的作用（注入后台提示词）">${roleOpts}</select>
+        </div>
+        <textarea class="dir-ref-note" rows="1" data-min-grow="80" maxlength="160"
+          placeholder="补充说明：这份素材是什么 / 想让模型学到什么">${escapeHtml(r.note || '')}</textarea>
       </div>`;
     row.querySelector('.ref-cell button').onclick = () => {
       state.director.refs = state.director.refs.filter((x) => x.id !== r.id);
       renderDirRefs();
       scheduleSave();
     };
-    row.querySelector('.dir-ref-note').onchange = (e) => {
-      r.note = e.target.value;
-      scheduleSave();
-    };
+    row.querySelector('.dir-ref-role').onchange = (e) => { r.role = e.target.value; scheduleSave(); };
+    row.querySelector('.dir-ref-note').onchange = (e) => { r.note = e.target.value; scheduleSave(); };
     list.appendChild(row);
   });
-  $('dirRefAdd').disabled = state.director.refs.length >= 10;
 }
+
+document.querySelectorAll('#dirRefTabs button').forEach((b) => {
+  b.onclick = () => { dirRefKind = b.dataset.kind; renderDirRefs(); };
+});
 $('dirRefAdd').onclick = () => $('dirRefFiles').click();
 $('dirRefFiles').onchange = async (e) => {
-  const files = Array.from(e.target.files || []).slice(0, 10 - state.director.refs.length);
+  const caps = dirRefCaps();
+  const room = caps[dirRefKind] - dirRefsOf(dirRefKind).length;
+  const files = Array.from(e.target.files || []).slice(0, Math.max(0, room));
   e.target.value = '';
   for (const f of files) {
     try {
+      setDirStatus(`${DIR_KIND_META[dirRefKind].name}上传中… ${f.name}`);
       const url = await uploadAsset(f);
-      state.director.refs.push({ id: nextRefId++, name: f.name, url });
-    } catch (err) { setDirStatus('参考图上传失败: ' + errMsg(err)); }
+      state.director.refs.push({
+        id: nextRefId++, name: f.name, url,
+        kind: dirRefKind, role: DIR_KIND_META[dirRefKind].defaultRole, note: '',
+      });
+      setDirStatus('');
+    } catch (err) { setDirStatus(`${DIR_KIND_META[dirRefKind].name}上传失败: ` + errMsg(err)); }
   }
   renderDirRefs();
   scheduleSave();
@@ -3272,20 +3304,27 @@ $('dirRefFiles').onchange = async (e) => {
 // 生成
 async function directorGenerate() {
   if (state.director.running) return;
-  if (!state.director.first && !state.director.refs.length && !state.director.refVideo) {
-    setDirStatus('至少需要一张参考图（或首帧 / 参考视频）');
+  if (!state.director.first && !state.director.refs.length) {
+    setDirStatus('至少需要一份参考素材（图/视频/音频）或首帧');
     return;
   }
   const model = $('dirModel').value || undefined;
   const duration = Number($('dirDuration').value);
   const acting = directorActingText();
-  // 每张参考图的单独说明 → @引用式描述块，告诉模型"这张图是什么"
-  const refNotes = state.director.refs
-    .map((r, i) => ((r.note || '').trim() ? `参考图${i + 1}：${r.note.trim()}` : null))
-    .filter(Boolean);
+  // 每份参考的 role + 说明 → @引用式指令块（后台注入，指挥模型如何使用每份素材）
+  const kindCounters = { image: 0, video: 0, audio: 0 };
+  const refNotes = state.director.refs.map((r) => {
+    const kind = r.kind || 'image';
+    kindCounters[kind] += 1;
+    const roleDef = DIR_REF_ROLES[r.role || DIR_KIND_META[kind].defaultRole];
+    const roleText = roleDef ? `${roleDef[0]}——${roleDef[1]}` : '';
+    const note = (r.note || '').trim();
+    if (!roleText && !note) return null;
+    return `${DIR_KIND_META[kind].name}${kindCounters[kind]}（${roleText}）${note ? '：' + note : ''}`;
+  }).filter(Boolean);
   const prompt = [
     $('dirPrompt').value.trim(),
-    refNotes.length ? '参考图说明：\n' + refNotes.join('\n') : '',
+    refNotes.length ? '参考素材使用说明：\n' + refNotes.join('\n') : '',
     acting,
   ].filter(Boolean).join('\n');
   state.director.running = true;
@@ -3299,9 +3338,11 @@ async function directorGenerate() {
       body: JSON.stringify({
         firstFrame: state.director.first ? state.director.first.url : null,
         lastFrame: state.director.last ? state.director.last.url : null,
-        refVideoUrl: state.director.refVideo || null,
-        refImages: state.director.refs.map((r) => r.url),
+        refImages: dirRefsOf('image').map((r) => r.url),
+        refVideos: dirRefsOf('video').map((r) => r.url),
+        refAudios: dirRefsOf('audio').map((r) => r.url),
         prompt, duration, model,
+        animMode: $('dirAnimMode').value,
         generateAudio: !$('dirAudioWrap').hidden ? $('dirAudio').checked : undefined,
       }),
     });
@@ -3352,7 +3393,16 @@ function renderDirector() {
 function restoreDirectorUI() {
   if (state.director.first) setDirFrame('first', state.director.first.url, state.director.first.name);
   if (state.director.last) setDirFrame('last', state.director.last.url, state.director.last.name);
-  restoreDirectorRefVideo();
+  // 旧版单参考视频字段 → 迁移进分类参考池（kind=video）
+  if (state.director.refVideo) {
+    state.director.refs.push({
+      id: nextRefId++, name: state.director.refVideoName || '参考视频', url: state.director.refVideo,
+      kind: 'video', role: 'action', note: '',
+    });
+    state.director.refVideo = null;
+    state.director.refVideoName = '';
+  }
+  if (state.director.animMode) $('dirAnimMode').value = state.director.animMode;
   renderDirRefs();
   renderDirector();
   syncDirActing();

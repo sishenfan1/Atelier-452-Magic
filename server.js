@@ -582,6 +582,41 @@ async function artcraftUploadVideo(cfg, localUrl) {
   return j.media_file_token;
 }
 
+/** 本地音频 → Artcraft media_file_token（参考音频用） */
+async function artcraftUploadAudio(cfg, localUrl) {
+  const file = localFileOf(localUrl);
+  if (!file || !fs.existsSync(file)) throw new Error('音频不存在: ' + String(localUrl).slice(0, 80));
+  const buf = fs.readFileSync(file);
+  const ext = path.extname(file).slice(1).toLowerCase();
+  const mime = ext === 'wav' ? 'audio/wav' : ext === 'm4a' ? 'audio/mp4' : 'audio/mpeg';
+  const fd = new FormData();
+  fd.append('uuid_idempotency_token', crypto.randomUUID());
+  fd.append('file', new Blob([buf], { type: mime }), path.basename(file));
+  const r = await fetch(ARTCRAFT_API + '/v1/media_files/upload/audio', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + cfg.artcraftKey },
+    body: fd,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.media_file_token) {
+    throw new Error(`Artcraft 音频上传失败 (${r.status}): ` + JSON.stringify(j).slice(0, 200));
+  }
+  return j.media_file_token;
+}
+
+/** 动画帧率指令（隐藏注入 · REFERENCES TOOL 专用 · 本工具面向动画生产） */
+const ANIM_MODE_PROMPTS = {
+  '12fps': '【动画帧率指令】整段视频以逐帧动画质感呈现：画面以约每秒 12 帧的卡帧节奏运动（animated on twos / 拍二），' +
+    '帧与帧之间保留干脆的跳跃感与定格感，运动是逐帧绘制式的阶跃而非连续滑动；' +
+    '严禁 60fps 平滑插值、严禁运动模糊、严禁均匀慢速漂移；快速动作用 smear 帧与残影表达。',
+  variable: '【动画帧率指令】变速动画节奏（framerate modulation）：动作爆发段节奏凌厉、密集补帧一气呵成；' +
+    '蓄力与收势段卡帧定格、节奏放缓甚至完全定格（tome-e）；整体保持逐帧动画的阶跃质感与拍二基调，' +
+    '严禁均匀的 60fps 平滑插值与运动模糊，帧率变化本身就是表演的一部分。',
+};
+function animModePrompt(mode) {
+  return ANIM_MODE_PROMPTS[mode] || '';
+}
+
 /** 全局 provider 决策：优先 Artcraft（用户显式选择且已配 key） */
 function useArtcraftFirst(cfg) {
   return cfg.preferredProvider === 'artcraft' && !!cfg.artcraftKey;
@@ -602,7 +637,7 @@ function artcraftOmniAspectOf(cfg) {
   return 'wide_sixteen_by_nine';
 }
 async function artcraftOmniGenerate(cfg, opts) {
-  const { model, prompt, startToken, endToken, refTokens, duration, generateAudio } = opts;
+  const { model, prompt, startToken, endToken, refTokens, refVideoTokens, refAudioTokens, duration, generateAudio } = opts;
   const body = {
     idempotency_token: crypto.randomUUID(),
     model,
@@ -610,6 +645,8 @@ async function artcraftOmniGenerate(cfg, opts) {
     start_frame_image_media_token: startToken || undefined,
     end_frame_image_media_token: endToken || undefined,
     reference_image_media_tokens: refTokens && refTokens.length ? refTokens : undefined,
+    reference_video_media_tokens: refVideoTokens && refVideoTokens.length ? refVideoTokens : undefined,
+    reference_audio_media_tokens: refAudioTokens && refAudioTokens.length ? refAudioTokens : undefined,
     aspect_ratio: artcraftOmniAspectOf(cfg),
     resolution: artcraftResolutionOf(cfg),
     duration_seconds: Math.max(1, Math.round(Number(duration) || 5)),
@@ -877,9 +914,9 @@ filesApp.listen(FILES_PORT).on('error', (e) => {
 app.post('/api/upload', (req, res) => {
   try {
     const { dataUrl, name } = req.body || {};
-    const m = /^data:(image|video)\/([\w.+-]+);base64,(.+)$/s.exec(dataUrl || '');
-    if (!m) return res.status(400).json({ error: '仅支持 base64 图片或视频' });
-    const extMap = { jpeg: 'jpg', quicktime: 'mov', 'x-matroska': 'mkv' };
+    const m = /^data:(image|video|audio)\/([\w.+-]+);base64,(.+)$/s.exec(dataUrl || '');
+    if (!m) return res.status(400).json({ error: '仅支持 base64 图片、视频或音频' });
+    const extMap = { jpeg: 'jpg', quicktime: 'mov', 'x-matroska': 'mkv', mpeg: 'mp3', 'x-wav': 'wav', 'x-m4a': 'm4a' };
     const ext = extMap[m[2]] || m[2];
     const file = newId() + '.' + ext;
     fs.writeFileSync(path.join(ASSET_DIR, file), Buffer.from(m[3], 'base64'));
@@ -1730,10 +1767,11 @@ app.post('/api/whole/preview', (req, res) => {
 
 // 一体生成：全部关键帧一次生成一段连续动画
 app.post('/api/director', async (req, res) => {
-  const { firstFrame, lastFrame, refVideoUrl, refImages = [], prompt, duration, model } = req.body || {};
-  // 首帧可选：纯参考图 + 提示词即可生成（这正是 REFERENCES TOOL 的本职）
-  const hasAnyInput = firstFrame || (Array.isArray(refImages) && refImages.length) || refVideoUrl;
-  if (!hasAnyInput) return res.status(400).json({ error: '至少需要一张参考图、首帧或参考视频' });
+  const { firstFrame, lastFrame, refVideoUrl, refImages = [], refVideos = [], refAudios = [], prompt, duration, model, animMode } = req.body || {};
+  // 首帧可选：纯参考素材 + 提示词即可生成（这正是 REFERENCES TOOL 的本职）
+  const hasAnyInput = firstFrame || (Array.isArray(refImages) && refImages.length)
+    || (Array.isArray(refVideos) && refVideos.length) || (Array.isArray(refAudios) && refAudios.length) || refVideoUrl;
+  if (!hasAnyInput) return res.status(400).json({ error: '至少需要一份参考素材（图/视频/音频）或首帧' });
   const cfg = loadConfig();
   const id = newId();
   let bill = null;
@@ -1742,60 +1780,85 @@ app.post('/api/director', async (req, res) => {
     if (!bill.ok) return res.status(402).json({ error: bill.error });
   }
   logUsedPrompt(cfg, 'director', prompt);
-  // Artcraft 通道：model 以 artcraft: 前缀标记（REFERENCES TOOL 下拉可选）
-  if (String(model || '').startsWith('artcraft:')) {
-    if (!cfg.artcraftKey) return res.status(400).json({ error: '未配置 Artcraft API Key — 在 ⚙ API 设置里粘贴 artcraft_api_... 后重试' });
-    try {
-      const startToken = firstFrame ? await artcraftUploadImage(cfg, firstFrame) : null;
-      const endToken = lastFrame ? await artcraftUploadImage(cfg, lastFrame) : null;
-      const refTokens = [];
-      for (const u of (Array.isArray(refImages) ? refImages : []).slice(0, 10)) {
-        refTokens.push(await artcraftUploadImage(cfg, u));
-      }
-      const acJobToken = await artcraftOmniGenerate(cfg, {
-        model: String(model).slice('artcraft:'.length),
-        prompt, startToken, endToken, refTokens, duration,
-        generateAudio: req.body && typeof req.body.generateAudio === 'boolean' ? req.body.generateAudio : undefined,
-      });
-      tasks[id] = { mode: 'artcraft', status: 'running', acJobToken, cost: bill && bill.cost, uid: bill && bill.uid };
-    } catch (e) {
-      if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
-      return res.status(502).json({ error: String(e.message || e) });
+  // 动画帧率指令：本工具面向动画生产，默认 12fps 卡帧（隐藏注入，客户端可选 variable/off）
+  const fullPrompt = [animModePrompt(animMode === undefined ? '12fps' : animMode), String(prompt || '')]
+    .filter(Boolean).join('\n');
+  // Provider 决策：显式 artcraft: 前缀 > 空模型时跟随全局 preferredProvider
+  const wantArtcraft = String(model || '').startsWith('artcraft:')
+    || (!model && useArtcraftFirst(cfg));
+  const artcraftModel = String(model || '').startsWith('artcraft:')
+    ? String(model).slice('artcraft:'.length)
+    : artcraftModelOf(cfg);
+  let fellBack = '';
+  if (wantArtcraft) {
+    if (!cfg.artcraftKey && String(model || '').startsWith('artcraft:')) {
+      return res.status(400).json({ error: '未配置 Artcraft API Key — 在 ⚙ API 设置里粘贴 artcraft_api_... 后重试' });
     }
-    return res.json({ id, mode: 'artcraft', status: 'running' });
+    if (cfg.artcraftKey) {
+      try {
+        const startToken = firstFrame ? await artcraftUploadImage(cfg, firstFrame) : null;
+        const endToken = lastFrame ? await artcraftUploadImage(cfg, lastFrame) : null;
+        const refTokens = [];
+        for (const u of (Array.isArray(refImages) ? refImages : []).slice(0, 30)) {
+          refTokens.push(await artcraftUploadImage(cfg, u));
+        }
+        const refVideoTokens = [];
+        const vids = [...(Array.isArray(refVideos) ? refVideos : []), ...(refVideoUrl ? [refVideoUrl] : [])].slice(0, 10);
+        for (const u of vids) refVideoTokens.push(await artcraftUploadVideo(cfg, u));
+        const refAudioTokens = [];
+        for (const u of (Array.isArray(refAudios) ? refAudios : []).slice(0, 10)) {
+          refAudioTokens.push(await artcraftUploadAudio(cfg, u));
+        }
+        const acJobToken = await artcraftOmniGenerate(cfg, {
+          model: artcraftModel,
+          prompt: fullPrompt, startToken, endToken, refTokens, refVideoTokens, refAudioTokens, duration,
+          generateAudio: req.body && typeof req.body.generateAudio === 'boolean' ? req.body.generateAudio : undefined,
+        });
+        tasks[id] = { mode: 'artcraft', status: 'running', acJobToken, cost: bill && bill.cost, uid: bill && bill.uid };
+        return res.json({ id, mode: 'artcraft', status: 'running' });
+      } catch (e) {
+        fellBack = String(e.message || e).slice(0, 200);
+        console.warn('Artcraft 导演生成失败，尝试回退方舟:', fellBack);
+      }
+    }
   }
   if (cfg.apiKey) {
     try {
       const firstDataUrl = firstFrame ? resolveToArkImage(firstFrame) : null;
       const lastDataUrl = lastFrame ? resolveToArkImage(lastFrame) : null;
       const refDataUrls = (Array.isArray(refImages) ? refImages : []).slice(0, 10).map(resolveToArkImage);
-      // 参考视频必须公网 URL（与 V2V 同一隧道流程）
+      // 参考视频必须公网 URL（与 V2V 同一隧道流程）；方舟单视频参考，多余的忽略（音频参考方舟不支持）
+      const arkRefVideo = refVideoUrl || (Array.isArray(refVideos) && refVideos[0]) || null;
       let refVideoPublicUrl = null;
-      if (refVideoUrl) {
-        const srcFile = localFileOf(refVideoUrl);
+      if (arkRefVideo) {
+        const srcFile = localFileOf(arkRefVideo);
         if (!srcFile || !fs.existsSync(srcFile)) throw new Error('参考视频不存在，请重新上传');
         let base = await ensureTunnel();
         try {
-          await waitPublicReachable(base + refVideoUrl);
+          await waitPublicReachable(base + arkRefVideo);
         } catch (err) {
           if (!tunnel.proc) throw err;
           console.warn('隧道自检失败，重建隧道:', String(err.message || err).slice(0, 120));
           try { tunnel.proc.kill(); } catch {}
           tunnel.url = null; tunnel.proc = null;
           base = await ensureTunnel();
-          await waitPublicReachable(base + refVideoUrl);
+          await waitPublicReachable(base + arkRefVideo);
         }
-        refVideoPublicUrl = base + refVideoUrl;
+        refVideoPublicUrl = base + arkRefVideo;
       }
       const arkId = await arkCreateDirector(cfg, {
         firstDataUrl, lastDataUrl, refVideoPublicUrl, refDataUrls,
-        text: String(prompt || ''), duration, model,
+        text: fullPrompt, duration, model: String(model || '').startsWith('artcraft:') ? undefined : model,
       });
       tasks[id] = { mode: 'ark', status: 'running', arkId, cost: bill && bill.cost, uid: bill && bill.uid };
+      if (fellBack) tasks[id].warning = 'Artcraft 失败已自动回退方舟: ' + fellBack;
     } catch (e) {
       if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
-      return res.status(502).json({ error: String(e.message || e) });
+      return res.status(502).json({ error: (fellBack ? `Artcraft 失败（${fellBack}）且方舟也失败: ` : '') + String(e.message || e) });
     }
+  } else if (fellBack) {
+    if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
+    return res.status(502).json({ error: 'Artcraft 生成失败（未配置方舟 Key 无法回退）: ' + fellBack });
   } else {
     // 无 key：可用图片（首帧/尾帧/参考图）交叉溶解模拟
     const files = [];

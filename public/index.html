@@ -453,9 +453,14 @@
 <main class="layout" id="viewDirector" hidden>
   <aside class="col-left">
     <section class="panel highlight">
-      <h2>🖼 参考图 <span class="hint">— 本工具的核心：只传参考图即可生成 · ≤10</span></h2>
+      <h2>📚 参考素材 <span class="hint" id="dirRefCaps">— 图 ≤9 · 视频 ≤3 · 音频 ≤3</span></h2>
+      <div class="dir-ref-tabs" id="dirRefTabs">
+        <button data-kind="image" class="active">🖼 图 <b id="dirCntImage">0/9</b></button>
+        <button data-kind="video">🎞 视频 <b id="dirCntVideo">0/3</b></button>
+        <button data-kind="audio">🎵 音频 <b id="dirCntAudio">0/3</b></button>
+      </div>
       <div id="dirRefList" class="image-list-mini"></div>
-      <button id="dirRefAdd" class="btn wide primary">＋ 添加参考图</button>
+      <button id="dirRefAdd" class="btn wide primary">＋ 添加参考</button>
       <input type="file" id="dirRefFiles" accept="image/*" multiple hidden>
     </section>
     <section class="panel">
@@ -476,16 +481,6 @@
       </div>
       <input type="file" id="dirFirstFile" accept="image/*" hidden>
       <input type="file" id="dirLastFile" accept="image/*" hidden>
-    </section>
-    <section class="panel">
-      <h2>🎞 参考视频 <span class="hint">— 可选 · 动作/运镜参考</span></h2>
-      <div class="row">
-        <button id="dirRefVideoBtn" class="btn">上传参考视频</button>
-        <button id="dirRefVideoClear" class="btn ghost" hidden>✕</button>
-      </div>
-      <div class="hint" id="dirRefVideoName">未选择 — Seedance 会参考它的运动与节奏</div>
-      <video id="dirRefVideoPreview" class="v2v-result" controls muted hidden style="margin-top:8px"></video>
-      <input type="file" id="dirRefVideoFile" accept="video/*" hidden>
     </section>
   </aside>
 
@@ -538,6 +533,13 @@
           <input type="range" id="dirDuration" min="4" max="15" step="1" value="5">
           <b id="dirDurationVal">5 秒</b></span>
         <label class="check" id="dirAudioWrap" hidden><input type="checkbox" id="dirAudio"> 生成音频</label>
+        <label class="check">帧率
+          <select id="dirAnimMode" class="btn" style="margin-left:6px" title="动画帧率指令 — 后台自动注入生成提示词">
+            <option value="12fps">🎬 12FPS 卡帧</option>
+            <option value="variable">⚡ 变速节奏</option>
+            <option value="off">平滑（不注入）</option>
+          </select>
+        </label>
         <button id="btnDirectorGen" class="btn primary">🎬 导演生成</button>
       </div>
       <div class="hint" id="dirModelHint">2.5：4-30 秒 · 480P/720P（1080P 自动降档）· 方舟 API 尚未开放调用，开放后此处即插即用</div>
