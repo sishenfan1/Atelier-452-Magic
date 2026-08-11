@@ -561,6 +561,34 @@ async function artcraftUploadImage(cfg, localUrl) {
   return j.media_file_token;
 }
 
+/** 本地视频 → Artcraft media_file_token（V2V 参考视频用） */
+async function artcraftUploadVideo(cfg, localUrl) {
+  const file = localFileOf(localUrl);
+  if (!file || !fs.existsSync(file)) throw new Error('视频不存在: ' + String(localUrl).slice(0, 80));
+  const buf = fs.readFileSync(file);
+  const fd = new FormData();
+  fd.append('file', new Blob([buf], { type: 'video/mp4' }), path.basename(file));
+  const r = await fetch(ARTCRAFT_API + '/v1/media_files/upload/video', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + cfg.artcraftKey },
+    body: fd,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.media_file_token) {
+    throw new Error(`Artcraft 视频上传失败 (${r.status}): ` + JSON.stringify(j).slice(0, 200));
+  }
+  return j.media_file_token;
+}
+
+/** 全局 provider 决策：优先 Artcraft（用户显式选择且已配 key） */
+function useArtcraftFirst(cfg) {
+  return cfg.preferredProvider === 'artcraft' && !!cfg.artcraftKey;
+}
+/** 全局模型档位（顶栏 2.0/2.5）→ Artcraft Omni 模型名 */
+function artcraftModelOf(cfg) {
+  return isSeedance25(cfg.model) ? 'seedance_2p5' : 'seedance_2p0';
+}
+
 /** Omni API 统一视频生成（官方 API 文档 storyteller-docs.netlify.app）：
  *  一个端点驱动全部 44 个模型（seedance_2p5 / kling_3p0 / veo_3p1 / sora_2 …） */
 function artcraftOmniAspectOf(cfg) {
@@ -906,6 +934,7 @@ app.get('/api/config', (req, res) => {
     llmProvider: cfg.llmProvider || 'auto',
     hasAnthropicKey: !!cfg.anthropicKey,
     hasArtcraftKey: !!cfg.artcraftKey,
+    preferredProvider: cfg.preferredProvider || 'ark',
     llmModel: cfg.llmModel || '',
     llmSpendUsd: getLlmSpend().usd,
     llmSpendCap: getLlmSpend().capUsd,
@@ -950,6 +979,8 @@ app.post('/api/config', (req, res) => {
   const { artcraftKey } = req.body || {};
   if (artcraftKey !== undefined && artcraftKey !== '') cur.artcraftKey = artcraftKey;
   if (artcraftKey === null) cur.artcraftKey = '';
+  const { preferredProvider } = req.body || {};
+  if (preferredProvider === 'artcraft' || preferredProvider === 'ark') cur.preferredProvider = preferredProvider;
   if (llmModel !== undefined) cur.llmModel = llmModel;
   // 用量重置：仅在用户确认已充值后调用（新的 $20 周期）
   if (llmSpendReset === true) {
@@ -1595,6 +1626,24 @@ app.delete('/api/style-json/:filename', (req, res) => {
 });
 
 // 创建一段中割生成任务
+// Artcraft 连接测试：验证 key 并返回 credits 余额（不产生任何生成费用）
+app.get('/api/artcraft/test', async (req, res) => {
+  const cfg = loadConfig();
+  if (!cfg.artcraftKey) return res.status(400).json({ error: '未配置 Artcraft API Key' });
+  try {
+    const r = await fetch(ARTCRAFT_API + '/v1/credits/namespace/artcraft', {
+      headers: { Authorization: 'Bearer ' + cfg.artcraftKey },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.success) {
+      return res.status(502).json({ error: `Artcraft 连接失败 (${r.status}): ` + JSON.stringify(j).slice(0, 200) });
+    }
+    res.json({ ok: true, credits: j.sum_total_credits, free: j.free_credits, monthly: j.monthly_credits, banked: j.banked_credits });
+  } catch (e) {
+    res.status(502).json({ error: 'Artcraft 网络不可达: ' + String(e.message || e).slice(0, 160) });
+  }
+});
+
 app.post('/api/segments', async (req, res) => {
   const { first, last, prompt, duration, stylePrompt, actingPrompt, inbetweenPrompt } = req.body || {};
   if (!first || !last) return res.status(400).json({ error: '缺少首帧或尾帧图片' });
@@ -1613,14 +1662,35 @@ app.post('/api/segments', async (req, res) => {
     if (!bill.ok) return res.status(402).json({ error: bill.error });
   }
   logUsedPrompt(cfg, 'segment', prompt);
+  // Provider 优先级：Artcraft（用户显式选择）→ 失败自动回退方舟
+  let fellBack = '';
+  if (useArtcraftFirst(cfg)) {
+    try {
+      const text = [stylePrompt, inbetweenPrompt, actingPrompt, prompt].map((s) => String(s || '').trim()).filter(Boolean).join('\n');
+      const startToken = await artcraftUploadImage(cfg, first);
+      const endToken = await artcraftUploadImage(cfg, last);
+      const acJobToken = await artcraftOmniGenerate(cfg, {
+        model: artcraftModelOf(cfg), prompt: text, startToken, endToken, refTokens: [], duration,
+      });
+      tasks[id] = { mode: 'artcraft', status: 'running', acJobToken, cost: bill && bill.cost, uid: bill && bill.uid };
+      return res.json({ id, mode: 'artcraft', status: 'running' });
+    } catch (e) {
+      fellBack = String(e.message || e).slice(0, 200);
+      console.warn('Artcraft 分段生成失败，回退方舟:', fellBack);
+    }
+  }
   if (cfg.apiKey) {
     try {
       const arkId = await arkCreate(cfg, firstData, lastData, prompt, duration, stylePrompt, actingPrompt, inbetweenPrompt);
       tasks[id] = { mode: 'ark', status: 'running', arkId, cost: bill && bill.cost, uid: bill && bill.uid };
+      if (fellBack) tasks[id].warning = 'Artcraft 失败已自动回退方舟: ' + fellBack;
     } catch (e) {
       if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
-      return res.status(502).json({ error: String(e.message || e) });
+      return res.status(502).json({ error: (fellBack ? `Artcraft 失败（${fellBack}）且方舟也失败: ` : '') + String(e.message || e) });
     }
+  } else if (fellBack) {
+    if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
+    return res.status(502).json({ error: 'Artcraft 生成失败（未配置方舟 Key 无法回退）: ' + fellBack });
   } else {
     tasks[id] = { mode: 'mock', status: 'running', cost: bill && bill.cost, uid: bill && bill.uid };
     mockGenerate(id, firstData, lastData, duration); // 后台异步
@@ -1747,25 +1817,45 @@ app.post('/api/whole', async (req, res) => {
   }
   logUsedPrompt(cfg, 'whole', prompt);
   if (Array.isArray(gaps)) for (const g of gaps) logUsedPrompt(cfg, 'gap', g && g.prompt);
+  const wholeText = [
+    (stylePrompt !== undefined ? stylePrompt : cfg.stylePrompt) || '',
+    wholePromptFor(images.length, gapList),
+    // 中割运动指令：永远注入
+    (inbetweenPrompt !== undefined && inbetweenPrompt !== ''
+      ? inbetweenPrompt
+      : (cfg.inbetweenPrompt || DEFAULT_INBETWEEN_PROMPT)),
+    (actingPrompt || '').trim(),
+    (prompt || '').trim(),
+  ].map((s) => s.trim()).filter(Boolean).join('\n');
+  // Provider 优先级：Artcraft → 失败自动回退方舟
+  let fellBack = '';
+  if (useArtcraftFirst(cfg)) {
+    try {
+      const refTokens = [];
+      for (const u of images.slice(0, 30)) refTokens.push(await artcraftUploadImage(cfg, u));
+      const acJobToken = await artcraftOmniGenerate(cfg, {
+        model: artcraftModelOf(cfg), prompt: wholeText, refTokens, duration,
+      });
+      tasks[id] = { mode: 'artcraft', status: 'running', acJobToken, cost: bill && bill.cost, uid: bill && bill.uid };
+      return res.json({ id, mode: 'artcraft', status: 'running' });
+    } catch (e) {
+      fellBack = String(e.message || e).slice(0, 200);
+      console.warn('Artcraft 一体生成失败，回退方舟:', fellBack);
+    }
+  }
   if (cfg.apiKey) {
     try {
-      const text = [
-        (stylePrompt !== undefined ? stylePrompt : cfg.stylePrompt) || '',
-        wholePromptFor(images.length, gapList),
-        // 中割运动指令：永远注入
-        (inbetweenPrompt !== undefined && inbetweenPrompt !== ''
-          ? inbetweenPrompt
-          : (cfg.inbetweenPrompt || DEFAULT_INBETWEEN_PROMPT)),
-        (actingPrompt || '').trim(),
-        (prompt || '').trim(),
-      ].map((s) => s.trim()).filter(Boolean).join('\n');
       const imageDataUrls = images.map(resolveToArkImage);
-      const arkId = await arkCreateWhole(cfg, imageDataUrls, text, duration);
+      const arkId = await arkCreateWhole(cfg, imageDataUrls, sanitizeForArk(wholeText), duration);
       tasks[id] = { mode: 'ark', status: 'running', arkId, cost: bill && bill.cost, uid: bill && bill.uid };
+      if (fellBack) tasks[id].warning = 'Artcraft 失败已自动回退方舟: ' + fellBack;
     } catch (e) {
       if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
-      return res.status(502).json({ error: String(e.message || e) });
+      return res.status(502).json({ error: (fellBack ? `Artcraft 失败（${fellBack}）且方舟也失败: ` : '') + String(e.message || e) });
     }
+  } else if (fellBack) {
+    if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
+    return res.status(502).json({ error: 'Artcraft 生成失败（未配置方舟 Key 无法回退）: ' + fellBack });
   } else {
     const files = [];
     try {
@@ -1918,13 +2008,45 @@ app.post('/api/v2v', async (req, res) => {
     bill = pm.charge(req, 'v2v', clampDuration(duration));
     if (!bill.ok) return res.status(402).json({ error: bill.error });
   }
+  logUsedPrompt(cfg, 'v2v', prompt);
+  const v2vText = [
+    ((colorPrompt !== undefined ? colorPrompt : cfg.colorPrompt) || '').trim(),
+    (prompt || '').trim(),
+  ].filter(Boolean).join('\n');
+  // Provider 优先级：Artcraft（视频直接上传，无需公网隧道！）→ 失败自动回退方舟
+  let fellBack = '';
+  if (useArtcraftFirst(cfg)) {
+    try {
+      const videoToken = await artcraftUploadVideo(cfg, videoUrl);
+      const refTokens = [];
+      for (const u of refs.slice(0, 10)) refTokens.push(await artcraftUploadImage(cfg, u));
+      const body = {
+        idempotency_token: newId() + '-' + Date.now().toString(36),
+        model: artcraftModelOf(cfg),
+        prompt: v2vText || undefined,
+        reference_video_media_tokens: [videoToken],
+        reference_image_media_tokens: refTokens.length ? refTokens : undefined,
+        aspect_ratio: artcraftOmniAspectOf(cfg),
+        resolution: artcraftResolutionOf(cfg),
+        duration_seconds: Math.max(1, Math.round(Number(duration) || 5)),
+      };
+      const r = await fetch(ARTCRAFT_API + '/v1/omni_api/generate/video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.artcraftKey },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.inference_job_token) throw new Error(`Artcraft 创建 V2V 任务失败 (${r.status}): ` + JSON.stringify(j).slice(0, 250));
+      tasks[id] = { mode: 'artcraft', status: 'running', acJobToken: j.inference_job_token, cost: bill && bill.cost, uid: bill && bill.uid };
+      return res.json({ id, mode: 'artcraft', status: 'running' });
+    } catch (e) {
+      fellBack = String(e.message || e).slice(0, 200);
+      console.warn('Artcraft V2V 失败，回退方舟:', fellBack);
+    }
+  }
   if (cfg.apiKey) {
     try {
-      logUsedPrompt(cfg, 'v2v', prompt);
-      const text = [
-        ((colorPrompt !== undefined ? colorPrompt : cfg.colorPrompt) || '').trim(),
-        (prompt || '').trim(),
-      ].filter(Boolean).join('\n');
+      const text = v2vText;
       const refDataUrls = refs.map(resolveToArkImage);
       // reference_video 必须是公网 URL（Ark 明确拒绝 base64 视频）。
       // 刚建立的隧道 Cloudflare 边缘路由可能尚未生效 → 先自检可下载，再交给 Ark；
@@ -1943,10 +2065,14 @@ app.post('/api/v2v', async (req, res) => {
       }
       const arkId = await arkCreateV2VWithRetry(cfg, base + videoUrl, refDataUrls, text, duration);
       tasks[id] = { mode: 'ark', status: 'running', arkId, cost: bill && bill.cost, uid: bill && bill.uid };
+      if (fellBack) tasks[id].warning = 'Artcraft 失败已自动回退方舟: ' + fellBack;
     } catch (e) {
       if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
-      return res.status(502).json({ error: String(e.message || e) });
+      return res.status(502).json({ error: (fellBack ? `Artcraft 失败（${fellBack}）且方舟也失败: ` : '') + String(e.message || e) });
     }
+  } else if (fellBack) {
+    if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
+    return res.status(502).json({ error: 'Artcraft 生成失败（未配置方舟 Key 无法回退）: ' + fellBack });
   } else {
     tasks[id] = { mode: 'mock', status: 'running', cost: bill && bill.cost, uid: bill && bill.uid };
     mockV2V(id, srcFile);

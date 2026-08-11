@@ -2629,18 +2629,44 @@ function openDetail(i) {
 // ---------------- API 设置 ----------------
 // 全局模型状态（顶栏 2.0/2.5 切换；一体生成时长上限随之 15s/30s）
 let serverModelId = '';
+let serverProvider = 'ark';
 function modelIs25() { return /2-5/.test(serverModelId); }
 function syncModelSeg() {
   document.querySelectorAll('#modelSeg button').forEach((b) => {
     b.classList.toggle('active', b.dataset.model === serverModelId);
   });
+  document.querySelectorAll('#providerSeg button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.provider === serverProvider);
+  });
   updateWholeTotal();
+}
+
+/** Artcraft 连接测试：验证 key + 显示 credits 余额 */
+async function artcraftTest(silent) {
+  const el = $('artcraftTestStatus');
+  el.textContent = '测试中…';
+  try {
+    const r = await fetch('/api/artcraft/test');
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok) {
+      el.textContent = `✓ 已连接 Artcraft · 余额 ${Number(j.credits).toLocaleString()} credits`;
+      el.style.color = 'var(--accent2)';
+      return true;
+    }
+    el.textContent = '✗ ' + (j.error || ('连接失败 ' + r.status));
+    el.style.color = '#ff6b81';
+    return false;
+  } catch (e) {
+    if (!silent) { el.textContent = '✗ ' + errMsg(e); el.style.color = '#ff6b81'; }
+    return false;
+  }
 }
 
 async function refreshConfig() {
   const res = await fetch('/api/config');
   const cfg = await res.json();
   serverModelId = cfg.model || '';
+  serverProvider = cfg.preferredProvider || 'ark';
   syncModelSeg();
   $('verChip').textContent = cfg.appVersion ? 'v' + cfg.appVersion : '';
   const chip = $('modeChip');
@@ -3035,7 +3061,8 @@ $('cfgSave').onclick = async () => {
   if ($('cfgKey').value.trim()) body.apiKey = $('cfgKey').value.trim();
   if ($('cfgOpenaiKey').value.trim()) body.openaiKey = $('cfgOpenaiKey').value.trim();
   if ($('cfgAnthropicKey').value.trim()) body.anthropicKey = $('cfgAnthropicKey').value.trim();
-  if ($('cfgArtcraftKey').value.trim()) body.artcraftKey = $('cfgArtcraftKey').value.trim();
+  const savedArtcraftKey = !!$('cfgArtcraftKey').value.trim();
+  if (savedArtcraftKey) body.artcraftKey = $('cfgArtcraftKey').value.trim();
   $('cfgOpenaiKey').value = '';
   $('cfgAnthropicKey').value = '';
   $('cfgArtcraftKey').value = '';
@@ -3047,6 +3074,8 @@ $('cfgSave').onclick = async () => {
   $('cfgStatus').textContent = res.ok ? '已保存' : '保存失败';
   $('cfgKey').value = '';
   refreshConfig();
+  // 刚保存了 Artcraft Key → 立即验证连接并显示余额（key 已安全落盘，输入框清空只是防泄露）
+  if (savedArtcraftKey && res.ok) artcraftTest(false);
 };
 $('cfgClearKey').onclick = async () => {
   await fetch('/api/config', {
@@ -3524,6 +3553,30 @@ document.querySelectorAll('#modelSeg button').forEach((btn) => {
     }
   };
 });
+
+// 顶栏 provider 切换：Artcraft 优先（失败自动回退方舟）/ 纯方舟
+document.querySelectorAll('#providerSeg button').forEach((btn) => {
+  btn.onclick = async () => {
+    const p = btn.dataset.provider;
+    if (p === serverProvider) return;
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preferredProvider: p }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      serverProvider = p;
+      syncModelSeg();
+      showSaveToast(p === 'artcraft'
+        ? '生成通道已切换：Artcraft 优先（44 模型 · 失败自动回退方舟）'
+        : '生成通道已切换：方舟直连');
+    } catch (e) {
+      showSaveToast('通道切换失败: ' + errMsg(e), false);
+    }
+  };
+});
+$('btnArtcraftTest').onclick = () => artcraftTest(false);
 
 syncSliderLabels();
 refreshConfig();

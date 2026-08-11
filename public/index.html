@@ -54,7 +54,10 @@
   <div class="top-actions">
     <span id="userArea" class="user-area" hidden></span>
     <span id="modeChip" class="chip">…</span>
-    <span id="modelSeg" class="lang-seg" role="group" aria-label="Seedance model" title="全局模型切换 — 影响全部工作区的生成">
+    <span id="providerSeg" class="lang-seg" role="group" aria-label="Provider" title="生成通道优先级 — Artcraft 优先时失败自动回退方舟">
+      <button data-provider="artcraft">Artcraft</button><button data-provider="ark">方舟</button>
+    </span>
+    <span id="modelSeg" class="lang-seg" role="group" aria-label="Seedance model" title="全局模型档位（2.0/2.5）— 两个通道都按此档生成">
       <button data-model="doubao-seedance-2-0-260128">2.0</button><button data-model="doubao-seedance-2-5-260628">2.5</button>
     </span>
     <button id="btnLayoutReset" class="btn ghost" title="重置面板布局（折叠 / 顺序 / 栏宽）">🧩</button>
@@ -766,8 +769,12 @@
     <input type="password" id="cfgAnthropicKey" placeholder="sk-ant-...">
   </div>
   <div class="field">
-    <label>Artcraft API Key <span class="hint">app.getartcraft.com → Settings → API Keys · 留空保持不变 · REFERENCES TOOL 可选 Artcraft 通道生成</span></label>
-    <input type="password" id="cfgArtcraftKey" placeholder="artcraft_api_...">
+    <label>Artcraft API Key <span class="hint">app.getartcraft.com → Settings → API Keys · 留空保持不变</span></label>
+    <div class="row" style="gap:8px">
+      <input type="password" id="cfgArtcraftKey" placeholder="artcraft_api_..." style="flex:1">
+      <button id="btnArtcraftTest" class="btn" type="button">测试连接</button>
+    </div>
+    <div class="hint" id="artcraftTestStatus">保存后自动测试连接并显示余额</div>
   </div>
   <div class="field-row">
     <div class="field">
