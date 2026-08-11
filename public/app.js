@@ -697,6 +697,11 @@ function switchMode(mode) {
     $('motionUseV2V').hidden = !state.v2v.sourceUrl || !!state.motion.srcUrl;
     drawMotionChart(); // 隐藏时 canvas 宽度为 0
   }
+  if (mode === 'director' && !state.director.running) {
+    // 自愈：任何历史异常都不能把生成按钮永久锁死
+    $('btnDirectorGen').disabled = false;
+    $('btnDirectorGen').textContent = '🎬 导演生成';
+  }
 }
 
 // ---------------- 关键帧管理 ----------------
@@ -1320,6 +1325,7 @@ function addJob(label, estSec) {
   return job;
 }
 function finishJob(job, ok, error) {
+  if (!job) return; // addJob 失败等极端场景下的空 job 保护
   job.status = ok ? 'succeeded' : 'failed';
   job.error = error || null;
   renderJobs();
@@ -3329,9 +3335,11 @@ async function directorGenerate() {
   ].filter(Boolean).join('\n');
   state.director.running = true;
   $('btnDirectorGen').disabled = true;
+  $('btnDirectorGen').textContent = '⏳ 生成中…';
   setDirStatus('创建任务中…');
-  const job = addJob(`🎬 导演生成 ${duration}s${model ? ' · 2.5' : ''}`, 60 + duration * 25);
+  let job = null;
   try {
+    job = addJob(`🎬 导演生成 ${duration}s${model ? ' · 2.5' : ''}`, 60 + duration * 25);
     const res = await fetch('/api/director', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3368,6 +3376,7 @@ async function directorGenerate() {
   } finally {
     state.director.running = false;
     $('btnDirectorGen').disabled = false;
+    $('btnDirectorGen').textContent = '🎬 导演生成';
   }
 }
 $('btnDirectorGen').onclick = directorGenerate;
