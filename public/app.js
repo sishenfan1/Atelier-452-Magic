@@ -3111,16 +3111,31 @@ for (const id of ['dirActOverall', 'dirActFace', 'dirActBody', 'dirActTempo']) {
 }
 
 // 模型切换：时长上限联动（2.0 → 15s，2.5 → 30s）
+// Artcraft 各模型特性（时长上限 / 是否支持音频）——依据官方 Omni API 文档
+const ARTCRAFT_MODEL_META = {
+  seedance_2p5: { max: 30, audio: true, label: 'Seedance 2.5 · 最长 30 秒' },
+  seedance_2p0: { max: 15, audio: false, label: 'Seedance 2.0 · 4-15 秒' },
+  kling_3p0_pro: { max: 10, audio: true, label: 'Kling 3.0 Pro · 5/10 秒 · 支持音频' },
+  kling_3p0_standard: { max: 10, audio: true, label: 'Kling 3.0 Standard · 5/10 秒 · 支持音频' },
+  veo_3p1: { max: 8, audio: true, label: 'Veo 3.1 · ≤8 秒 · 原生音频' },
+  veo_3p1_fast: { max: 8, audio: true, label: 'Veo 3.1 Fast · ≤8 秒 · 原生音频' },
+  sora_2: { max: 12, audio: true, label: 'Sora 2 · ≤12 秒 · 同步音频' },
+  sora_2_pro: { max: 12, audio: true, label: 'Sora 2 Pro · ≤12 秒 · 同步音频' },
+  minimax_h3: { max: 10, audio: false, label: 'Minimax H3 · ≤10 秒' },
+};
+
 $('dirModel').onchange = () => {
   const val = $('dirModel').value;
   const is25 = /2-5/.test(val);
   const isArtcraft = val.startsWith('artcraft:');
+  const meta = isArtcraft ? ARTCRAFT_MODEL_META[val.slice('artcraft:'.length)] : null;
   const slider = $('dirDuration');
-  slider.max = is25 ? 30 : 15;
+  slider.max = meta ? meta.max : is25 ? 30 : 15;
   if (Number(slider.value) > Number(slider.max)) slider.value = slider.max;
   $('dirDurationVal').textContent = slider.value + ' 秒';
-  $('dirModelHint').textContent = isArtcraft
-    ? 'Artcraft 通道：4-15 秒 · 首尾帧 + 参考图直传 Artcraft（消耗 Artcraft credits）· 参考视频暂不支持此通道'
+  $('dirAudioWrap').hidden = !(meta && meta.audio);
+  $('dirModelHint').textContent = meta
+    ? `Artcraft 通道：${meta.label} · 首尾帧 + 参考图直传（消耗 Artcraft credits）· 参考视频暂不走此通道`
     : is25
       ? '2.5：4-30 秒 · 480P/720P（1080P 自动降档）· 需已在方舟控制台开通该模型'
       : '2.0：4-15 秒 · 使用 ⚙ API 设置里的当前模型与分辨率';
@@ -3256,6 +3271,7 @@ async function directorGenerate() {
         refVideoUrl: state.director.refVideo || null,
         refImages: state.director.refs.map((r) => r.url),
         prompt, duration, model,
+        generateAudio: !$('dirAudioWrap').hidden ? $('dirAudio').checked : undefined,
       }),
     });
     const json = await res.json().catch(() => ({}));

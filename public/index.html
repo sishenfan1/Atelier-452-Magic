@@ -514,14 +514,27 @@
       <div class="row">
         <label class="check">模型
           <select id="dirModel" class="btn" style="margin-left:6px">
-            <option value="">Seedance 2.0（当前配置 · 方舟）</option>
-            <option value="doubao-seedance-2-5-260628">Seedance 2.5（方舟 · 需已开通）</option>
-            <option value="artcraft:seedance_2p0">Artcraft · Seedance 2.0（用 Artcraft 额度）</option>
+            <optgroup label="方舟直连">
+              <option value="">Seedance 2.0（当前配置）</option>
+              <option value="doubao-seedance-2-5-260628">Seedance 2.5（需已开通）</option>
+            </optgroup>
+            <optgroup label="Artcraft（用 Artcraft 额度）">
+              <option value="artcraft:seedance_2p5">⭐ Seedance 2.5</option>
+              <option value="artcraft:seedance_2p0">Seedance 2.0</option>
+              <option value="artcraft:kling_3p0_pro">Kling 3.0 Pro</option>
+              <option value="artcraft:kling_3p0_standard">Kling 3.0 Standard</option>
+              <option value="artcraft:veo_3p1">Veo 3.1</option>
+              <option value="artcraft:veo_3p1_fast">Veo 3.1 Fast</option>
+              <option value="artcraft:sora_2">Sora 2</option>
+              <option value="artcraft:sora_2_pro">Sora 2 Pro</option>
+              <option value="artcraft:minimax_h3">Minimax H3</option>
+            </optgroup>
           </select>
         </label>
         <span class="inline-slider"><span class="lbl">时长</span>
           <input type="range" id="dirDuration" min="4" max="15" step="1" value="5">
           <b id="dirDurationVal">5 秒</b></span>
+        <label class="check" id="dirAudioWrap" hidden><input type="checkbox" id="dirAudio"> 生成音频</label>
         <button id="btnDirectorGen" class="btn primary">🎬 导演生成</button>
       </div>
       <div class="hint" id="dirModelHint">2.5：4-30 秒 · 480P/720P（1080P 自动降档）· 方舟 API 尚未开放调用，开放后此处即插即用</div>

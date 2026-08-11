@@ -561,20 +561,31 @@ async function artcraftUploadImage(cfg, localUrl) {
   return j.media_file_token;
 }
 
-/** Seedance 2.0 multi-function：文/图/参考图驱动生成 → inference_job_token */
-async function artcraftCreateSeedance2(cfg, opts) {
-  const { prompt, startToken, endToken, refTokens, duration } = opts;
+/** Omni API 统一视频生成（官方 API 文档 storyteller-docs.netlify.app）：
+ *  一个端点驱动全部 44 个模型（seedance_2p5 / kling_3p0 / veo_3p1 / sora_2 …） */
+function artcraftOmniAspectOf(cfg) {
+  const r = String(cfg.ratio || '');
+  if (/9:16|portrait/i.test(r)) return 'tall_nine_by_sixteen';
+  if (/1:1|square/i.test(r)) return 'square';
+  if (/4:3/.test(r)) return 'wide_four_by_three';
+  if (/adaptive|auto/i.test(r)) return 'auto';
+  return 'wide_sixteen_by_nine';
+}
+async function artcraftOmniGenerate(cfg, opts) {
+  const { model, prompt, startToken, endToken, refTokens, duration, generateAudio } = opts;
   const body = {
-    uuid_idempotency_token: newId() + '-' + Date.now().toString(36),
-    prompt: sanitizeForArk(String(prompt || '')) || undefined,
-    start_frame_media_token: startToken || undefined,
-    end_frame_media_token: endToken || undefined,
+    idempotency_token: newId() + '-' + Date.now().toString(36),
+    model,
+    prompt: String(prompt || '') || undefined,
+    start_frame_image_media_token: startToken || undefined,
+    end_frame_image_media_token: endToken || undefined,
     reference_image_media_tokens: refTokens && refTokens.length ? refTokens : undefined,
-    aspect_ratio: artcraftAspectOf(cfg),
-    output_resolution: artcraftResolutionOf(cfg),
-    duration_seconds: clampDuration(duration),
+    aspect_ratio: artcraftOmniAspectOf(cfg),
+    resolution: artcraftResolutionOf(cfg),
+    duration_seconds: Math.max(1, Math.round(Number(duration) || 5)),
+    generate_audio: typeof generateAudio === 'boolean' ? generateAudio : undefined,
   };
-  const r = await fetch(ARTCRAFT_API + '/v1/generate/video/multi_function/seedance_2p0', {
+  const r = await fetch(ARTCRAFT_API + '/v1/omni_api/generate/video', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.artcraftKey },
     body: JSON.stringify(body),
@@ -586,26 +597,30 @@ async function artcraftCreateSeedance2(cfg, opts) {
   return j.inference_job_token;
 }
 
-/** 轮询会话任务列表找到本任务；成功即下载 cdn 视频到本地 */
+/** Omni API 单任务状态查询；成功即下载 cdn 视频到本地 */
 async function artcraftPoll(cfg, task, localId) {
   if (task.remoteUrl) return arkDownload(task, task.remoteUrl, localId);
-  const r = await fetch(ARTCRAFT_API + '/v1/jobs/session', {
+  const r = await fetch(ARTCRAFT_API + '/v1/omni_api/job_status/job/' + encodeURIComponent(task.acJobToken), {
     headers: { Authorization: 'Bearer ' + cfg.artcraftKey },
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`Artcraft 任务查询失败 (${r.status}): ` + JSON.stringify(j).slice(0, 200));
-  const job = (j.jobs || []).find((x) => x && x.job_token === task.acJobToken);
-  if (!job) throw new Error('Artcraft 会话中未找到该任务（可能已过期）');
-  const raw = JSON.stringify(job);
-  if (/complete_success/.test(raw)) {
-    const cdn = raw.match(/"cdn_url"\s*:\s*"([^"]+)"/);
+  const st = j.state || {};
+  const status = st.status && st.status.status;
+  if (status === 'complete_success') {
+    const cdn = st.maybe_result && st.maybe_result.media_links && st.maybe_result.media_links.cdn_url;
     if (!cdn) throw new Error('任务成功但未返回 cdn_url');
-    task.remoteUrl = cdn[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/');
-    await arkDownload(task, task.remoteUrl, localId);
-  } else if (/failure|dead|cancel/i.test(raw)) {
+    task.remoteUrl = cdn;
+    await arkDownload(task, cdn, localId);
+  } else if (status === 'complete_failure' || status === 'dead' || String(status).startsWith('cancelled')) {
     task.status = 'failed';
-    task.error = 'Artcraft 生成失败: ' + raw.slice(0, 260);
-  } // pending / started → 保持 running
+    const cat = st.status && st.status.maybe_failure_category;
+    task.error = 'Artcraft 生成失败: ' + (cat || status);
+  } else {
+    // pending / started / attempt_failed（会自动重试）→ 保持 running，带进度
+    const pct = st.status && st.status.progress_percentage;
+    if (Number.isFinite(pct)) task.warning = `Artcraft 生成中 ${pct}%`;
+  }
 }
 
 // ---------- 导演生成：首尾帧 + 参考视频 + 参考图混合单次生成（Seedance 2.0 / 2.5） ----------
@@ -1652,8 +1667,10 @@ app.post('/api/director', async (req, res) => {
       for (const u of (Array.isArray(refImages) ? refImages : []).slice(0, 10)) {
         refTokens.push(await artcraftUploadImage(cfg, u));
       }
-      const acJobToken = await artcraftCreateSeedance2(cfg, {
+      const acJobToken = await artcraftOmniGenerate(cfg, {
+        model: String(model).slice('artcraft:'.length),
         prompt, startToken, endToken, refTokens, duration,
+        generateAudio: req.body && typeof req.body.generateAudio === 'boolean' ? req.body.generateAudio : undefined,
       });
       tasks[id] = { mode: 'artcraft', status: 'running', acJobToken, cost: bill && bill.cost, uid: bill && bill.uid };
     } catch (e) {
