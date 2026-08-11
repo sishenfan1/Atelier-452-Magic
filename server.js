@@ -1087,6 +1087,20 @@ app.get('/api/fs/diag', (req, res) => {
   res.json({ ffmpegPath: FFMPEG, spawnStatus, spawnError, thumbActive, queued: thumbWaiters.length });
 });
 
+// 原始媒体文件直读（原生对话框选中的路径 → 前端取回 blob 喂给现有上传管线）
+app.get('/api/fs/file', (req, res) => {
+  try {
+    const file = String(req.query.path || '');
+    const kind = mediaKindOf(file);
+    if (!path.isAbsolute(file) || !kind || !fs.existsSync(file)) return res.status(404).end();
+    const ext = path.extname(file).slice(1).toLowerCase();
+    res.setHeader('Content-Type', MIME[ext] || `${kind}/${ext}`);
+    fs.createReadStream(file).on('error', () => { try { res.status(404).end(); } catch {} }).pipe(res);
+  } catch {
+    res.status(404).end();
+  }
+});
+
 // 选中的文件导入资产库（服务器直接拷文件，不经过 base64，任意大小都稳）
 app.post('/api/fs/import', (req, res) => {
   try {

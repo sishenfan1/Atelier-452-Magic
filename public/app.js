@@ -4938,3 +4938,44 @@ $('fsNative').onclick = () => {
     input.click();
   }
 };
+
+// ---------------- 桌面版全局兜底：所有 <input type=file> 一律走主进程原生对话框 ----------------
+// 渲染进程弹的文件对话框（Chromium 沙箱工具进程）在 Windows 上不渲染缩略图；
+// 主进程 dialog.showOpenDialog 正常。这里在捕获阶段拦下每一个 file input 的点击，
+// 换成原生对话框选路径 → /api/fs/file 取回 blob → 塞回同一个 input 并派发 change，
+// 所有既有上传逻辑零改动照常工作。纯浏览器环境（无 a452Native）完全不受影响。
+function kindOfAccept(accept) {
+  const a = String(accept || '');
+  if (a.includes('video')) return 'video';
+  if (a.includes('audio')) return 'audio';
+  if (a.includes('image')) return 'image';
+  return null; // 非媒体类 input（如 .txt/.json）不接管
+}
+
+async function nativePickIntoInput(input) {
+  const kind = kindOfAccept(input.accept);
+  const paths = await window.a452Native.pickFiles({ kind: kind || 'media', multi: input.multiple });
+  if (!paths || !paths.length) return;
+  const dt = new DataTransfer();
+  for (const p of paths) {
+    try {
+      const r = await fetch('/api/fs/file?path=' + encodeURIComponent(p));
+      if (!r.ok) continue;
+      const blob = await r.blob();
+      const name = p.split(/[\\/]/).pop() || 'file';
+      dt.items.add(new File([blob], name, { type: blob.type || '' }));
+    } catch {}
+  }
+  if (!dt.files.length) return;
+  input.files = dt.files;
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+document.addEventListener('click', (e) => {
+  if (!window.a452Native) return;
+  const input = e.target instanceof HTMLInputElement && e.target.type === 'file' ? e.target : null;
+  if (!input || !kindOfAccept(input.accept)) return; // 只接管媒体类
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  nativePickIntoInput(input);
+}, true);
