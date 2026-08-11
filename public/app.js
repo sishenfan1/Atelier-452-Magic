@@ -4312,13 +4312,34 @@ const fsPk = {
 
 function fsKindIcon(kind) { return kind === 'video' ? '🎞' : kind === 'audio' ? '🎵' : '🖼'; }
 
+function fsRenderKinds() {
+  const bar = $('fsKinds');
+  bar.hidden = !!fsPk.lockKinds;
+  bar.querySelectorAll('button').forEach((b) => b.classList.toggle('on', fsPk.kinds.includes(b.dataset.k)));
+}
+document.querySelectorAll('#fsKinds button').forEach((b) => {
+  b.onclick = () => {
+    const k = b.dataset.k;
+    if (fsPk.kinds.includes(k)) {
+      if (fsPk.kinds.length === 1) return; // 至少保留一类
+      fsPk.kinds = fsPk.kinds.filter((x) => x !== k);
+    } else {
+      fsPk.kinds = fsPk.kinds.concat(k);
+    }
+    fsRenderKinds();
+    if (fsPk.dir) fsLoadDir(fsPk.dir);
+  };
+});
+
 async function openMediaPicker(opts) {
   fsPk.kinds = opts.kinds || ['image'];
+  fsPk.lockKinds = !!opts.lockKinds;
   fsPk.multi = opts.multi !== false;
   fsPk.limit = opts.limit || Infinity;
   fsPk.onDone = opts.onDone;
   fsPk.nativeInput = opts.nativeInput || null;
   fsPk.sel.clear();
+  fsRenderKinds();
   $('fsTitle').textContent = opts.title || '📁 选择媒体';
   $('fsHint').textContent = fsPk.multi
     ? `可多选${Number.isFinite(fsPk.limit) ? `（还可选 ${fsPk.limit} 个）` : ''} · 单击选中 · 双击直接添加`
@@ -4531,21 +4552,32 @@ document.addEventListener('keydown', (e) => {
 // REFERENCES TOOL：参考素材（当前分区的类型 + 剩余额度）
 $('dirRefAdd').onclick = () => {
   const caps = dirRefCaps();
-  const room = caps[dirRefKind] - dirRefsOf(dirRefKind).length;
-  if (room <= 0) { setDirStatus(`${DIR_KIND_META[dirRefKind].name}已满（${caps[dirRefKind]}）`); return; }
+  const rooms = {
+    image: caps.image - dirRefsOf('image').length,
+    video: caps.video - dirRefsOf('video').length,
+    audio: caps.audio - dirRefsOf('audio').length,
+  };
+  const totalRoom = Math.max(0, rooms.image) + Math.max(0, rooms.video) + Math.max(0, rooms.audio);
+  if (totalRoom <= 0) { setDirStatus('参考位已全部用满'); return; }
   openMediaPicker({
-    kinds: [dirRefKind], limit: room, nativeInput: $('dirRefFiles'),
-    title: `📁 添加${DIR_KIND_META[dirRefKind].name}`,
+    kinds: ['image', 'video', 'audio'], // 三类全开，顶部筛选钮可自由切换
+    limit: totalRoom, nativeInput: $('dirRefFiles'),
+    title: '📁 添加参考素材',
     onDone: (items) => {
+      let added = 0, skipped = 0;
       for (const it of items) {
+        const kind = it.kind || 'image';
+        if (rooms[kind] <= 0) { skipped += 1; continue; }
+        rooms[kind] -= 1;
         state.director.refs.push({
           id: nextRefId++, name: it.name, url: it.url,
-          kind: dirRefKind, role: DIR_KIND_META[dirRefKind].defaultRole, note: '',
+          kind, role: DIR_KIND_META[kind].defaultRole, note: '',
         });
+        added += 1;
       }
       renderDirRefs();
       scheduleSave();
-      setDirStatus(items.length ? `已添加 ${items.length} 份${DIR_KIND_META[dirRefKind].name}` : '');
+      setDirStatus(added ? `已添加 ${added} 份参考${skipped ? `（${skipped} 份因该类型已满被跳过）` : ''}` : (skipped ? '对应类型的参考位已满' : ''));
     },
   });
 };
@@ -4553,17 +4585,17 @@ $('dirRefAddNative').onclick = () => $('dirRefFiles').click();
 
 // 首帧 / 尾帧
 $('dirFirstDrop').onclick = () => openMediaPicker({
-  kinds: ['image'], multi: false, nativeInput: $('dirFirstFile'), title: '📁 选择首帧',
+  kinds: ['image'], lockKinds: true, multi: false, nativeInput: $('dirFirstFile'), title: '📁 选择首帧',
   onDone: (items) => { if (items[0]) setDirFrame('first', items[0].url, items[0].name); },
 });
 $('dirLastDrop').onclick = () => openMediaPicker({
-  kinds: ['image'], multi: false, nativeInput: $('dirLastFile'), title: '📁 选择尾帧',
+  kinds: ['image'], lockKinds: true, multi: false, nativeInput: $('dirLastFile'), title: '📁 选择尾帧',
   onDone: (items) => { if (items[0]) setDirFrame('last', items[0].url, items[0].name); },
 });
 
 // 中割关键帧
 $('btnKfBrowse').onclick = () => openMediaPicker({
-  kinds: ['image'], title: '📁 添加关键帧',
+  kinds: ['image'], lockKinds: true, title: '📁 添加关键帧',
   onDone: (items) => {
     for (const it of items) state.images.push({ id: nextImgId++, name: it.name, url: it.url, hold: 2 });
     rebuildSegments();

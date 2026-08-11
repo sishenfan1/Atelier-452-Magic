@@ -938,9 +938,9 @@ const THUMB_DIR = path.join(DATA_DIR, 'thumbcache');
 fs.mkdirSync(THUMB_DIR, { recursive: true });
 
 const MEDIA_EXTS = {
-  image: new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'avif']),
-  video: new Set(['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v', 'mpg', 'mpeg', 'wmv', 'ts']),
-  audio: new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'wma', 'aiff']),
+  image: new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'avif', 'jfif', 'heic', 'heif', 'ico']),
+  video: new Set(['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v', 'mpg', 'mpeg', 'wmv', 'ts', 'm2ts', 'mts', '3gp', 'ogv', 'vob', 'flv', 'f4v', 'asf', 'rm', 'rmvb', 'divx', 'mxf']),
+  audio: new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'wma', 'aiff', 'aif', 'mka', 'weba', 'oga', 'mp2', 'ac3', 'amr', 'caf', 'ape']),
 };
 function mediaKindOf(name) {
   const ext = path.extname(name).slice(1).toLowerCase();

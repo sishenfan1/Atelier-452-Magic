@@ -912,3 +912,16 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .fs-grid { grid-auto-rows: 122px; }
 .fs-cell { height: 122px; }
 .fs-cell .fs-thumb, .fs-cell .fs-fallback { height: 118px; }
+
+/* 选择器类型筛选钮（可多选，至少保留一类） */
+.fs-kinds { display: flex; gap: 4px; margin-left: 10px; }
+.fs-kinds button {
+  padding: 3px 10px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  border: 1px solid rgba(142, 162, 255, .3); background: none; color: inherit; opacity: .55;
+  transition: opacity .1s, background .1s, transform .1s;
+}
+.fs-kinds button:hover { opacity: .85; }
+.fs-kinds button.on {
+  opacity: 1; background: rgba(142, 162, 255, .18);
+  border-color: rgba(142, 162, 255, .55); font-weight: 600;
+}
