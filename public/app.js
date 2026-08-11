@@ -1466,7 +1466,7 @@ async function wholeGenerate() {
       !confirm(`当前 ${state.images.length} 张关键帧，超过 Seedance 官方参考图上限（9 张），API 可能拒绝。仍要尝试提交吗？`)) return;
   // 提交时快照当前设置，允许随后立刻改设置再提交下一个任务并行跑
   const gaps = wholeGaps();
-  const totalDur = Math.max(4, Math.min(15, Math.round(wholeTotalSeconds())));
+  const totalDur = Math.max(4, Math.min(modelIs25() ? 30 : 15, Math.round(wholeTotalSeconds())));
   const frames = state.images.length;
   const note = $('globalPrompt').value.trim();
   const actingLevel = Number($('acting').value);
@@ -2314,7 +2314,7 @@ async function setV2VSource(url, name) {
   // 探测源视频时长，自动带入
   try {
     const v = await loadVideo(url);
-    const d = Math.max(4, Math.min(15, Math.round(v.duration)));
+    const d = Math.max(4, Math.min(modelIs25() ? 30 : 15, Math.round(v.duration)));
     $('v2vDuration').value = d;
     $('v2vDurationVal').textContent = d + ' 秒';
     $('v2vSourceInfo').textContent = `${name} · ${fmt(v.duration, 1)}s · ${v.videoWidth}×${v.videoHeight}`;
@@ -2550,8 +2550,9 @@ function updateWholeTotal() {
   const el = $('wholeTotalVal');
   if (state.images.length < 2) { el.textContent = '—'; layoutMacroTimeline(); return; }
   const t = wholeTotalSeconds();
-  const clamped = Math.max(4, Math.min(15, Math.round(t)));
-  el.textContent = t.toFixed(1) + ' 秒' + (t < 4 || t > 15 ? `（超出范围，将按 ${clamped}s 生成）` : '');
+  const maxD = modelIs25() ? 30 : 15; // 2.5 单次可达 30 秒
+  const clamped = Math.max(4, Math.min(maxD, Math.round(t)));
+  el.textContent = t.toFixed(1) + ' 秒' + (t < 4 || t > maxD ? `（超出范围，将按 ${clamped}s 生成）` : '');
   layoutMacroTimeline();
 }
 
@@ -2626,9 +2627,21 @@ function openDetail(i) {
 }
 
 // ---------------- API 设置 ----------------
+// 全局模型状态（顶栏 2.0/2.5 切换；一体生成时长上限随之 15s/30s）
+let serverModelId = '';
+function modelIs25() { return /2-5/.test(serverModelId); }
+function syncModelSeg() {
+  document.querySelectorAll('#modelSeg button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.model === serverModelId);
+  });
+  updateWholeTotal();
+}
+
 async function refreshConfig() {
   const res = await fetch('/api/config');
   const cfg = await res.json();
+  serverModelId = cfg.model || '';
+  syncModelSeg();
   $('verChip').textContent = cfg.appVersion ? 'v' + cfg.appVersion : '';
   const chip = $('modeChip');
   if (cfg.hasKey) {
@@ -3465,6 +3478,29 @@ function layoutSave(patch) {
     location.reload();
   };
 })();
+
+// 顶栏全局模型切换：一键写入 config（model + v2vModel 同步），全部工作区生效
+document.querySelectorAll('#modelSeg button').forEach((btn) => {
+  btn.onclick = async () => {
+    const id = btn.dataset.model;
+    if (id === serverModelId) return;
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: id, v2vModel: id }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      serverModelId = id;
+      syncModelSeg();
+      showSaveToast(/2-5/.test(id)
+        ? '已切换 Seedance 2.5 — 单次最长 30 秒（需已在方舟控制台开通该模型）'
+        : '已切换 Seedance 2.0');
+    } catch (e) {
+      showSaveToast('模型切换失败: ' + errMsg(e), false);
+    }
+  };
+});
 
 syncSliderLabels();
 refreshConfig();

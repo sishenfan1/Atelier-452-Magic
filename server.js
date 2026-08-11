@@ -459,7 +459,7 @@ async function arkCreate(cfg, firstDataUrl, lastDataUrl, prompt, duration, style
   const body = {
     model: cfg.model,
     content,
-    duration: clampDuration(duration),
+    duration: clampDurationFor(cfg.model, duration),
     resolution: cfg.resolution,
     ratio: cfg.ratio,
     watermark: false,
@@ -600,7 +600,7 @@ async function arkCreateWhole(cfg, imageDataUrls, text, duration) {
   const body = {
     model: cfg.model,
     content,
-    duration: clampDuration(duration),
+    duration: clampDurationFor(cfg.model, duration),
     resolution: cfg.resolution,
     ratio: cfg.ratio,
     watermark: false,
@@ -659,7 +659,7 @@ async function arkCreateV2V(cfg, publicVideoUrl, refDataUrls, text, duration) {
   const body = {
     model: cfg.v2vModel || cfg.model,
     content,
-    duration: clampDuration(duration),
+    duration: clampDurationFor(cfg.v2vModel || cfg.model, duration),
     resolution: cfg.resolution,
     ratio: 'adaptive',
     watermark: false,
