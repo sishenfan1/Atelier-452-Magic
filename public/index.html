@@ -491,8 +491,9 @@
 
   <div class="col-center">
     <section class="panel">
-      <h2>✍ 动作描述 <span class="hint">— 2.5 建议四拍结构：主体→动作→运镜→风格，一条连续动作弧</span></h2>
-      <textarea id="dirPrompt" rows="4" placeholder="例：她从静止起步，先缓慢迈出第一步（00-06s），逐渐加速冲刺（06-14s），镜头横移跟拍（14-24s），最终跃起定格（24-30s）。画面流畅稳定，无抖动无闪烁。"></textarea>
+      <h2>✍ 动作描述 <span class="hint">— 输入 @ 可直接引用参考素材（如 @image1）· 2.5 建议四拍结构：主体→动作→运镜→风格</span></h2>
+      <textarea id="dirPrompt" rows="4" placeholder="例：@image1 里的角色从静止起步，先缓慢迈出第一步（00-06s），逐渐加速冲刺（06-14s），镜头横移跟拍（14-24s），最终跃起定格（24-30s）。输入 @ 弹出参考列表。"></textarea>
+      <div id="dirMentionPreview" class="mention-preview" hidden></div>
     </section>
     <section class="panel">
       <h2>🎭 演技滑杆 <span class="hint">— 角色表演四维 + 场面运动三维，全部注入提示词</span></h2>
@@ -822,6 +823,9 @@
   </div>
   <div id="cfgStatus" class="hint accent"></div>
 </dialog>
+
+<!-- @引用自动补全菜单（提示词里输入 @ 弹出，列出全部参考素材） -->
+<div id="mentionMenu" class="mention-menu" hidden></div>
 
 <!-- 应用内媒体选择器：系统对话框不显示缩略图，这里自带真缩略图浏览 -->
 <div id="fsPicker" class="fs-overlay" hidden>

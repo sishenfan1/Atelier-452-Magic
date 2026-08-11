@@ -999,8 +999,28 @@ app.get('/api/fs/list', (req, res) => {
   }
 });
 
-// 缩略图：图片直接缩放，视频抽第 1 秒的帧；按 路径+mtime+size 缓存，源文件变了缓存自动失效
+// 缩略图：图片直接缩放，视频抽第 1 秒的帧；按 路径+mtime+size 缓存，源文件变了缓存自动失效。
+// 打包环境（Electron）里 ffmpeg 子进程可能不可用/受限 → 图片一律有兜底：直接回传原图，
+// 本机传输零延迟，浏览器自行缩放显示，预览绝不白屏。
+// ffmpeg 并发队列：一次浏览 800 文件的目录会瞬间打出几百个缩略图请求，
+// 无限并发 spawn 会把服务端打进坏状态（实测），所以同一时刻最多跑 3 个。
+let thumbActive = 0;
+const thumbWaiters = [];
+async function thumbSlot() {
+  if (thumbActive >= 3) await new Promise((r) => thumbWaiters.push(r));
+  thumbActive += 1;
+}
+function thumbRelease() {
+  thumbActive -= 1;
+  const next = thumbWaiters.shift();
+  if (next) next();
+}
+
+const THUMB_ORIGINAL_MAX = 40 * 1024 * 1024; // 兜底直传原图的大小上限
+let ffmpegBroken = false; // 熔断：spawn 层面失败（ENOENT/EACCES 等）后不再反复尝试
+
 app.get('/api/fs/thumb', async (req, res) => {
+  let held = false;
   try {
     const file = String(req.query.path || '');
     const kind = mediaKindOf(file);
@@ -1008,8 +1028,22 @@ app.get('/api/fs/thumb', async (req, res) => {
     const st = fs.statSync(file);
     const key = crypto.createHash('sha1').update(file + '|' + st.mtimeMs + '|' + st.size).digest('hex');
     const cached = path.join(THUMB_DIR, key + '.jpg');
+    const sendOriginalImage = () => {
+      // 图片兜底：原图直传（跳过 ffmpeg），Content-Type 按扩展名
+      const ext = path.extname(file).slice(1).toLowerCase();
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      res.setHeader('Content-Type', MIME[ext] || 'image/' + ext);
+      fs.createReadStream(file).on('error', () => res.status(404).end()).pipe(res);
+    };
     if (!fs.existsSync(cached)) {
-      if (!FFMPEG) return res.status(404).end();
+      if (kind === 'image' && (!FFMPEG || ffmpegBroken || st.size <= 300 * 1024)) {
+        // 小图或 ffmpeg 不可用：直接原图，反而更快
+        if (st.size <= THUMB_ORIGINAL_MAX) return sendOriginalImage();
+        return res.status(404).end();
+      }
+      if (!FFMPEG || ffmpegBroken) return res.status(404).end();
+      await thumbSlot();
+      held = true;
       const scale = "scale='min(360,iw)':-2";
       const args = kind === 'video'
         ? ['-y', '-ss', '1', '-i', file, '-frames:v', '1', '-vf', scale, '-q:v', '5', cached]
@@ -1018,15 +1052,39 @@ app.get('/api/fs/thumb', async (req, res) => {
         await runFfmpeg(args);
       } catch (e) {
         // 视频不足 1 秒时 -ss 1 会抽不到帧 → 退回首帧
-        if (kind === 'video') await runFfmpeg(['-y', '-i', file, '-frames:v', '1', '-vf', scale, '-q:v', '5', cached]);
-        else throw e;
+        try {
+          if (kind === 'video') await runFfmpeg(['-y', '-i', file, '-frames:v', '1', '-vf', scale, '-q:v', '5', cached]);
+          else throw e;
+        } catch (e2) {
+          thumbRelease();
+          held = false;
+          // spawn 层面失败（不是转码失败）→ 熔断，后续请求不再尝试 ffmpeg
+          if (/ENOENT|EACCES|EPERM|spawn/i.test(String(e2 && e2.message || e2))) ffmpegBroken = true;
+          // ffmpeg 挂了：图片仍然给原图，视频只能交给前端图标兜底
+          if (kind === 'image' && st.size <= THUMB_ORIGINAL_MAX) return sendOriginalImage();
+          return res.status(404).end();
+        }
       }
+      thumbRelease();
+      held = false;
     }
     res.setHeader('Cache-Control', 'private, max-age=86400');
     res.sendFile(cached);
   } catch {
+    if (held) thumbRelease();
     res.status(404).end();
   }
+});
+
+// 诊断：打包环境里 ffmpeg 到底能不能 spawn（排查缩略图问题用）
+app.get('/api/fs/diag', (req, res) => {
+  let spawnStatus = null, spawnError = null;
+  try {
+    const probe = spawnSync(FFMPEG || 'ffmpeg', ['-version'], { timeout: 5000 });
+    spawnStatus = probe.status;
+    spawnError = probe.error ? String(probe.error.message || probe.error) : null;
+  } catch (e) { spawnError = String(e && e.message || e); }
+  res.json({ ffmpegPath: FFMPEG, spawnStatus, spawnError, thumbActive, queued: thumbWaiters.length });
 });
 
 // 选中的文件导入资产库（服务器直接拷文件，不经过 base64，任意大小都稳）

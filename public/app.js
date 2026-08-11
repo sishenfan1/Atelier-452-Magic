@@ -3295,8 +3295,11 @@ function renderDirRefs() {
     };
     row.querySelector('.dir-ref-role').onchange = (e) => { r.role = e.target.value; scheduleSave(); };
     row.querySelector('.dir-ref-note').onchange = (e) => { r.note = e.target.value; scheduleSave(); };
+    if (typeof attachMentionAutocomplete === 'function') attachMentionAutocomplete(row.querySelector('.dir-ref-note'));
     list.appendChild(row);
   });
+  // 参考增删/换模型会改变编号 → 提示词里的 @chip 预览同步刷新
+  if (typeof renderMentionPreview === 'function') renderMentionPreview();
 }
 
 document.querySelectorAll('#dirRefTabs button').forEach((b) => {
@@ -3336,6 +3339,12 @@ async function directorGenerate() {
     setDirStatus('至少需要一份参考素材（图/视频/音频）或首帧');
     return;
   }
+  // @引用解析：@image1 → 「参考图1」；找不到的编号直接拦下，避免模型收到悬空引用
+  const mainResolved = resolveMentions($('dirPrompt').value.trim());
+  if (mainResolved.unknown.length) {
+    setDirStatus('⚠ 找不到引用 ' + Array.from(new Set(mainResolved.unknown)).join('、') + ' — 参考区没有这个编号的素材');
+    return;
+  }
   const model = $('dirModel').value || undefined;
   const duration = Number($('dirDuration').value);
   const acting = directorActingText();
@@ -3346,12 +3355,12 @@ async function directorGenerate() {
     kindCounters[kind] += 1;
     const roleDef = DIR_REF_ROLES[r.role || DIR_KIND_META[kind].defaultRole];
     const roleText = roleDef ? `${roleDef[0]}——${roleDef[1]}` : '';
-    const note = (r.note || '').trim();
+    const note = resolveMentions((r.note || '').trim()).text; // 说明里也可 @引用其它素材
     if (!roleText && !note) return null;
     return `${DIR_KIND_META[kind].name}${kindCounters[kind]}（${roleText}）${note ? '：' + note : ''}`;
   }).filter(Boolean);
   const prompt = [
-    $('dirPrompt').value.trim(),
+    mainResolved.text,
     refNotes.length ? '参考素材使用说明：\n' + refNotes.join('\n') : '',
     acting,
   ].filter(Boolean).join('\n');
@@ -4314,7 +4323,7 @@ async function openMediaPicker(opts) {
   $('fsHint').textContent = fsPk.multi
     ? `可多选${Number.isFinite(fsPk.limit) ? `（还可选 ${fsPk.limit} 个）` : ''} · 单击选中 · 双击直接添加`
     : '单击选中 · 双击直接添加';
-  $('fsNative').hidden = !fsPk.nativeInput;
+  $('fsNative').hidden = !fsPk.nativeInput && !window.a452Native;
   $('fsPicker').hidden = false;
   fsUpdateFoot();
   if (!fsPk.roots.length) {
@@ -4426,11 +4435,14 @@ async function fsLoadDir(dir) {
       fb.textContent = '🎵';
       cell.appendChild(fb);
     } else {
+      cell.classList.add('fs-loading'); // 占位闪烁：缩略图到达前绝不白屏
       const img = document.createElement('img');
       img.className = 'fs-thumb';
       img.loading = 'lazy';
       img.src = '/api/fs/thumb?path=' + encodeURIComponent(f.path) + '&mt=' + f.mtime;
+      img.onload = () => cell.classList.remove('fs-loading');
       img.onerror = () => {
+        cell.classList.remove('fs-loading');
         const fb = document.createElement('div');
         fb.className = 'fs-fallback';
         fb.textContent = fsKindIcon(f.kind);
@@ -4682,5 +4694,247 @@ $('btnDirGrabFrame').onclick = async () => {
     setDirStatus(`已把 ${t}s 的画面存为参考图 ✓`);
   } catch (err) {
     setDirStatus('截帧失败: ' + errMsg(err));
+  }
+};
+
+// ---------------- @引用系统：提示词直接引用参考素材 ----------------
+// @image1 / @img1 / @图1 → 第 1 张参考图；@video1/@视频1、@audio1/@音频1 同理。
+// 输入 @ 弹出参考列表下拉；粘贴进来的 @token 一样实时解析；
+// 生成时统一替换为「参考图N」——与后台"参考素材使用说明"指令块的编号完全一致。
+const MENTION_ALIAS = {
+  image: 'image', img: 'image', 图: 'image', 圖: 'image',
+  video: 'video', vid: 'video', 视频: 'video',
+  audio: 'audio', aud: 'audio', 音频: 'audio',
+};
+const MENTION_RE = /@(image|img|图|圖|video|vid|视频|audio|aud|音频)(\d+)/gi;
+const MENTION_KIND_ZH = { image: '参考图', video: '参考视频', audio: '参考音频' };
+
+/** 当前全部参考 → mention 候选（token 按各类型内的顺序编号） */
+function dirMentionTokens() {
+  const counters = { image: 0, video: 0, audio: 0 };
+  return state.director.refs.map((r) => {
+    const kind = r.kind || 'image';
+    counters[kind] += 1;
+    return {
+      token: kind + counters[kind],           // image1 / video2 / audio1
+      zhLabel: MENTION_KIND_ZH[kind] + counters[kind],
+      kind, n: counters[kind], name: r.name || '', url: r.url,
+      role: DIR_REF_ROLES[r.role || DIR_KIND_META[kind].defaultRole],
+    };
+  });
+}
+
+/** 文本中的 @token → 「参考图N」；返回 {text, unknown[]} */
+function resolveMentions(text) {
+  const counters = { image: 0, video: 0, audio: 0 };
+  for (const r of state.director.refs) counters[(r.kind || 'image')] += 1;
+  const unknown = [];
+  const out = String(text || '').replace(MENTION_RE, (m, alias, num) => {
+    const kind = MENTION_ALIAS[alias.toLowerCase()] || MENTION_ALIAS[alias];
+    const n = Number(num);
+    if (!kind || n < 1 || n > counters[kind]) { unknown.push(m); return m; }
+    return '「' + MENTION_KIND_ZH[kind] + n + '」';
+  });
+  return { text: out, unknown };
+}
+
+// ---- 实时解析预览（chip 条：绿=已解析到素材，红=找不到） ----
+function renderMentionPreview() {
+  const box = $('dirMentionPreview');
+  if (!box) return;
+  const text = $('dirPrompt').value;
+  const tokens = dirMentionTokens();
+  const byToken = new Map(tokens.map((t) => [t.token, t]));
+  const seen = new Set();
+  const chips = [];
+  let m;
+  MENTION_RE.lastIndex = 0;
+  while ((m = MENTION_RE.exec(text))) {
+    const kind = MENTION_ALIAS[m[1].toLowerCase()] || MENTION_ALIAS[m[1]];
+    const key = kind ? kind + Number(m[2]) : m[0];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    chips.push({ raw: m[0], hit: byToken.get(key) || null });
+  }
+  box.innerHTML = '';
+  box.hidden = !chips.length;
+  for (const c of chips) {
+    const chip = document.createElement('span');
+    chip.className = 'mention-chip' + (c.hit ? '' : ' bad');
+    if (c.hit && c.hit.kind === 'image') {
+      const img = document.createElement('img');
+      img.src = c.hit.url;
+      chip.appendChild(img);
+    } else {
+      const ic = document.createElement('span');
+      ic.className = 'mc-icon';
+      ic.textContent = c.hit ? DIR_KIND_META[c.hit.kind].icon : '⚠';
+      chip.appendChild(ic);
+    }
+    const label = document.createElement('span');
+    label.textContent = c.hit
+      ? `@${c.hit.token} → ${c.hit.zhLabel}${c.hit.name ? ' · ' + c.hit.name.slice(0, 14) : ''}`
+      : `${c.raw} 找不到对应参考`;
+    chip.appendChild(label);
+    chip.title = c.hit ? `${c.hit.zhLabel}（${c.hit.role ? c.hit.role[0] : ''}）${c.hit.name}` : '参考区里没有这个编号的素材';
+    box.appendChild(chip);
+  }
+}
+
+// ---- @ 自动补全下拉 ----
+const mentionAc = { ta: null, items: [], active: 0, start: -1 };
+
+function mentionMenuHide() {
+  $('mentionMenu').hidden = true;
+  mentionAc.ta = null;
+  mentionAc.items = [];
+}
+
+function mentionMenuShow(ta) {
+  const caret = ta.selectionStart;
+  const before = ta.value.slice(0, caret);
+  const m = /@([A-Za-z0-9一-龥_.-]*)$/.exec(before);
+  if (!m) { mentionMenuHide(); return; }
+  const q = m[1].toLowerCase();
+  const items = dirMentionTokens().filter((t) =>
+    !q || t.token.startsWith(q) || t.zhLabel.includes(q) || (t.name || '').toLowerCase().includes(q));
+  const menu = $('mentionMenu');
+  menu.innerHTML = '';
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'm-empty';
+    empty.textContent = state.director.refs.length ? '没有匹配的参考' : '参考区还没有素材 — 先在左侧添加';
+    menu.appendChild(empty);
+  }
+  items.forEach((t, i) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'm-item' + (i === mentionAc.active ? ' active' : '');
+    if (t.kind === 'image') {
+      const img = document.createElement('img');
+      img.className = 'm-thumb';
+      img.src = t.url;
+      btn.appendChild(img);
+    } else {
+      const ic = document.createElement('span');
+      ic.className = 'm-icon';
+      ic.textContent = DIR_KIND_META[t.kind].icon;
+      btn.appendChild(ic);
+    }
+    const tok = document.createElement('span');
+    tok.className = 'm-token';
+    tok.textContent = '@' + t.token;
+    const name = document.createElement('span');
+    name.className = 'm-name';
+    name.textContent = (t.role ? t.role[0] + ' · ' : '') + (t.name || t.zhLabel);
+    btn.appendChild(tok);
+    btn.appendChild(name);
+    btn.onmousedown = (e) => { e.preventDefault(); mentionPick(t); };
+    menu.appendChild(btn);
+  });
+  mentionAc.ta = ta;
+  mentionAc.items = items;
+  mentionAc.start = caret - m[1].length - 1;
+  const r = ta.getBoundingClientRect();
+  menu.style.left = Math.min(r.left, window.innerWidth - 380) + 'px';
+  menu.style.top = Math.min(r.bottom + 4, window.innerHeight - 270) + 'px';
+  menu.hidden = false;
+}
+
+function mentionPick(t) {
+  const ta = mentionAc.ta;
+  if (!ta) return;
+  const caret = ta.selectionStart;
+  ta.value = ta.value.slice(0, mentionAc.start) + '@' + t.token + ' ' + ta.value.slice(caret);
+  const pos = mentionAc.start + t.token.length + 2;
+  ta.setSelectionRange(pos, pos);
+  mentionMenuHide();
+  ta.focus();
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** 给一个 textarea 挂上 @ 自动补全（提示词框 + 每条参考的说明框通用） */
+function attachMentionAutocomplete(ta) {
+  if (!ta || ta.dataset.mentionAc) return;
+  ta.dataset.mentionAc = '1';
+  ta.addEventListener('input', () => {
+    mentionAc.active = 0;
+    mentionMenuShow(ta);
+  });
+  ta.addEventListener('keydown', (e) => {
+    if ($('mentionMenu').hidden || mentionAc.ta !== ta) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const n = mentionAc.items.length;
+      if (!n) return;
+      mentionAc.active = (mentionAc.active + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+      mentionMenuShow(ta);
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      if (mentionAc.items.length) { e.preventDefault(); mentionPick(mentionAc.items[mentionAc.active]); }
+    } else if (e.key === 'Escape') {
+      mentionMenuHide();
+    }
+  });
+  ta.addEventListener('blur', () => setTimeout(() => { if (mentionAc.ta === ta) mentionMenuHide(); }, 150));
+}
+
+attachMentionAutocomplete($('dirPrompt'));
+$('dirPrompt').addEventListener('input', renderMentionPreview);
+
+// ---------------- Electron 原生对话框通道 ----------------
+// 桌面版（window.a452Native 存在）走主进程 dialog.showOpenDialog——有真缩略图；
+// 纯浏览器环境自动回退到 <input type=file>。选中的路径走 /api/fs/import 服务器直拷。
+async function nativePickAndImport(kind, multi, fallbackInput, onItems) {
+  if (!window.a452Native) {
+    if (fallbackInput) fallbackInput.click();
+    return;
+  }
+  try {
+    const paths = await window.a452Native.pickFiles({ kind, multi });
+    if (!paths || !paths.length) return;
+    const res = await fetch('/api/fs/import', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || ('导入失败 ' + res.status));
+    onItems(json.items || []);
+  } catch (e) {
+    setDirStatus('导入失败: ' + errMsg(e));
+    if (fallbackInput) fallbackInput.click();
+  }
+}
+
+// 参考区「📂 系统对话框」按钮：桌面版直接用原生对话框（带缩略图）
+$('dirRefAddNative').onclick = () => {
+  const caps = dirRefCaps();
+  const room = caps[dirRefKind] - dirRefsOf(dirRefKind).length;
+  if (room <= 0) { setDirStatus(`${DIR_KIND_META[dirRefKind].name}已满（${caps[dirRefKind]}）`); return; }
+  nativePickAndImport(dirRefKind, true, $('dirRefFiles'), (items) => {
+    for (const it of items.slice(0, room)) {
+      state.director.refs.push({
+        id: nextRefId++, name: it.name, url: it.url,
+        kind: dirRefKind, role: DIR_KIND_META[dirRefKind].defaultRole, note: '',
+      });
+    }
+    renderDirRefs();
+    scheduleSave();
+    setDirStatus(items.length ? `已添加 ${Math.min(items.length, room)} 份${DIR_KIND_META[dirRefKind].name}` : '');
+  });
+};
+
+// 应用内选择器右下角「系统对话框」按钮：桌面版同样换成原生对话框
+$('fsNative').onclick = () => {
+  const kinds = fsPk.kinds.slice();
+  const multi = fsPk.multi;
+  const onDone = fsPk.onDone;
+  const input = fsPk.nativeInput;
+  closeMediaPicker();
+  if (window.a452Native) {
+    nativePickAndImport(kinds.length === 1 ? kinds[0] : 'media', multi, input, (items) => {
+      if (onDone) onDone(items);
+    });
+  } else if (input) {
+    input.click();
   }
 };

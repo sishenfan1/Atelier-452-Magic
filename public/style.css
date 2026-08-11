@@ -818,10 +818,10 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .fs-cell:hover { transform: scale(1.35); z-index: 5; box-shadow: 0 10px 30px rgba(0, 0, 0, .55); }
 .fs-cell.sel { border-color: var(--accent, #8ea2ff); box-shadow: 0 0 0 2px rgba(142, 162, 255, .35); }
 .fs-cell .fs-thumb {
-  width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: #10142a;
+  width: 100%; height: 122px; object-fit: cover; display: block; background: #10142a;
 }
 .fs-cell .fs-fallback {
-  width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 122px; display: flex; align-items: center; justify-content: center;
   font-size: 34px; background: #10142a;
 }
 .fs-cell .fs-name {
@@ -860,3 +860,55 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 
 /* 拖拽文件悬停提示 */
 .file-drop-hot { outline: 2px dashed var(--accent, #8ea2ff); outline-offset: -4px; border-radius: 12px; }
+
+/* ---------------- @引用系统 ---------------- */
+.mention-menu {
+  position: fixed; z-index: 400; min-width: 260px; max-width: 360px; max-height: 260px;
+  overflow-y: auto; padding: 4px;
+  background: var(--panel, #0c1022); border: 1px solid rgba(142, 162, 255, .35);
+  border-radius: 10px; box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+}
+.mention-menu .m-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 5px 8px; border: none; border-radius: 8px; background: none;
+  color: inherit; cursor: pointer; text-align: left; font-size: 12.5px;
+}
+.mention-menu .m-item.active, .mention-menu .m-item:hover { background: rgba(142, 162, 255, .16); }
+.mention-menu .m-thumb {
+  width: 30px; height: 30px; border-radius: 6px; object-fit: cover; flex: none; background: #10142a;
+}
+.mention-menu .m-icon {
+  width: 30px; height: 30px; border-radius: 6px; flex: none; display: flex;
+  align-items: center; justify-content: center; font-size: 16px; background: rgba(142, 162, 255, .12);
+}
+.mention-menu .m-token { font-family: ui-monospace, monospace; color: var(--accent, #8ea2ff); font-weight: 700; flex: none; }
+.mention-menu .m-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .8; }
+.mention-menu .m-empty { padding: 8px 10px; font-size: 12px; opacity: .55; }
+.mention-preview { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.mention-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 3px;
+  border-radius: 999px; font-size: 11.5px; font-weight: 600;
+  background: rgba(142, 162, 255, .13); border: 1px solid rgba(142, 162, 255, .3);
+}
+.mention-chip img { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; }
+.mention-chip .mc-icon { width: 20px; text-align: center; }
+.mention-chip.bad { background: rgba(255, 90, 110, .12); border-color: rgba(255, 90, 110, .45); color: #ff7c8c; }
+
+/* 选择器单元：主题自适应底色 + 加载占位闪烁（缩略图未到之前也看得见格子） */
+.fs-cell { background: color-mix(in srgb, currentColor 7%, transparent); }
+.fs-cell .fs-thumb, .fs-cell .fs-fallback { background: color-mix(in srgb, currentColor 10%, transparent); }
+.fs-cell.fs-loading .fs-thumb { opacity: 0; }
+.fs-cell.fs-loading {
+  background: linear-gradient(100deg,
+    color-mix(in srgb, currentColor 8%, transparent) 40%,
+    color-mix(in srgb, currentColor 16%, transparent) 50%,
+    color-mix(in srgb, currentColor 8%, transparent) 60%);
+  background-size: 200% 100%;
+  animation: fsShimmer 1.1s linear infinite;
+}
+@keyframes fsShimmer { from { background-position: 120% 0; } to { background-position: -80% 0; } }
+
+/* 布局定案：格子固定高度（名字条悬浮在底部），杜绝任何行高塌陷 */
+.fs-grid { grid-auto-rows: 122px; }
+.fs-cell { height: 122px; }
+.fs-cell .fs-thumb, .fs-cell .fs-fallback { height: 118px; }
