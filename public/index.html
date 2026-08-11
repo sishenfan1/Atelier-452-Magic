@@ -81,6 +81,7 @@
         <span class="drop-title">添加关键帧</span>
         <span class="drop-sub">图片顺序就是镜头顺序</span>
       </label>
+      <button id="btnKfBrowse" class="btn wide" type="button">📁 浏览磁盘（带缩略图）</button>
       <ul id="imageList" class="image-list"></ul>
     </section>
 
@@ -460,7 +461,11 @@
         <button data-kind="audio">🎵 音频 <b id="dirCntAudio">0/3</b></button>
       </div>
       <div id="dirRefList" class="image-list-mini"></div>
-      <button id="dirRefAdd" class="btn wide primary">＋ 添加参考</button>
+      <div class="row">
+        <button id="dirRefAdd" class="btn wide primary" style="flex:1">＋ 添加参考</button>
+        <button id="dirRefAddNative" class="btn ghost" title="使用系统文件对话框（无缩略图）">📂</button>
+      </div>
+      <div class="hint">可直接从文件夹拖文件到此面板（图/视频/音频自动分类）</div>
       <input type="file" id="dirRefFiles" accept="image/*" multiple hidden>
     </section>
     <section class="panel">
@@ -490,7 +495,7 @@
       <textarea id="dirPrompt" rows="4" placeholder="例：她从静止起步，先缓慢迈出第一步（00-06s），逐渐加速冲刺（06-14s），镜头横移跟拍（14-24s），最终跃起定格（24-30s）。画面流畅稳定，无抖动无闪烁。"></textarea>
     </section>
     <section class="panel">
-      <h2>🎭 演技滑杆 <span class="hint">— 表演的四个维度，全部注入提示词</span></h2>
+      <h2>🎭 演技滑杆 <span class="hint">— 角色表演四维 + 场面运动三维，全部注入提示词</span></h2>
       <div class="dir-sliders">
         <label class="dir-slider"><span class="lbl">表演强度</span>
           <input type="range" id="dirActOverall" min="0" max="100" step="1" value="0">
@@ -504,6 +509,15 @@
         <label class="dir-slider"><span class="lbl">节奏张力</span>
           <input type="range" id="dirActTempo" min="0" max="100" step="1" value="0">
           <b id="dirActTempoVal">关</b></label>
+        <label class="dir-slider"><span class="lbl">动作速度</span>
+          <input type="range" id="dirActVelocity" min="0" max="100" step="1" value="0" title="非角色限定：画面里一切动作的整体速度">
+          <b id="dirActVelocityVal">关</b></label>
+        <label class="dir-slider"><span class="lbl">物件/环境/特效</span>
+          <input type="range" id="dirActFx" min="0" max="100" step="1" value="0" title="道具、环境元素与特效的强度和运动速度">
+          <b id="dirActFxVal">关</b></label>
+        <label class="dir-slider"><span class="lbl">物理速度</span>
+          <input type="range" id="dirActPhysics" min="0" max="100" step="1" value="0" title="重力、惯性、碰撞等物理模拟的整体速度感">
+          <b id="dirActPhysicsVal">关</b></label>
       </div>
       <div class="hint" id="dirActPreview"></div>
     </section>
@@ -541,6 +555,7 @@
           </select>
         </label>
         <button id="btnDirectorGen" class="btn primary">🎬 导演生成</button>
+        <span id="dirRunCount" class="run-pill" hidden></span>
       </div>
       <div class="hint" id="dirModelHint">2.5：4-30 秒 · 480P/720P（1080P 自动降档）· 方舟 API 尚未开放调用，开放后此处即插即用</div>
       <span id="dirStatus" class="hint accent"></span>
@@ -548,6 +563,10 @@
     <section class="panel">
       <h2>🎥 生成结果</h2>
       <video id="dirResult" class="v2v-result" controls loop hidden></video>
+      <div class="row" id="dirFrameGrabRow" hidden style="margin-top:6px">
+        <button id="btnDirGrabFrame" class="btn" title="把播放器当前暂停的画面存为一张参考图">📸 当前帧 → 参考图</button>
+        <span class="hint">暂停到想要的画面再点</span>
+      </div>
       <div id="dirResultEmpty" class="empty-note">还没有结果 — 添加参考图（写好每张图的说明）后点「🎬 导演生成」</div>
       <div id="dirHistory" class="history-list" style="margin-top:10px"></div>
     </section>
@@ -803,6 +822,30 @@
   </div>
   <div id="cfgStatus" class="hint accent"></div>
 </dialog>
+
+<!-- 应用内媒体选择器：系统对话框不显示缩略图，这里自带真缩略图浏览 -->
+<div id="fsPicker" class="fs-overlay" hidden>
+  <div class="fs-dialog">
+    <div class="fs-head">
+      <b id="fsTitle">📁 选择媒体</b>
+      <span class="hint" id="fsHint"></span>
+      <button id="fsClose" class="btn ghost" title="关闭">✕</button>
+    </div>
+    <div class="fs-body">
+      <aside class="fs-side" id="fsSide"></aside>
+      <div class="fs-main">
+        <div class="fs-crumbs" id="fsCrumbs"></div>
+        <div class="fs-grid" id="fsGrid"></div>
+      </div>
+    </div>
+    <div class="fs-foot">
+      <span class="hint" id="fsSelCount">未选择</span>
+      <span style="flex:1"></span>
+      <button id="fsNative" class="btn ghost">系统对话框</button>
+      <button id="fsConfirm" class="btn primary" disabled>添加所选</button>
+    </div>
+  </div>
+</div>
 
 <script src="i18n.js"></script>
 <script src="saas.js"></script>

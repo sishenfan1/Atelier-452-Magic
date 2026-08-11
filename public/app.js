@@ -697,8 +697,8 @@ function switchMode(mode) {
     $('motionUseV2V').hidden = !state.v2v.sourceUrl || !!state.motion.srcUrl;
     drawMotionChart(); // 隐藏时 canvas 宽度为 0
   }
-  if (mode === 'director' && !state.director.running) {
-    // 自愈：任何历史异常都不能把生成按钮永久锁死
+  if (mode === 'director') {
+    // 自愈：任何历史异常都不能把生成按钮锁死（并发模式下按钮永远可点）
     $('btnDirectorGen').disabled = false;
     $('btnDirectorGen').textContent = '🎬 导演生成';
   }
@@ -3123,17 +3123,30 @@ const adwPromptParam = (() => {
 // ---------------- 工作区 6：导演生成（首尾帧 + 参考视频 + 参考图 · 演技滑杆组） ----------------
 function setDirStatus(t) { $('dirStatus').textContent = t || ''; }
 
-/** 四维演技滑杆 → 中文提示词片段（0 = 关闭该维度） */
+/** 演技滑杆（角色四维 + 场面三维）→ 中文提示词片段（0 = 关闭该维度） */
 function directorActingText() {
   const parts = [];
   const overall = Number($('dirActOverall').value);
   const face = Number($('dirActFace').value);
   const body = Number($('dirActBody').value);
   const tempo = Number($('dirActTempo').value);
+  const velocity = Number($('dirActVelocity').value);
+  const fx = Number($('dirActFx').value);
+  const physics = Number($('dirActPhysics').value);
   if (overall > 0) parts.push(`表演强度${overall}/100，${actingTier(overall).name}`);
   if (face > 0) parts.push(face >= 66 ? '表情大开大合、情绪外放到极致' : face >= 33 ? '表情鲜明、情绪清晰可读' : '微表情细腻克制');
   if (body > 0) parts.push(body >= 66 ? '肢体动作极度夸张、全身戏剧化表演' : body >= 33 ? '肢体语言丰富、动作幅度明显' : '肢体收敛、小幅度动作');
   if (tempo > 0) parts.push(tempo >= 66 ? '节奏急促爆发、动作干脆凌厉' : tempo >= 33 ? '节奏明快有张力' : '节奏沉稳缓慢、留白呼吸');
+  // 场面三维：不限于角色，约束画面中一切运动
+  if (velocity > 0) parts.push(velocity >= 66 ? '全画面动作速度极快，所有运动元素高速掠过、动势凌厉'
+    : velocity >= 33 ? '画面整体动作速度中等偏快，运动明确流畅'
+    : '画面整体动作速度缓慢，所有运动从容克制');
+  if (fx > 0) parts.push(fx >= 66 ? '道具与环境元素剧烈运动，特效浓烈爆裂（烟尘、碎片、光效拉满）、迅猛扫过画面'
+    : fx >= 33 ? '道具与环境有明显互动，特效清晰可见、速度适中'
+    : '道具环境轻微动态，特效克制稀薄、缓缓飘散');
+  if (physics > 0) parts.push(physics >= 66 ? '物理反馈迅猛：重力坠落干脆、惯性冲量强烈、碰撞反弹剧烈'
+    : physics >= 33 ? '物理运动真实自然：重力、惯性、碰撞符合现实速度'
+    : '物理速度放缓：飘浮般的低重力质感、缓慢的惯性延展');
   return parts.join('，');
 }
 function syncDirActing() {
@@ -3142,10 +3155,13 @@ function syncDirActing() {
   $('dirActFaceVal').textContent = label(Number($('dirActFace').value));
   $('dirActBodyVal').textContent = label(Number($('dirActBody').value));
   $('dirActTempoVal').textContent = label(Number($('dirActTempo').value));
+  $('dirActVelocityVal').textContent = label(Number($('dirActVelocity').value));
+  $('dirActFxVal').textContent = label(Number($('dirActFx').value));
+  $('dirActPhysicsVal').textContent = label(Number($('dirActPhysics').value));
   const t = directorActingText();
   $('dirActPreview').textContent = t ? '→ ' + t : '';
 }
-for (const id of ['dirActOverall', 'dirActFace', 'dirActBody', 'dirActTempo']) {
+for (const id of ['dirActOverall', 'dirActFace', 'dirActBody', 'dirActTempo', 'dirActVelocity', 'dirActFx', 'dirActPhysics']) {
   $(id).oninput = syncDirActing;
 }
 
@@ -3307,9 +3323,15 @@ $('dirRefFiles').onchange = async (e) => {
   scheduleSave();
 };
 
-// 生成
+// 生成——支持任意多个任务并发：点一次开一个任务，按钮永不锁定
+let dirRunning = 0;
+function updateDirRunPill() {
+  const pill = $('dirRunCount');
+  if (!pill) return;
+  pill.hidden = dirRunning <= 0;
+  pill.textContent = `⏳ ${dirRunning} 个生成进行中`;
+}
 async function directorGenerate() {
-  if (state.director.running) return;
   if (!state.director.first && !state.director.refs.length) {
     setDirStatus('至少需要一份参考素材（图/视频/音频）或首帧');
     return;
@@ -3333,9 +3355,8 @@ async function directorGenerate() {
     refNotes.length ? '参考素材使用说明：\n' + refNotes.join('\n') : '',
     acting,
   ].filter(Boolean).join('\n');
-  state.director.running = true;
-  $('btnDirectorGen').disabled = true;
-  $('btnDirectorGen').textContent = '⏳ 生成中…';
+  dirRunning += 1;
+  updateDirRunPill();
   setDirStatus('创建任务中…');
   let job = null;
   try {
@@ -3374,9 +3395,9 @@ async function directorGenerate() {
     setDirStatus('失败: ' + errMsg(e).slice(0, 400));
     finishJob(job, false, errMsg(e));
   } finally {
-    state.director.running = false;
-    $('btnDirectorGen').disabled = false;
-    $('btnDirectorGen').textContent = '🎬 导演生成';
+    dirRunning = Math.max(0, dirRunning - 1);
+    updateDirRunPill();
+    $('btnDirectorGen').disabled = false; // 双保险：无论如何按钮都保持可用
   }
 }
 $('btnDirectorGen').onclick = directorGenerate;
@@ -3388,6 +3409,7 @@ function renderDirector() {
   const v = $('dirResult');
   if (cur) { v.src = cur.videoUrl; v.hidden = false; $('dirResultEmpty').hidden = true; }
   else { v.hidden = true; $('dirResultEmpty').hidden = false; }
+  $('dirFrameGrabRow').hidden = !cur;
   const list = $('dirHistory');
   list.innerHTML = '';
   h.forEach((item, i) => {
@@ -4270,3 +4292,395 @@ window.addEventListener('message', (e) => {
 renderDnaDock();
 // 「a452-studio-ready」握手已移至 loadProject().then(...)（见「启动」段）：
 // 必须等工程恢复完成后再邀请父窗口发镜头包，否则会与恢复竞争
+// ---------------- 应用内媒体选择器 ----------------
+// 系统文件对话框在 Windows/Chromium 下不渲染缩略图，挑素材全靠文件名。
+// 这里自带一个真缩略图浏览器：/api/fs/list 列目录、/api/fs/thumb 出图（ffmpeg 缓存）、
+// /api/fs/import 服务器直拷（不过 base64，任意大小稳定）。
+const fsPk = {
+  kinds: ['image'], multi: true, onDone: null, nativeInput: null,
+  dir: '', roots: [], quick: [], sel: new Map(), limit: Infinity,
+};
+
+function fsKindIcon(kind) { return kind === 'video' ? '🎞' : kind === 'audio' ? '🎵' : '🖼'; }
+
+async function openMediaPicker(opts) {
+  fsPk.kinds = opts.kinds || ['image'];
+  fsPk.multi = opts.multi !== false;
+  fsPk.limit = opts.limit || Infinity;
+  fsPk.onDone = opts.onDone;
+  fsPk.nativeInput = opts.nativeInput || null;
+  fsPk.sel.clear();
+  $('fsTitle').textContent = opts.title || '📁 选择媒体';
+  $('fsHint').textContent = fsPk.multi
+    ? `可多选${Number.isFinite(fsPk.limit) ? `（还可选 ${fsPk.limit} 个）` : ''} · 单击选中 · 双击直接添加`
+    : '单击选中 · 双击直接添加';
+  $('fsNative').hidden = !fsPk.nativeInput;
+  $('fsPicker').hidden = false;
+  fsUpdateFoot();
+  if (!fsPk.roots.length) {
+    try {
+      const r = await fetch('/api/fs/roots').then((x) => x.json());
+      fsPk.roots = r.roots || []; fsPk.quick = r.quick || [];
+    } catch {}
+  }
+  fsRenderSide();
+  const kindKey = fsPk.kinds.join(',');
+  const last = localStorage.getItem('a452FsDir:' + kindKey) || localStorage.getItem('a452FsDir:*')
+    || ((fsPk.quick.find((q) => q.name.includes('桌面')) || fsPk.quick[0] || fsPk.roots[0] || {}).path);
+  if (last) fsLoadDir(last);
+  else $('fsGrid').innerHTML = '<div class="fs-empty">左侧选择一个位置开始浏览</div>';
+}
+
+function closeMediaPicker() { $('fsPicker').hidden = true; fsPk.sel.clear(); }
+
+function fsRenderSide() {
+  const side = $('fsSide');
+  side.innerHTML = '';
+  const addLoc = (loc) => {
+    const b = document.createElement('button');
+    b.className = 'fs-loc' + (fsPk.dir === loc.path ? ' active' : '');
+    b.textContent = loc.name;
+    b.title = loc.path;
+    b.onclick = () => fsLoadDir(loc.path);
+    side.appendChild(b);
+  };
+  const sep = (t) => {
+    const s = document.createElement('div');
+    s.className = 'fs-sep'; s.textContent = t;
+    side.appendChild(s);
+  };
+  sep('快捷位置');
+  fsPk.quick.forEach(addLoc);
+  sep('磁盘');
+  fsPk.roots.forEach(addLoc);
+}
+
+async function fsLoadDir(dir) {
+  const grid = $('fsGrid');
+  grid.innerHTML = '<div class="fs-empty">读取中…</div>';
+  let data;
+  try {
+    const res = await fetch('/api/fs/list?dir=' + encodeURIComponent(dir));
+    data = await res.json();
+    if (!res.ok) throw new Error(data.error || '读取失败');
+  } catch (e) {
+    grid.innerHTML = `<div class="fs-empty">⚠ ${escapeHtml(errMsg(e))}</div>`;
+    return;
+  }
+  fsPk.dir = data.dir;
+  const kindKey = fsPk.kinds.join(',');
+  localStorage.setItem('a452FsDir:' + kindKey, data.dir);
+  localStorage.setItem('a452FsDir:*', data.dir);
+  fsRenderSide();
+
+  // 面包屑
+  const crumbs = $('fsCrumbs');
+  crumbs.innerHTML = '';
+  const parts = data.dir.split(/[\\/]+/).filter(Boolean);
+  let acc = '';
+  parts.forEach((p, i) => {
+    acc = i === 0 ? p + '\\' : acc + (acc.endsWith('\\') ? '' : '\\') + p;
+    const target = acc;
+    const b = document.createElement('button');
+    b.textContent = p;
+    b.onclick = () => fsLoadDir(target);
+    crumbs.appendChild(b);
+    if (i < parts.length - 1) {
+      const s = document.createElement('span');
+      s.className = 'sep';
+      s.textContent = ' › ';
+      crumbs.appendChild(s);
+    }
+  });
+
+  grid.innerHTML = '';
+  if (data.parent) {
+    const up = document.createElement('div');
+    up.className = 'fs-cell fs-dir';
+    up.innerHTML = '<div class="fs-fallback">↩</div><div class="fs-name">上一级</div>';
+    up.onclick = () => fsLoadDir(data.parent);
+    grid.appendChild(up);
+  }
+  for (const d of data.dirs) {
+    const cell = document.createElement('div');
+    cell.className = 'fs-cell fs-dir';
+    cell.title = d.name;
+    const fb = document.createElement('div');
+    fb.className = 'fs-fallback';
+    fb.textContent = '📁';
+    const nm = document.createElement('div');
+    nm.className = 'fs-name';
+    nm.textContent = d.name;
+    cell.appendChild(fb); cell.appendChild(nm);
+    cell.onclick = () => fsLoadDir(d.path);
+    grid.appendChild(cell);
+  }
+  const files = (data.files || []).filter((f) => fsPk.kinds.includes(f.kind));
+  for (const f of files) {
+    const cell = document.createElement('div');
+    cell.className = 'fs-cell';
+    cell.title = f.name;
+    if (f.kind === 'audio') {
+      const fb = document.createElement('div');
+      fb.className = 'fs-fallback';
+      fb.textContent = '🎵';
+      cell.appendChild(fb);
+    } else {
+      const img = document.createElement('img');
+      img.className = 'fs-thumb';
+      img.loading = 'lazy';
+      img.src = '/api/fs/thumb?path=' + encodeURIComponent(f.path) + '&mt=' + f.mtime;
+      img.onerror = () => {
+        const fb = document.createElement('div');
+        fb.className = 'fs-fallback';
+        fb.textContent = fsKindIcon(f.kind);
+        img.replaceWith(fb);
+      };
+      cell.appendChild(img);
+    }
+    const badge = document.createElement('span');
+    badge.className = 'fs-badge';
+    badge.textContent = fsKindIcon(f.kind);
+    const check = document.createElement('span');
+    check.className = 'fs-check';
+    check.textContent = '✓';
+    const nm = document.createElement('div');
+    nm.className = 'fs-name';
+    nm.textContent = f.name;
+    cell.appendChild(badge); cell.appendChild(check); cell.appendChild(nm);
+    cell.onclick = () => {
+      if (fsPk.sel.has(f.path)) { fsPk.sel.delete(f.path); cell.classList.remove('sel'); }
+      else {
+        if (!fsPk.multi) {
+          fsPk.sel.clear();
+          grid.querySelectorAll('.fs-cell.sel').forEach((c) => c.classList.remove('sel'));
+        }
+        if (fsPk.sel.size >= fsPk.limit) { fsUpdateFoot(`最多只能选 ${fsPk.limit} 个`); return; }
+        fsPk.sel.set(f.path, f); cell.classList.add('sel');
+      }
+      fsUpdateFoot();
+    };
+    cell.ondblclick = () => {
+      if (!fsPk.sel.has(f.path)) {
+        if (!fsPk.multi) fsPk.sel.clear();
+        if (fsPk.sel.size < fsPk.limit) fsPk.sel.set(f.path, f);
+      }
+      fsConfirm();
+    };
+    grid.appendChild(cell);
+  }
+  if (!files.length) {
+    const empty = document.createElement('div');
+    empty.className = 'fs-empty';
+    empty.textContent = '此目录没有' + fsPk.kinds.map((k) => ({ image: '图片', video: '视频', audio: '音频' }[k])).join('/');
+    grid.appendChild(empty);
+  }
+  if (data.truncated) fsUpdateFoot('目录文件过多，只显示最新 800 个');
+}
+
+function fsUpdateFoot(msg) {
+  $('fsSelCount').textContent = msg || (fsPk.sel.size ? `已选 ${fsPk.sel.size} 个` : '未选择');
+  $('fsConfirm').disabled = !fsPk.sel.size;
+}
+
+async function fsConfirm() {
+  if (!fsPk.sel.size) return;
+  const picked = Array.from(fsPk.sel.values());
+  $('fsConfirm').disabled = true;
+  $('fsSelCount').textContent = '导入中…';
+  try {
+    const res = await fetch('/api/fs/import', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: picked.map((f) => f.path) }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || ('导入失败 ' + res.status));
+    closeMediaPicker();
+    if (fsPk.onDone) fsPk.onDone(json.items || []);
+  } catch (e) {
+    fsUpdateFoot('⚠ ' + errMsg(e).slice(0, 80));
+    $('fsConfirm').disabled = false;
+  }
+}
+
+$('fsClose').onclick = closeMediaPicker;
+$('fsConfirm').onclick = fsConfirm;
+$('fsNative').onclick = () => {
+  const input = fsPk.nativeInput;
+  closeMediaPicker();
+  if (input) input.click();
+};
+$('fsPicker').addEventListener('click', (e) => { if (e.target === $('fsPicker')) closeMediaPicker(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('fsPicker').hidden) closeMediaPicker();
+});
+
+// ---- 接入各上传入口 ----
+// REFERENCES TOOL：参考素材（当前分区的类型 + 剩余额度）
+$('dirRefAdd').onclick = () => {
+  const caps = dirRefCaps();
+  const room = caps[dirRefKind] - dirRefsOf(dirRefKind).length;
+  if (room <= 0) { setDirStatus(`${DIR_KIND_META[dirRefKind].name}已满（${caps[dirRefKind]}）`); return; }
+  openMediaPicker({
+    kinds: [dirRefKind], limit: room, nativeInput: $('dirRefFiles'),
+    title: `📁 添加${DIR_KIND_META[dirRefKind].name}`,
+    onDone: (items) => {
+      for (const it of items) {
+        state.director.refs.push({
+          id: nextRefId++, name: it.name, url: it.url,
+          kind: dirRefKind, role: DIR_KIND_META[dirRefKind].defaultRole, note: '',
+        });
+      }
+      renderDirRefs();
+      scheduleSave();
+      setDirStatus(items.length ? `已添加 ${items.length} 份${DIR_KIND_META[dirRefKind].name}` : '');
+    },
+  });
+};
+$('dirRefAddNative').onclick = () => $('dirRefFiles').click();
+
+// 首帧 / 尾帧
+$('dirFirstDrop').onclick = () => openMediaPicker({
+  kinds: ['image'], multi: false, nativeInput: $('dirFirstFile'), title: '📁 选择首帧',
+  onDone: (items) => { if (items[0]) setDirFrame('first', items[0].url, items[0].name); },
+});
+$('dirLastDrop').onclick = () => openMediaPicker({
+  kinds: ['image'], multi: false, nativeInput: $('dirLastFile'), title: '📁 选择尾帧',
+  onDone: (items) => { if (items[0]) setDirFrame('last', items[0].url, items[0].name); },
+});
+
+// 中割关键帧
+$('btnKfBrowse').onclick = () => openMediaPicker({
+  kinds: ['image'], title: '📁 添加关键帧',
+  onDone: (items) => {
+    for (const it of items) state.images.push({ id: nextImgId++, name: it.name, url: it.url, hold: 2 });
+    rebuildSegments();
+    renderAll();
+    scheduleSave();
+  },
+});
+
+// ---- 从资源管理器拖拽文件 → REFERENCES TOOL（按 MIME 自动分类图/视频/音频） ----
+(() => {
+  const panel = $('dirRefList') && $('dirRefList').closest('section');
+  if (!panel) return;
+  panel.addEventListener('dragover', (e) => {
+    if (Array.from(e.dataTransfer.types || []).includes('Files')) {
+      e.preventDefault();
+      panel.classList.add('file-drop-hot');
+    }
+  });
+  panel.addEventListener('dragleave', () => panel.classList.remove('file-drop-hot'));
+  panel.addEventListener('drop', async (e) => {
+    if (!e.dataTransfer.files || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    panel.classList.remove('file-drop-hot');
+    const caps = dirRefCaps();
+    let added = 0, full = 0;
+    for (const f of Array.from(e.dataTransfer.files)) {
+      const kind = f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video'
+        : f.type.startsWith('audio/') ? 'audio' : null;
+      if (!kind) continue;
+      if (dirRefsOf(kind).length >= caps[kind]) { full += 1; continue; }
+      try {
+        setDirStatus(`${DIR_KIND_META[kind].name}上传中… ${f.name}`);
+        const url = await uploadAsset(f);
+        state.director.refs.push({
+          id: nextRefId++, name: f.name, url,
+          kind, role: DIR_KIND_META[kind].defaultRole, note: '',
+        });
+        added += 1;
+      } catch (err) { setDirStatus(`${DIR_KIND_META[kind].name}上传失败: ` + errMsg(err)); }
+    }
+    renderDirRefs();
+    scheduleSave();
+    if (added) setDirStatus(`已添加 ${added} 份参考${full ? `（${full} 份因额度已满被跳过）` : ''}`);
+    else if (full) setDirStatus('对应类型的参考位已满');
+  });
+})();
+
+// 首帧/尾帧格子也接受直接拖图
+for (const [slotId, slotName] of [['dirFirstDrop', 'first'], ['dirLastDrop', 'last']]) {
+  const el = $(slotId);
+  if (!el) continue;
+  el.addEventListener('dragover', (e) => {
+    if (Array.from(e.dataTransfer.types || []).includes('Files')) {
+      e.preventDefault();
+      el.classList.add('file-drop-hot');
+    }
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('file-drop-hot'));
+  el.addEventListener('drop', async (e) => {
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!f || !f.type.startsWith('image/')) return;
+    e.preventDefault();
+    el.classList.remove('file-drop-hot');
+    try {
+      const url = await uploadAsset(f);
+      setDirFrame(slotName, url, f.name);
+    } catch (err) { setDirStatus('上传失败: ' + errMsg(err)); }
+  });
+}
+
+// ---------------- Ctrl+V 粘贴截图 → 参考图（REFERENCES TOOL 激活时） ----------------
+document.addEventListener('paste', async (e) => {
+  if ($('viewDirector').hidden) return; // 只在工作区 6 生效
+  if (!$('fsPicker').hidden) return;
+  const files = Array.from((e.clipboardData && e.clipboardData.files) || [])
+    .filter((f) => f.type.startsWith('image/'));
+  if (!files.length) return; // 纯文本粘贴走默认行为
+  e.preventDefault();
+  const caps = dirRefCaps();
+  let added = 0;
+  for (const f of files) {
+    if (dirRefsOf('image').length >= caps.image) { setDirStatus(`参考图已满（${caps.image}）`); break; }
+    try {
+      setDirStatus('粘贴图上传中…');
+      const url = await uploadAsset(f);
+      const stamp = new Date().toLocaleTimeString('zh-CN', { hour12: false }).replace(/:/g, '');
+      const name = f.name && !/^image\.\w+$/i.test(f.name) ? f.name : `粘贴截图_${stamp}.png`;
+      state.director.refs.push({
+        id: nextRefId++, name, url,
+        kind: 'image', role: DIR_KIND_META.image.defaultRole, note: '',
+      });
+      added += 1;
+    } catch (err) { setDirStatus('粘贴上传失败: ' + errMsg(err)); return; }
+  }
+  if (added) {
+    dirRefKind = 'image';
+    renderDirRefs();
+    scheduleSave();
+    setDirStatus(`已粘贴 ${added} 张参考图 ✓`);
+  }
+});
+
+// ---------------- 生成结果：暂停帧一键存为参考图 ----------------
+$('btnDirGrabFrame').onclick = async () => {
+  const v = $('dirResult');
+  if (v.hidden || !v.videoWidth) { setDirStatus('还没有可截取的画面'); return; }
+  const caps = dirRefCaps();
+  if (dirRefsOf('image').length >= caps.image) { setDirStatus(`参考图已满（${caps.image}）`); return; }
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = v.videoWidth;
+    canvas.height = v.videoHeight;
+    canvas.getContext('2d').drawImage(v, 0, 0);
+    const blob = await new Promise((resolve, reject) => {
+      try { canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('截帧失败'))), 'image/png'); }
+      catch (err) { reject(err); }
+    });
+    const t = v.currentTime.toFixed(2);
+    const name = `帧截取_${t}s.png`;
+    const url = await uploadAsset(new File([blob], name, { type: 'image/png' }));
+    state.director.refs.push({
+      id: nextRefId++, name, url,
+      kind: 'image', role: 'character', note: `取自生成结果 ${t}s 处的画面，保持该画面的角色与风格`,
+    });
+    dirRefKind = 'image';
+    renderDirRefs();
+    scheduleSave();
+    setDirStatus(`已把 ${t}s 的画面存为参考图 ✓`);
+  } catch (err) {
+    setDirStatus('截帧失败: ' + errMsg(err));
+  }
+};

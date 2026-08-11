@@ -931,6 +931,123 @@ app.post('/api/upload', (req, res) => {
   }
 });
 
+// ---------- 应用内媒体浏览器 ----------
+// Electron/Chromium 的原生打开文件对话框在 Windows 上不渲染缩略图（Chromium 沙箱化对话框的
+// 已知缺陷），所以应用内自带一个有真缩略图的文件选择器。仅本机 API 端口可用，隧道不暴露。
+const THUMB_DIR = path.join(DATA_DIR, 'thumbcache');
+fs.mkdirSync(THUMB_DIR, { recursive: true });
+
+const MEDIA_EXTS = {
+  image: new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'avif']),
+  video: new Set(['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v', 'mpg', 'mpeg', 'wmv', 'ts']),
+  audio: new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'wma', 'aiff']),
+};
+function mediaKindOf(name) {
+  const ext = path.extname(name).slice(1).toLowerCase();
+  for (const [kind, set] of Object.entries(MEDIA_EXTS)) if (set.has(ext)) return kind;
+  return null;
+}
+const HIDDEN_DIRS = new Set(['$recycle.bin', 'system volume information', 'node_modules', '$windows.~bt']);
+
+app.get('/api/fs/roots', (req, res) => {
+  const roots = [];
+  if (process.platform === 'win32') {
+    for (let c = 65; c <= 90; c++) {
+      const drive = String.fromCharCode(c) + ':\\';
+      try { if (fs.existsSync(drive)) roots.push({ name: drive.slice(0, 2), path: drive }); } catch {}
+    }
+  } else {
+    roots.push({ name: '/', path: '/' });
+  }
+  const home = os.homedir();
+  const quick = [];
+  for (const [label, sub] of [['🏠 主目录', ''], ['🖥 桌面', 'Desktop'], ['⬇ 下载', 'Downloads'],
+    ['🖼 图片', 'Pictures'], ['🎬 视频', 'Videos'], ['🎵 音乐', 'Music'], ['📄 文档', 'Documents']]) {
+    const p = sub ? path.join(home, sub) : home;
+    try { if (fs.existsSync(p)) quick.push({ name: label, path: p }); } catch {}
+  }
+  res.json({ roots, quick });
+});
+
+app.get('/api/fs/list', (req, res) => {
+  try {
+    const dir = String(req.query.dir || '');
+    if (!path.isAbsolute(dir)) return res.status(400).json({ error: '需要绝对路径' });
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const dirs = [];
+    const files = [];
+    for (const ent of entries) {
+      const name = ent.name;
+      if (name.startsWith('.') || HIDDEN_DIRS.has(name.toLowerCase())) continue;
+      const full = path.join(dir, name);
+      if (ent.isDirectory()) { dirs.push({ name, path: full }); continue; }
+      if (!ent.isFile()) continue;
+      const kind = mediaKindOf(name);
+      if (!kind) continue;
+      try {
+        const st = fs.statSync(full);
+        files.push({ name, path: full, size: st.size, mtime: st.mtimeMs, kind });
+      } catch {}
+    }
+    dirs.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+    files.sort((a, b) => b.mtime - a.mtime);
+    const parent = path.dirname(dir);
+    res.json({ dir, parent: parent !== dir ? parent : null, dirs, files: files.slice(0, 800), truncated: files.length > 800 });
+  } catch (e) {
+    const raw = String(e && e.message || e);
+    res.status(400).json({ error: /EPERM|EACCES/.test(raw) ? '没有权限访问该目录' : /ENOENT/.test(raw) ? '目录不存在' : raw.slice(0, 200) });
+  }
+});
+
+// 缩略图：图片直接缩放，视频抽第 1 秒的帧；按 路径+mtime+size 缓存，源文件变了缓存自动失效
+app.get('/api/fs/thumb', async (req, res) => {
+  try {
+    const file = String(req.query.path || '');
+    const kind = mediaKindOf(file);
+    if (!path.isAbsolute(file) || !kind || kind === 'audio' || !fs.existsSync(file)) return res.status(404).end();
+    const st = fs.statSync(file);
+    const key = crypto.createHash('sha1').update(file + '|' + st.mtimeMs + '|' + st.size).digest('hex');
+    const cached = path.join(THUMB_DIR, key + '.jpg');
+    if (!fs.existsSync(cached)) {
+      if (!FFMPEG) return res.status(404).end();
+      const scale = "scale='min(360,iw)':-2";
+      const args = kind === 'video'
+        ? ['-y', '-ss', '1', '-i', file, '-frames:v', '1', '-vf', scale, '-q:v', '5', cached]
+        : ['-y', '-i', file, '-frames:v', '1', '-vf', scale, '-q:v', '5', cached];
+      try {
+        await runFfmpeg(args);
+      } catch (e) {
+        // 视频不足 1 秒时 -ss 1 会抽不到帧 → 退回首帧
+        if (kind === 'video') await runFfmpeg(['-y', '-i', file, '-frames:v', '1', '-vf', scale, '-q:v', '5', cached]);
+        else throw e;
+      }
+    }
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.sendFile(cached);
+  } catch {
+    res.status(404).end();
+  }
+});
+
+// 选中的文件导入资产库（服务器直接拷文件，不经过 base64，任意大小都稳）
+app.post('/api/fs/import', (req, res) => {
+  try {
+    const paths = Array.isArray(req.body && req.body.paths) ? req.body.paths.slice(0, 60) : [];
+    const items = [];
+    for (const p of paths) {
+      if (typeof p !== 'string' || !path.isAbsolute(p)) continue;
+      const kind = mediaKindOf(p);
+      if (!kind || !fs.existsSync(p)) continue;
+      const file = newId() + path.extname(p).toLowerCase();
+      fs.copyFileSync(p, path.join(ASSET_DIR, file));
+      items.push({ url: '/assets/' + file, name: path.basename(p), kind });
+    }
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ error: "导入失败: " + String(e && e.message || e).slice(0, 200) });
+  }
+});
+
 app.get('/api/project', (req, res) => {
   const r = readProjectFile(PROJECT_PATH);
   if (!r.ok) {
