@@ -522,6 +522,92 @@ async function mockV2V(id, srcFile) {
   }
 }
 
+// ---------- Artcraft 平台适配（api.storyteller.ai · Authorization: Bearer artcraft_api_*） ----------
+// 端点与请求结构逆向自官方开源仓库 github.com/storytold/artcraft（artcraft_api_defs crate）。
+const ARTCRAFT_API = 'https://api.storyteller.ai';
+
+function artcraftResolutionOf(cfg) {
+  const r = String(cfg.resolution || '720p');
+  return /1080/.test(r) ? 'ten_eighty_p' : /480/.test(r) ? 'four_eighty_p' : 'seven_twenty_p';
+}
+function artcraftAspectOf(cfg) {
+  const r = String(cfg.ratio || '');
+  if (/9:16|portrait/i.test(r)) return 'portrait9x16';
+  if (/1:1|square/i.test(r)) return 'square1x1';
+  if (/4:3/.test(r)) return 'standard4x3';
+  return 'landscape16x9';
+}
+
+/** 本地图片（经压缩）→ Artcraft media_file_token */
+async function artcraftUploadImage(cfg, localUrl) {
+  const file = localFileOf(localUrl);
+  if (!file || !fs.existsSync(file)) throw new Error('图片不存在: ' + String(localUrl).slice(0, 80));
+  // 复用 Ark 的压缩策略控制上传体积
+  const dataUrl = resolveToArkImage(localUrl);
+  const m = /^data:(image\/[\w.+-]+);base64,(.+)$/s.exec(dataUrl);
+  if (!m) throw new Error('图片编码失败');
+  const buf = Buffer.from(m[2], 'base64');
+  const fd = new FormData();
+  fd.append('file', new Blob([buf], { type: m[1] }), path.basename(file).replace(/\.[^.]+$/, '') + (m[1] === 'image/jpeg' ? '.jpg' : '.png'));
+  const r = await fetch(ARTCRAFT_API + '/v1/media_files/upload/image', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + cfg.artcraftKey },
+    body: fd,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.media_file_token) {
+    throw new Error(`Artcraft 图片上传失败 (${r.status}): ` + JSON.stringify(j).slice(0, 200));
+  }
+  return j.media_file_token;
+}
+
+/** Seedance 2.0 multi-function：文/图/参考图驱动生成 → inference_job_token */
+async function artcraftCreateSeedance2(cfg, opts) {
+  const { prompt, startToken, endToken, refTokens, duration } = opts;
+  const body = {
+    uuid_idempotency_token: newId() + '-' + Date.now().toString(36),
+    prompt: sanitizeForArk(String(prompt || '')) || undefined,
+    start_frame_media_token: startToken || undefined,
+    end_frame_media_token: endToken || undefined,
+    reference_image_media_tokens: refTokens && refTokens.length ? refTokens : undefined,
+    aspect_ratio: artcraftAspectOf(cfg),
+    output_resolution: artcraftResolutionOf(cfg),
+    duration_seconds: clampDuration(duration),
+  };
+  const r = await fetch(ARTCRAFT_API + '/v1/generate/video/multi_function/seedance_2p0', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.artcraftKey },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.inference_job_token) {
+    throw new Error(`Artcraft 创建生成任务失败 (${r.status}): ` + JSON.stringify(j).slice(0, 300));
+  }
+  return j.inference_job_token;
+}
+
+/** 轮询会话任务列表找到本任务；成功即下载 cdn 视频到本地 */
+async function artcraftPoll(cfg, task, localId) {
+  if (task.remoteUrl) return arkDownload(task, task.remoteUrl, localId);
+  const r = await fetch(ARTCRAFT_API + '/v1/jobs/session', {
+    headers: { Authorization: 'Bearer ' + cfg.artcraftKey },
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`Artcraft 任务查询失败 (${r.status}): ` + JSON.stringify(j).slice(0, 200));
+  const job = (j.jobs || []).find((x) => x && x.job_token === task.acJobToken);
+  if (!job) throw new Error('Artcraft 会话中未找到该任务（可能已过期）');
+  const raw = JSON.stringify(job);
+  if (/complete_success/.test(raw)) {
+    const cdn = raw.match(/"cdn_url"\s*:\s*"([^"]+)"/);
+    if (!cdn) throw new Error('任务成功但未返回 cdn_url');
+    task.remoteUrl = cdn[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+    await arkDownload(task, task.remoteUrl, localId);
+  } else if (/failure|dead|cancel/i.test(raw)) {
+    task.status = 'failed';
+    task.error = 'Artcraft 生成失败: ' + raw.slice(0, 260);
+  } // pending / started → 保持 running
+}
+
 // ---------- 导演生成：首尾帧 + 参考视频 + 参考图混合单次生成（Seedance 2.0 / 2.5） ----------
 const SEEDANCE_25_MODEL = 'doubao-seedance-2-5-260628'; // 方舟模型卡已公开；API 开放即插即用
 function isSeedance25(model) { return /2-5/.test(String(model || '')); }
@@ -804,6 +890,7 @@ app.get('/api/config', (req, res) => {
     openaiImgModel: cfg.openaiImgModel,
     llmProvider: cfg.llmProvider || 'auto',
     hasAnthropicKey: !!cfg.anthropicKey,
+    hasArtcraftKey: !!cfg.artcraftKey,
     llmModel: cfg.llmModel || '',
     llmSpendUsd: getLlmSpend().usd,
     llmSpendCap: getLlmSpend().capUsd,
@@ -845,6 +932,9 @@ app.post('/api/config', (req, res) => {
   if (llmProvider) cur.llmProvider = llmProvider;
   if (anthropicKey !== undefined && anthropicKey !== '') cur.anthropicKey = anthropicKey;
   if (anthropicKey === null) cur.anthropicKey = '';
+  const { artcraftKey } = req.body || {};
+  if (artcraftKey !== undefined && artcraftKey !== '') cur.artcraftKey = artcraftKey;
+  if (artcraftKey === null) cur.artcraftKey = '';
   if (llmModel !== undefined) cur.llmModel = llmModel;
   // 用量重置：仅在用户确认已充值后调用（新的 $20 周期）
   if (llmSpendReset === true) {
@@ -1552,6 +1642,26 @@ app.post('/api/director', async (req, res) => {
     if (!bill.ok) return res.status(402).json({ error: bill.error });
   }
   logUsedPrompt(cfg, 'director', prompt);
+  // Artcraft 通道：model 以 artcraft: 前缀标记（REFERENCES TOOL 下拉可选）
+  if (String(model || '').startsWith('artcraft:')) {
+    if (!cfg.artcraftKey) return res.status(400).json({ error: '未配置 Artcraft API Key — 在 ⚙ API 设置里粘贴 artcraft_api_... 后重试' });
+    try {
+      const startToken = firstFrame ? await artcraftUploadImage(cfg, firstFrame) : null;
+      const endToken = lastFrame ? await artcraftUploadImage(cfg, lastFrame) : null;
+      const refTokens = [];
+      for (const u of (Array.isArray(refImages) ? refImages : []).slice(0, 10)) {
+        refTokens.push(await artcraftUploadImage(cfg, u));
+      }
+      const acJobToken = await artcraftCreateSeedance2(cfg, {
+        prompt, startToken, endToken, refTokens, duration,
+      });
+      tasks[id] = { mode: 'artcraft', status: 'running', acJobToken, cost: bill && bill.cost, uid: bill && bill.uid };
+    } catch (e) {
+      if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
+      return res.status(502).json({ error: String(e.message || e) });
+    }
+    return res.json({ id, mode: 'artcraft', status: 'running' });
+  }
   if (cfg.apiKey) {
     try {
       const firstDataUrl = firstFrame ? resolveToArkImage(firstFrame) : null;
@@ -1830,9 +1940,10 @@ app.post('/api/v2v', async (req, res) => {
 app.get('/api/segments/:id', async (req, res) => {
   const task = tasks[req.params.id];
   if (!task) return res.status(404).json({ error: '任务不存在' });
-  if (task.mode === 'ark' && task.status === 'running') {
+  if ((task.mode === 'ark' || task.mode === 'artcraft') && task.status === 'running') {
     try {
-      await arkPoll(loadConfig(), task, req.params.id);
+      if (task.mode === 'artcraft') await artcraftPoll(loadConfig(), task, req.params.id);
+      else await arkPoll(loadConfig(), task, req.params.id);
       task.pollFails = 0; // 只统计连续失败
       delete task.warning;
     } catch (e) {

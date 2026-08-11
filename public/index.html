@@ -514,8 +514,9 @@
       <div class="row">
         <label class="check">模型
           <select id="dirModel" class="btn" style="margin-left:6px">
-            <option value="">Seedance 2.0（当前配置）</option>
-            <option value="doubao-seedance-2-5-260628">Seedance 2.5（API 开放即用）</option>
+            <option value="">Seedance 2.0（当前配置 · 方舟）</option>
+            <option value="doubao-seedance-2-5-260628">Seedance 2.5（方舟 · 需已开通）</option>
+            <option value="artcraft:seedance_2p0">Artcraft · Seedance 2.0（用 Artcraft 额度）</option>
           </select>
         </label>
         <span class="inline-slider"><span class="lbl">时长</span>
@@ -750,6 +751,10 @@
   <div class="field">
     <label>Claude API Key <span class="hint">留空保持不变；ChatGPT 复用上方 OpenAI Key</span> <span id="cfgLlmSpend" class="hint accent"></span></label>
     <input type="password" id="cfgAnthropicKey" placeholder="sk-ant-...">
+  </div>
+  <div class="field">
+    <label>Artcraft API Key <span class="hint">app.getartcraft.com → Settings → API Keys · 留空保持不变 · REFERENCES TOOL 可选 Artcraft 通道生成</span></label>
+    <input type="password" id="cfgArtcraftKey" placeholder="artcraft_api_...">
   </div>
   <div class="field-row">
     <div class="field">

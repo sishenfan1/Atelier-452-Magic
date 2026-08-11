@@ -2665,6 +2665,7 @@ async function refreshConfig() {
   $('cfgLlmProvider').value = cfg.llmProvider || 'auto';
   $('cfgLlmModel').value = cfg.llmModel || '';
   $('cfgAnthropicKey').placeholder = cfg.hasAnthropicKey ? '已配置（留空保持不变）' : 'sk-ant-...';
+  $('cfgArtcraftKey').placeholder = cfg.hasArtcraftKey ? '已配置（留空保持不变）' : 'artcraft_api_...';
   if (typeof cfg.llmSpendUsd === 'number') {
     $('cfgLlmSpend').textContent = `已用 $${cfg.llmSpendUsd.toFixed(2)} / $${cfg.llmSpendCap || 20}`;
   }
@@ -3034,8 +3035,10 @@ $('cfgSave').onclick = async () => {
   if ($('cfgKey').value.trim()) body.apiKey = $('cfgKey').value.trim();
   if ($('cfgOpenaiKey').value.trim()) body.openaiKey = $('cfgOpenaiKey').value.trim();
   if ($('cfgAnthropicKey').value.trim()) body.anthropicKey = $('cfgAnthropicKey').value.trim();
+  if ($('cfgArtcraftKey').value.trim()) body.artcraftKey = $('cfgArtcraftKey').value.trim();
   $('cfgOpenaiKey').value = '';
   $('cfgAnthropicKey').value = '';
+  $('cfgArtcraftKey').value = '';
   const res = await fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3109,14 +3112,18 @@ for (const id of ['dirActOverall', 'dirActFace', 'dirActBody', 'dirActTempo']) {
 
 // 模型切换：时长上限联动（2.0 → 15s，2.5 → 30s）
 $('dirModel').onchange = () => {
-  const is25 = /2-5/.test($('dirModel').value);
+  const val = $('dirModel').value;
+  const is25 = /2-5/.test(val);
+  const isArtcraft = val.startsWith('artcraft:');
   const slider = $('dirDuration');
   slider.max = is25 ? 30 : 15;
   if (Number(slider.value) > Number(slider.max)) slider.value = slider.max;
   $('dirDurationVal').textContent = slider.value + ' 秒';
-  $('dirModelHint').textContent = is25
-    ? '2.5：4-30 秒 · 480P/720P（1080P 自动降档）· 方舟 API 尚未开放调用，开放后此处即插即用'
-    : '2.0：4-15 秒 · 使用 ⚙ API 设置里的当前模型与分辨率';
+  $('dirModelHint').textContent = isArtcraft
+    ? 'Artcraft 通道：4-15 秒 · 首尾帧 + 参考图直传 Artcraft（消耗 Artcraft credits）· 参考视频暂不支持此通道'
+    : is25
+      ? '2.5：4-30 秒 · 480P/720P（1080P 自动降档）· 需已在方舟控制台开通该模型'
+      : '2.0：4-15 秒 · 使用 ⚙ API 设置里的当前模型与分辨率';
 };
 $('dirDuration').oninput = (e) => { $('dirDurationVal').textContent = e.target.value + ' 秒'; };
 
