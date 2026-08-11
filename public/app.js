@@ -4724,7 +4724,15 @@ document.addEventListener('paste', async (e) => {
   if (!$('fsPicker').hidden) return;
   const files = Array.from((e.clipboardData && e.clipboardData.files) || [])
     .filter((f) => f.type.startsWith('image/'));
-  if (!files.length) return; // 纯文本粘贴走默认行为
+  if (!files.length) {
+    // 有些来源只放了位图没带文件对象 → 走 Electron 原生剪贴板兜底；纯文本粘贴不受影响
+    const hasText = e.clipboardData && e.clipboardData.getData && e.clipboardData.getData('text');
+    if (!hasText && window.a452Native && window.a452Native.readClipboardImage) {
+      e.preventDefault();
+      pasteClipboardAsRef();
+    }
+    return;
+  }
   e.preventDefault();
   const caps = dirRefCaps();
   let added = 0;
@@ -5063,3 +5071,70 @@ document.addEventListener('click', (e) => {
   e.stopImmediatePropagation();
   nativePickIntoInput(input);
 }, true);
+
+// ---------------- 剪贴板图片 → 参考图：三层通道，哪层焦点都能粘 ----------------
+// ① 工作台内 Ctrl+V（既有 paste 监听）② 外层壳 Ctrl+V → postMessage 转发进来
+// ③ 📋 按钮 / paste 无文件时 → Electron 主进程原生剪贴板（与焦点完全无关）
+async function addClipboardRefBlob(blob, name) {
+  const caps = dirRefCaps();
+  if (dirRefsOf('image').length >= caps.image) { setDirStatus(`参考图已满（${caps.image}）`); return false; }
+  const stamp = new Date().toLocaleTimeString('zh-CN', { hour12: false }).replace(/:/g, '');
+  const finalName = name && !/^(image|clipboard)\.\w+$/i.test(name) ? name : `粘贴截图_${stamp}.png`;
+  setDirStatus('粘贴图上传中…');
+  const url = await uploadAsset(new File([blob], finalName, { type: blob.type || 'image/png' }));
+  state.director.refs.push({
+    id: nextRefId++, name: finalName, url,
+    kind: 'image', role: DIR_KIND_META.image.defaultRole, note: '',
+  });
+  dirRefKind = 'image';
+  renderDirRefs();
+  scheduleSave();
+  setDirStatus('已粘贴为参考图 ✓');
+  return true;
+}
+
+/** 原生剪贴板读取（Electron 主进程，无焦点/权限问题）；纯浏览器退回异步剪贴板 API */
+async function pasteClipboardAsRef() {
+  try {
+    if (window.a452Native && window.a452Native.readClipboardImage) {
+      const b64 = await window.a452Native.readClipboardImage();
+      if (b64) {
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        await addClipboardRefBlob(new Blob([bytes], { type: 'image/png' }), '');
+        return true;
+      }
+      setDirStatus('剪贴板里没有图片 — 先截图或复制一张图');
+      return false;
+    }
+    if (navigator.clipboard && navigator.clipboard.read) {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const type = item.types.find((t) => t.startsWith('image/'));
+        if (type) {
+          await addClipboardRefBlob(await item.getType(type), '');
+          return true;
+        }
+      }
+      setDirStatus('剪贴板里没有图片 — 先截图或复制一张图');
+      return false;
+    }
+    setDirStatus('此环境无法读取剪贴板，请直接 Ctrl+V');
+    return false;
+  } catch (e) {
+    setDirStatus('读取剪贴板失败: ' + errMsg(e));
+    return false;
+  }
+}
+$('dirRefPaste').onclick = pasteClipboardAsRef;
+
+// 外层壳（策划端）转发来的剪贴板图片
+window.addEventListener('message', async (e) => {
+  if (!isTrustedMessageOrigin(e.origin)) return;
+  const d = e.data;
+  if (!d || d.type !== 'a452-clipboard-image' || !d.buf) return;
+  try {
+    await addClipboardRefBlob(new Blob([d.buf], { type: d.mime || 'image/png' }), d.name || '');
+  } catch (err) { setDirStatus('粘贴上传失败: ' + errMsg(err)); }
+});
