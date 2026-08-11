@@ -3123,9 +3123,48 @@ const adwPromptParam = (() => {
 // ---------------- 工作区 6：导演生成（首尾帧 + 参考视频 + 参考图 · 演技滑杆组） ----------------
 function setDirStatus(t) { $('dirStatus').textContent = t || ''; }
 
-/** 演技滑杆（角色四维 + 场面三维）→ 中文提示词片段（0 = 关闭该维度） */
+/**
+ * 演技滑杆（角色四维 + 场面三维）→ 结构化表演指导块（0 = 关闭该维度）。
+ * 写法遵循 acting-system + film-prompt-engineer 技能：
+ * ① 写"可拍摄的行为"，不写情绪标签，不把数值泄进提示词（"80/100"只会干扰模型）；
+ * ② 角色表演与画面运动分块加标签作用域，互不打架（角色可以沉稳、画面照样可以疾风骤雨）；
+ * ③ 状态不写过程（模型拍"正在"而不是"变成"）；夸张叠在重量之上，先有物理再有夸张；
+ * ④ 有角色表演时挂 Aiden 签名 tagline：保持关键姿态，表演性格外强。
+ */
+const DIR_ACT_TEXT = {
+  face: [
+    '面部走微表情叙事：情绪只从眼神与嘴角泄出——视线移开又收回、眨眼节奏随心境变化、嘴角一瞬的抽动，思考先于言语在眼睛里可读，眼神始终鲜活有神采',
+    '表情鲜明立体：眉、眼、口型随情绪清楚变化，反应在对方动作结束前就已开始浮现，前一个表情的余韵自然带进下一个，眼里永远有光',
+    '表情大开大合：卡通级的挤压拉伸表情，惊讶时五官放大、得意时眉飞色舞、每个表情做到位并短暂保持再切换，俏皮劲十足，眼神夸张但始终鲜活',
+  ],
+  body: [
+    '肢体收敛经济：动作小而准，重心稳定，手上始终有具体的小动作（摆弄道具、整理衣角）而不是空摆姿势',
+    '肢体语言丰富：动作幅度明显、关键姿势清晰，每个动作带预备与跟随，姿态之间的过渡有惯性有重量',
+    '全身戏剧化表演：肢体极度夸张，关键姿势极端醒目并保持半拍，带挤压拉伸与动态变形，起跳蹬地有力、落地有真实重量，角色是在"表演这个动作"而不是让动作发生',
+  ],
+  tempo: [
+    '角色节奏沉稳从容：动作之间留呼吸口，停顿里有内容——打量、犹豫、下决定，绝不空等',
+    '角色节奏明快：动作干脆利落、重音清楚，快慢交替形成对比，关键动作后有短暂的定住',
+    '角色节奏暴烈：蓄力→爆发的极端对比，关键动作瞬间完成并定格半秒再走下一拍，全程无匀速段',
+  ],
+  velocity: [
+    '画面中一切运动舒缓从容，每条动作弧线完整可读，没有突兀的速度跳变',
+    '画面整体运动轻快流畅，所有运动方向明确、速度统一协调',
+    '全画面高速运动：动作凌厉迅猛带方向性动态模糊，但每个运动物体仍保有重量与惯性，绝不漂浮滑行',
+  ],
+  fx: [
+    '环境低语级动态：尘埃浮动、布料轻摆，道具只做轻微互动，绝不抢戏',
+    '道具与环境实时响应角色：碰到的东西会动会响，扬起的灰尘、翻动的纸页清晰可见并服务于动作',
+    '环境全面参与演出：烟尘、碎片、光效随动作喷薄而出、迅猛扫过画面，道具被大开大合地使用，但特效永远不遮挡角色的脸和关键姿势',
+  ],
+  physics: [
+    '低重力质感：物体飘浮般缓落，惯性绵长延展，碰撞轻柔无声',
+    '真实物理：重力、惯性、碰撞符合现实，布料与毛发滞后主体半拍，运动有可信的加速与减速',
+    '物理反馈迅猛：坠落干脆、碰撞反弹剧烈，重击有反冲与贯穿跟随，一切重量感拉满',
+  ],
+};
+function dirActTier3(v) { return v >= 66 ? 2 : v >= 33 ? 1 : 0; }
 function directorActingText() {
-  const parts = [];
   const overall = Number($('dirActOverall').value);
   const face = Number($('dirActFace').value);
   const body = Number($('dirActBody').value);
@@ -3133,21 +3172,23 @@ function directorActingText() {
   const velocity = Number($('dirActVelocity').value);
   const fx = Number($('dirActFx').value);
   const physics = Number($('dirActPhysics').value);
-  if (overall > 0) parts.push(`表演强度${overall}/100，${actingTier(overall).name}`);
-  if (face > 0) parts.push(face >= 66 ? '表情大开大合、情绪外放到极致' : face >= 33 ? '表情鲜明、情绪清晰可读' : '微表情细腻克制');
-  if (body > 0) parts.push(body >= 66 ? '肢体动作极度夸张、全身戏剧化表演' : body >= 33 ? '肢体语言丰富、动作幅度明显' : '肢体收敛、小幅度动作');
-  if (tempo > 0) parts.push(tempo >= 66 ? '节奏急促爆发、动作干脆凌厉' : tempo >= 33 ? '节奏明快有张力' : '节奏沉稳缓慢、留白呼吸');
-  // 场面三维：不限于角色，约束画面中一切运动
-  if (velocity > 0) parts.push(velocity >= 66 ? '全画面动作速度极快，所有运动元素高速掠过、动势凌厉'
-    : velocity >= 33 ? '画面整体动作速度中等偏快，运动明确流畅'
-    : '画面整体动作速度缓慢，所有运动从容克制');
-  if (fx > 0) parts.push(fx >= 66 ? '道具与环境元素剧烈运动，特效浓烈爆裂（烟尘、碎片、光效拉满）、迅猛扫过画面'
-    : fx >= 33 ? '道具与环境有明显互动，特效清晰可见、速度适中'
-    : '道具环境轻微动态，特效克制稀薄、缓缓飘散');
-  if (physics > 0) parts.push(physics >= 66 ? '物理反馈迅猛：重力坠落干脆、惯性冲量强烈、碰撞反弹剧烈'
-    : physics >= 33 ? '物理运动真实自然：重力、惯性、碰撞符合现实速度'
-    : '物理速度放缓：飘浮般的低重力质感、缓慢的惯性延展');
-  return parts.join('，');
+
+  const actor = [];
+  if (overall > 0) actor.push(actingTier(overall).text);
+  if (face > 0) actor.push(DIR_ACT_TEXT.face[dirActTier3(face)]);
+  if (body > 0) actor.push(DIR_ACT_TEXT.body[dirActTier3(body)]);
+  if (tempo > 0) actor.push(DIR_ACT_TEXT.tempo[dirActTier3(tempo)]);
+
+  const scene = [];
+  if (velocity > 0) scene.push(DIR_ACT_TEXT.velocity[dirActTier3(velocity)]);
+  if (fx > 0) scene.push(DIR_ACT_TEXT.fx[dirActTier3(fx)]);
+  if (physics > 0) scene.push(DIR_ACT_TEXT.physics[dirActTier3(physics)]);
+
+  const blocks = [];
+  if (actor.length) blocks.push('【表演指导】' + actor.join('；') + '。角色全程保持同一张脸、同一套发型与服装，绝不变形走样。');
+  if (scene.length) blocks.push('【画面运动】' + scene.join('；') + '。');
+  if (actor.length) blocks.push('保持关键姿态，表演性格外强。');
+  return blocks.join('\n');
 }
 function syncDirActing() {
   const label = (v) => (v > 0 ? v : '关');
