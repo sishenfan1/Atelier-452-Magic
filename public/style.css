@@ -1024,3 +1024,11 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .cut-box .cut-toggle:hover { opacity: .85; }
 .cut-box .cut-toggle.on { opacity: 1; background: rgba(120, 140, 255, .18); border-color: rgba(120, 140, 255, .6); font-weight: 700; }
 .cut-box .cut-toggle.on.hold { background: rgba(255, 159, 10, .15); border-color: rgba(255, 159, 10, .55); }
+
+/* 跨档复制按钮 */
+.dir-ref-copy {
+  border: 1px solid rgba(52, 168, 83, .4); background: none; color: #2e9e52;
+  border-radius: 999px; padding: 1px 8px; font-size: 10.5px; font-weight: 700;
+  cursor: pointer; white-space: nowrap; flex: none;
+}
+.dir-ref-copy:hover { background: rgba(52, 168, 83, .12); }

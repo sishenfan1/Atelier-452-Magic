@@ -3328,6 +3328,8 @@ function renderDirRefs() {
     if (el) el.textContent = `${dirRefsOf(k).length}/${caps[k]}`;
   }
   $('dirRefCaps').textContent = `— 图 ≤${caps.image} · 视频 ≤${caps.video} · 音频 ≤${caps.audio}`;
+  const copyAll = $('dirRefCopyAll');
+  if (copyAll) copyAll.title = `把当前档全部参考（含 role 与说明词）复制到 Seedance ${state.director.refTier === '25' ? '2.0' : '2.5'} 档`;
   document.querySelectorAll('#dirRefTabs button').forEach((b) => {
     b.classList.toggle('active', b.dataset.kind === dirRefKind);
   });
@@ -3347,12 +3349,14 @@ function renderDirRefs() {
     const roleOpts = Object.entries(DIR_REF_ROLES)
       .map(([k, [label]]) => `<option value="${k}" ${(r.role || meta.defaultRole) === k ? 'selected' : ''}>${label}</option>`)
       .join('');
+    const otherLabel = (state.director.refTier === '25') ? '2.0' : '2.5';
     row.innerHTML = `
       <div class="ref-cell">${thumb}<button type="button" aria-label="移除">✕</button></div>
       <div class="dir-ref-meta">
         <div class="dir-ref-head">
           <span class="dir-ref-idx">${DIR_KIND_META[r.kind || 'image'].icon} ${i + 1} · ${escapeHtml((r.name || '').slice(0, 18))}</span>
           <select class="dir-ref-role" title="这份参考对模型的作用（注入后台提示词）">${roleOpts}</select>
+          <button type="button" class="dir-ref-copy" title="把这份参考连同 role 与说明词复制到 Seedance ${otherLabel} 档的参考集">⇄ ${otherLabel}</button>
         </div>
         <textarea class="dir-ref-note" rows="1" data-min-grow="80" maxlength="160"
           placeholder="补充说明：这份素材是什么 / 想让模型学到什么">${escapeHtml(r.note || '')}</textarea>
@@ -3364,6 +3368,7 @@ function renderDirRefs() {
     };
     row.querySelector('.dir-ref-role').onchange = (e) => { r.role = e.target.value; scheduleSave(); };
     row.querySelector('.dir-ref-note').onchange = (e) => { r.note = e.target.value; scheduleSave(); };
+    row.querySelector('.dir-ref-copy').onclick = () => dirCopyRefToOtherTier(r, true);
     if (typeof attachMentionAutocomplete === 'function') attachMentionAutocomplete(row.querySelector('.dir-ref-note'));
     list.appendChild(row);
   });
@@ -5309,6 +5314,52 @@ function updateDirGoModel() {
   const opt = $('dirModel').querySelector('option[value=""]');
   if (opt) opt.textContent = `跟随全局档位 — 当前 Seedance ${modelIs25() ? '2.5' : '2.0'}`;
 }
+
+// ---- 跨档复制：把参考（连同 role + 说明词）带到另一档的参考集 ----
+function dirOtherTier() { return state.director.refTier === '25' ? '20' : '25'; }
+function dirTierCaps(tier) {
+  return tier === '25' ? { image: 30, video: 10, audio: 10 } : { image: 9, video: 3, audio: 3 };
+}
+/** 复制单份参考到另一档；返回 'added' | 'updated' | 'full'。verbose=true 时直接反馈状态栏 */
+function dirCopyRefToOtherTier(r, verbose) {
+  if (!state.director.refsStash || typeof state.director.refsStash !== 'object') {
+    state.director.refsStash = { t20: [], t25: [] };
+  }
+  const target = dirOtherTier();
+  const key = 't' + target;
+  const list = state.director.refsStash[key] = Array.isArray(state.director.refsStash[key]) ? state.director.refsStash[key] : [];
+  const kind = r.kind || 'image';
+  const label = `Seedance ${target === '25' ? '2.5' : '2.0'}`;
+  const dup = list.find((x) => x.url === r.url);
+  if (dup) {
+    dup.name = r.name; dup.role = r.role; dup.note = r.note; dup.kind = kind;
+    scheduleSave();
+    if (verbose) setDirStatus(`该素材已在 ${label} 档 — 已同步其 role 与说明词 ✓`);
+    return 'updated';
+  }
+  const caps = dirTierCaps(target);
+  if (list.filter((x) => (x.kind || 'image') === kind).length >= caps[kind]) {
+    if (verbose) setDirStatus(`${label} 档的${DIR_KIND_META[kind].name}位已满（上限 ${caps[kind]}）`);
+    return 'full';
+  }
+  list.push({ id: nextRefId++, name: r.name, url: r.url, kind, role: r.role, note: r.note });
+  scheduleSave();
+  if (verbose) setDirStatus(`已复制到 ${label} 档 ✓（顶栏切档即可看到）`);
+  return 'added';
+}
+// 一键把当前档全部参考带到另一档
+$('dirRefCopyAll').onclick = () => {
+  if (!state.director.refs.length) { setDirStatus('当前档没有参考可复制'); return; }
+  let added = 0, updated = 0, full = 0;
+  for (const r of state.director.refs) {
+    const res = dirCopyRefToOtherTier(r, false);
+    if (res === 'added') added += 1;
+    else if (res === 'updated') updated += 1;
+    else full += 1;
+  }
+  const label = `Seedance ${dirOtherTier() === '25' ? '2.5' : '2.0'}`;
+  setDirStatus(`已带到 ${label} 档：新增 ${added} 份${updated ? `、同步更新 ${updated} 份` : ''}${full ? `、${full} 份因对方档位已满被跳过` : ''} ✓`);
+};
 
 function dirSyncTier() {
   if (!state.director.refsStash || typeof state.director.refsStash !== 'object') {
