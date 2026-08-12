@@ -958,3 +958,13 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .dir-gen-mega:active { transform: scale(.97); }
 .dir-go-meta { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 10px; text-align: center; }
 #egPanelText { width: 100%; resize: vertical; }
+
+/* 生效模型徽标：一眼看清这单会用 2.0 还是 2.5 */
+.dir-go-model {
+  width: 100%; text-align: center; padding: 6px 8px; border-radius: 10px;
+  font-size: 13px; font-weight: 700; letter-spacing: .04em;
+  background: rgba(120, 140, 255, .1); border: 1px solid rgba(120, 140, 255, .25);
+}
+.dir-go-model.is25 {
+  background: rgba(255, 159, 10, .12); border-color: rgba(255, 159, 10, .5); color: #c77800;
+}

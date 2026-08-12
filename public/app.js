@@ -36,7 +36,9 @@ const state = {
   director: {
     first: null, last: null,          // 首/尾帧 {url, name}
     refVideo: null, refVideoName: '', // 参考视频 url
-    refs: [],                         // 参考图 {id, name, url} ≤10
+    refs: [],                         // 当前档参考素材 {id, name, url, kind, role, note}
+    refsStash: { t20: [], t25: [] },  // 双档参考记忆：2.0 与 2.5 各存一套，切档互不丢失
+    refTier: null,                    // 当前参考集所属档（'20' | '25'）
     history: [],                      // {videoUrl, time, duration, model, note}
     current: -1,
     running: false,
@@ -170,6 +172,8 @@ function snapshot() {
       refVideoName: state.director.refVideoName,
       animMode: state.director.animMode,
       refs: state.director.refs,
+      refsStash: state.director.refsStash,
+      refTier: state.director.refTier,
       history: state.director.history,
     },
     pendingTasks: state.pendingTasks,
@@ -269,6 +273,8 @@ async function loadProject() {
     state.director.refVideoName = dr.refVideoName || '';
     state.director.animMode = dr.animMode || '12fps';
     state.director.refs = Array.isArray(dr.refs) ? dr.refs : [];
+    state.director.refsStash = (dr.refsStash && typeof dr.refsStash === 'object') ? dr.refsStash : { t20: [], t25: [] };
+    state.director.refTier = dr.refTier || null;
     state.director.history = Array.isArray(dr.history) ? dr.history : [];
     state.director.current = state.director.history.length ? 0 : -1;
     restoreDirectorUI();
@@ -2678,6 +2684,7 @@ async function refreshConfig() {
   serverModelId = cfg.model || '';
   serverProvider = cfg.preferredProvider || 'ark';
   syncModelSeg();
+  if (typeof dirSyncTier === 'function') dirSyncTier(); // 参考区档位/徽标跟随全局模型
   $('verChip').textContent = cfg.appVersion ? 'v' + cfg.appVersion : '';
   const chip = $('modeChip');
   if (cfg.hasKey) {
@@ -3246,7 +3253,7 @@ $('dirModel').onchange = () => {
     : is25
       ? '2.5：4-30 秒 · 480P/720P（1080P 自动降档）· 需已在方舟控制台开通该模型'
       : '2.0：4-15 秒 · 使用 ⚙ API 设置里的当前模型与分辨率';
-  renderDirRefs();
+  dirSyncTier(); // 上限 + 双档参考集 + 生效模型徽标一并同步
 };
 $('dirDuration').oninput = (e) => { $('dirDurationVal').textContent = e.target.value + ' 秒'; };
 $('dirAnimMode').onchange = () => { state.director.animMode = $('dirAnimMode').value; scheduleSave(); };
@@ -3495,7 +3502,7 @@ function restoreDirectorUI() {
     state.director.refVideoName = '';
   }
   if (state.director.animMode) $('dirAnimMode').value = state.director.animMode;
-  renderDirRefs();
+  dirSyncTier();
   renderDirector();
   syncDirActing();
 }
@@ -3689,9 +3696,10 @@ document.querySelectorAll('#modelSeg button').forEach((btn) => {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       serverModelId = id;
       syncModelSeg();
+      if (typeof dirSyncTier === 'function') dirSyncTier(); // 参考区上限+双档参考集+徽标同步
       showSaveToast(/2-5/.test(id)
-        ? '已切换 Seedance 2.5 — 单次最长 30 秒（需已在方舟控制台开通该模型）'
-        : '已切换 Seedance 2.0');
+        ? '已切换 Seedance 2.5 — 参考区已换到 2.5 档参考集（30图/10视频/10音频）'
+        : '已切换 Seedance 2.0 — 参考区已换到 2.0 档参考集（9图/3视频/3音频）');
     } catch (e) {
       showSaveToast('模型切换失败: ' + errMsg(e), false);
     }
@@ -3712,6 +3720,7 @@ document.querySelectorAll('#providerSeg button').forEach((btn) => {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       serverProvider = p;
       syncModelSeg();
+      if (typeof updateDirGoModel === 'function') updateDirGoModel();
       showSaveToast(p === 'artcraft'
         ? '生成通道已切换：Artcraft 优先（44 模型 · 失败自动回退方舟）'
         : '生成通道已切换：方舟直连');
@@ -5199,3 +5208,51 @@ if ($('egPanelSave')) {
   };
 }
 egPanelLoad();
+
+// ---------------- 双档参考记忆 + 生效模型徽标 ----------------
+// 2.0 与 2.5 各自记忆一套参考素材（图/视频/音频）：切档自动收起旧档、取出新档，
+// 来回切换不丢任何素材；生成按钮下方始终显示这一单实际会用的模型。
+function dirEffectiveIs25() {
+  const val = $('dirModel').value;
+  return /2p5|2-5/.test(val) || (!val && modelIs25());
+}
+
+function updateDirGoModel() {
+  const el = $('dirGoModel');
+  if (!el) return;
+  const val = $('dirModel').value;
+  let label;
+  if (val.startsWith('artcraft:')) {
+    const key = val.slice('artcraft:'.length);
+    const meta = ARTCRAFT_MODEL_META[key];
+    label = (meta ? meta.label.split('·')[0].trim() : key) + ' · Artcraft';
+  } else if (val) {
+    label = 'Seedance 2.5 · 方舟直连';
+  } else {
+    label = `Seedance ${modelIs25() ? '2.5' : '2.0'} · ${serverProvider === 'artcraft' ? 'Artcraft' : '方舟'}`;
+  }
+  el.textContent = '当前模型：' + label;
+  el.classList.toggle('is25', dirEffectiveIs25());
+  // 下拉首项动态标注，不再写死"Seedance 2.0（当前配置）"误导人
+  const opt = $('dirModel').querySelector('option[value=""]');
+  if (opt) opt.textContent = `跟随全局档位 — 当前 Seedance ${modelIs25() ? '2.5' : '2.0'}`;
+}
+
+function dirSyncTier() {
+  if (!state.director.refsStash || typeof state.director.refsStash !== 'object') {
+    state.director.refsStash = { t20: [], t25: [] };
+  }
+  const tier = dirEffectiveIs25() ? '25' : '20';
+  if (!state.director.refTier) {
+    state.director.refTier = tier; // 首次：现有参考归入当前档，不做交换
+  } else if (state.director.refTier !== tier) {
+    state.director.refsStash['t' + state.director.refTier] = state.director.refs;
+    const incoming = state.director.refsStash['t' + tier];
+    state.director.refs = Array.isArray(incoming) ? incoming : [];
+    state.director.refTier = tier;
+    setDirStatus(`已切到 Seedance ${tier === '25' ? '2.5' : '2.0'} 档参考集（${state.director.refs.length} 份素材）— 两档互相独立记忆，切回即恢复`);
+    scheduleSave();
+  }
+  renderDirRefs();
+  updateDirGoModel();
+}
