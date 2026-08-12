@@ -3435,6 +3435,17 @@ async function directorGenerate() {
     acting,
     negativeRaw ? '【负面清单】画面中绝不出现：' + negativeRaw : '',
   ].filter(Boolean).join('\n');
+  // 点击瞬间快照（注入前的原文 + 当时的全部参考）：生成期间用户改框也不影响历史记录
+  const genSnapshot = {
+    context: $('dirPrompt').value,
+    cuts: state.director.cuts.map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold })),
+    negative: $('dirNegative').value,
+    animMode: $('dirAnimMode').value,
+    refs: state.director.refs.map((r) => ({
+      name: r.name || '', url: r.url, kind: r.kind || 'image',
+      role: r.role || DIR_KIND_META[r.kind || 'image'].defaultRole, note: r.note || '',
+    })),
+  };
   dirRunning += 1;
   updateDirRunPill();
   setDirStatus('创建任务中…');
@@ -3464,15 +3475,11 @@ async function directorGenerate() {
     state.director.history.unshift({
       videoUrl: p.videoUrl,
       time: new Date().toLocaleString('zh-CN', { hour12: false }),
-      duration, model: model || '2.0', note: $('dirPrompt').value.trim().slice(0, 120),
+      duration, model: model || '2.0', note: genSnapshot.context.trim().slice(0, 120),
       // 原始输入全文（滑杆注入与参考指令之前的用户原文，含 @token）——供一键复用
-      rawPrompt: $('dirPrompt').value,
-      // 结构化原始输入：情境 + 分镜 + 负面，一键整套还原
-      inputs: {
-        context: $('dirPrompt').value,
-        cuts: state.director.cuts.map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold })),
-        negative: $('dirNegative').value,
-      },
+      rawPrompt: genSnapshot.context,
+      // 点击瞬间的完整快照：情境 + 分镜 + 负面 + 帧率 + 全部参考素材及其 role/说明词
+      inputs: genSnapshot,
     });
     state.director.current = 0;
     renderDirector();
@@ -3524,14 +3531,30 @@ function renderDirector() {
         e.stopPropagation(); // 不触发卡片的切换播放
         const ta = $('dirPrompt');
         if (item.inputs) {
-          // 结构化记录：情境 + 分镜 + 负面整套还原
+          // 完整重现：情境 + 分镜 + 负面 + 帧率 + 当时的全部参考素材（含 role/说明词）
           ta.value = item.inputs.context || '';
           state.director.cuts = (item.inputs.cuts || []).map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold }));
           state.director.negative = item.inputs.negative || '';
           $('dirNegative').value = state.director.negative;
+          if (item.inputs.animMode) { $('dirAnimMode').value = item.inputs.animMode; state.director.animMode = item.inputs.animMode; }
+          let refsRestored = false;
+          if (Array.isArray(item.inputs.refs)) {
+            const snap = item.inputs.refs;
+            if (!state.director.refs.length
+              || confirm(`同时把参考区替换为该次生成时的 ${snap.length} 份参考素材（含 role 与说明词）？\n「取消」= 只还原提示词，保留当前参考。`)) {
+              state.director.refs = snap.map((r) => ({
+                id: nextRefId++, name: r.name || '', url: r.url,
+                kind: r.kind || 'image', role: r.role || DIR_KIND_META[r.kind || 'image'].defaultRole, note: r.note || '',
+              }));
+              renderDirRefs();
+              refsRestored = true;
+            }
+          }
           renderDirCuts();
           scheduleSave();
-          setDirStatus('已整套还原该次生成的输入（情境 + 分镜 + 负面）✓');
+          setDirStatus(refsRestored
+            ? '已完整重现该次生成：提示词（情境+分镜+负面+帧率）与全部参考素材 ✓'
+            : '已还原该次生成的提示词（情境+分镜+负面+帧率）✓ 参考区保持不变');
         } else {
           ta.value = reusable;
           setDirStatus('已填回该次生成的原始提示词 ✓（@引用会按当前参考区重新解析）');
