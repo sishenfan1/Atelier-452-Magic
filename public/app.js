@@ -5154,6 +5154,8 @@ async function egRefreshBadge() {
         ? `常青锚点生效中：${text.slice(0, 90)}${text.length > 90 ? '…' : ''}`
         : '常青锚点：未设置 — 点这里写全片恒定的画质与风格锚（每一次生成都会自动带上）';
     }
+    const panel = $('egPanelText');
+    if (panel && document.activeElement !== panel) panel.value = cfg.evergreen || '';
     return cfg.evergreen || '';
   } catch { return ''; }
 }
@@ -5176,4 +5178,24 @@ $('egSave').onclick = async () => {
 };
 $('egClear').onclick = () => { $('egText').value = ''; };
 $('egClose').onclick = () => $('egDialog').close();
-egRefreshBadge();
+
+// 工作区 6 右栏的常青提示词常驻面板（与 🌲 对话框同一份数据）
+async function egPanelLoad() {
+  const panel = $('egPanelText');
+  if (panel && document.activeElement !== panel) panel.value = await egRefreshBadge();
+}
+if ($('egPanelSave')) {
+  $('egPanelSave').onclick = async () => {
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ evergreen: $('egPanelText').value }),
+      });
+      if (!res.ok) throw new Error('保存失败 ' + res.status);
+      $('egPanelStatus').textContent = '已保存 ✓ 全部工作区生效';
+      setTimeout(() => { $('egPanelStatus').textContent = ''; }, 4000);
+      egRefreshBadge();
+    } catch (e) { $('egPanelStatus').textContent = '保存失败: ' + errMsg(e); }
+  };
+}
+egPanelLoad();

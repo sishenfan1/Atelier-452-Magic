@@ -943,3 +943,18 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .eg-bar .eg-edit { flex: none; font-weight: 600; color: #34a853; }
 .eg-bar.active { border-style: solid; background: rgba(52, 168, 83, .12); }
 .eg-bar.active #egBarText { opacity: 1; }
+
+/* 工作区 6 右栏：超大生成按钮（sticky 悬浮）+ 常青提示词面板 */
+.dir-go-panel { position: sticky; top: 8px; z-index: 60; }
+.dir-gen-mega {
+  width: 100%; padding: 30px 10px; font-size: 24px; font-weight: 800;
+  line-height: 1.35; letter-spacing: .12em; border-radius: 18px;
+  background: linear-gradient(135deg, #0a84ff, #5e5ce6);
+  color: #fff; border: none; cursor: pointer;
+  box-shadow: 0 10px 32px rgba(10, 132, 255, .35), inset 0 1px 0 rgba(255, 255, 255, .25);
+  transition: transform .12s cubic-bezier(.2, .8, .3, 1.2), box-shadow .12s, filter .12s;
+}
+.dir-gen-mega:hover { filter: brightness(1.08); box-shadow: 0 14px 40px rgba(10, 132, 255, .5); transform: translateY(-2px); }
+.dir-gen-mega:active { transform: scale(.97); }
+.dir-go-meta { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 10px; text-align: center; }
+#egPanelText { width: 100%; resize: vertical; }

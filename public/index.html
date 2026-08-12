@@ -564,8 +564,6 @@
             <option value="off">平滑（不注入）</option>
           </select>
         </label>
-        <button id="btnDirectorGen" class="btn primary">🎬 导演生成</button>
-        <span id="dirRunCount" class="run-pill" hidden></span>
       </div>
       <div class="hint" id="dirModelHint">2.5：4-30 秒 · 480P/720P（1080P 自动降档）· 方舟 API 尚未开放调用，开放后此处即插即用</div>
       <span id="dirStatus" class="hint accent"></span>
@@ -581,6 +579,25 @@
       <div id="dirHistory" class="history-list" style="margin-top:10px"></div>
     </section>
   </div>
+
+  <aside class="col-right">
+    <section class="panel dir-go-panel" id="panelDirGo">
+      <button id="btnDirectorGen" class="btn primary dir-gen-mega">🎬<br>导 演 生 成</button>
+      <div class="dir-go-meta">
+        <span id="dirRunCount" class="run-pill" hidden></span>
+        <span class="hint">模型 / 时长 / 帧率在左侧「⚡ 生成」面板</span>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>🌲 常青提示词 <span class="hint">— 全片恒定，注入所有工作区每一次生成</span></h2>
+      <textarea id="egPanelText" rows="16" data-min-grow="200"
+        placeholder="写在这里的内容不随镜头变化，自动追加到每一次生成的提示词末尾。适合放：画质要求、介质质感（赛璐璐/胶片）、光影原则、全片色彩章程、防 AI 感条款、角色比例恒定条款。"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button id="egPanelSave" class="btn primary">保存（全局生效）</button>
+        <span id="egPanelStatus" class="hint accent"></span>
+      </div>
+    </section>
+  </aside>
 </main>
 
 <!-- MARS-LSP 风格 JSON 脚本导出 -->
