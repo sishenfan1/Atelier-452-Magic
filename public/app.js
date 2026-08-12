@@ -39,6 +39,8 @@ const state = {
     refs: [],                         // 当前档参考素材 {id, name, url, kind, role, note}
     refsStash: { t20: [], t25: [] },  // 双档参考记忆：2.0 与 2.5 各存一套，切档互不丢失
     refTier: null,                    // 当前参考集所属档（'20' | '25'）
+    cuts: [],                         // 分镜头提示词 [{text, dur}]（dur 秒，0.1 精度，0=不限）
+    negative: '',                     // 负面提示词
     history: [],                      // {videoUrl, time, duration, model, note}
     current: -1,
     running: false,
@@ -174,6 +176,9 @@ function snapshot() {
       refs: state.director.refs,
       refsStash: state.director.refsStash,
       refTier: state.director.refTier,
+      cuts: state.director.cuts,
+      negative: state.director.negative,
+      context: $('dirPrompt') ? $('dirPrompt').value : '',
       history: state.director.history,
     },
     pendingTasks: state.pendingTasks,
@@ -275,6 +280,10 @@ async function loadProject() {
     state.director.refs = Array.isArray(dr.refs) ? dr.refs : [];
     state.director.refsStash = (dr.refsStash && typeof dr.refsStash === 'object') ? dr.refsStash : { t20: [], t25: [] };
     state.director.refTier = dr.refTier || null;
+    state.director.cuts = Array.isArray(dr.cuts) ? dr.cuts : [];
+    state.director.negative = typeof dr.negative === 'string' ? dr.negative : '';
+    if (typeof dr.context === 'string' && $('dirPrompt')) $('dirPrompt').value = dr.context;
+    if ($('dirNegative')) $('dirNegative').value = state.director.negative;
     state.director.history = Array.isArray(dr.history) ? dr.history : [];
     state.director.current = state.director.history.length ? 0 : -1;
     restoreDirectorUI();
@@ -3399,13 +3408,28 @@ async function directorGenerate() {
     return;
   }
   // @引用解析：@image1 → 「参考图1」；找不到的编号直接拦下，避免模型收到悬空引用
-  const mainResolved = resolveMentions($('dirPrompt').value.trim());
-  if (mainResolved.unknown.length) {
-    setDirStatus('⚠ 找不到引用 ' + Array.from(new Set(mainResolved.unknown)).join('、') + ' — 参考区没有这个编号的素材');
+  const unknownAll = [];
+  const rs = (t) => {
+    const r = resolveMentions(String(t || '').trim());
+    unknownAll.push(...r.unknown);
+    return r.text;
+  };
+  const contextText = rs($('dirPrompt').value);
+  const cutsBlock = buildDirCutsBlock(rs);
+  const negativeRaw = rs($('dirNegative').value);
+  if (unknownAll.length) {
+    setDirStatus('⚠ 找不到引用 ' + Array.from(new Set(unknownAll)).join('、') + ' — 参考区没有这个编号的素材');
     return;
   }
   const model = $('dirModel').value || undefined;
-  const duration = Number($('dirDuration').value);
+  let duration = Number($('dirDuration').value);
+  if (cutsBlock.totalSec) {
+    // 全部镜头都设了时长 → 生成时长自动对齐分镜总和
+    const slider = $('dirDuration');
+    duration = Math.min(Number(slider.max), Math.max(Number(slider.min), Math.round(cutsBlock.totalSec)));
+    slider.value = duration;
+    $('dirDurationVal').textContent = duration + ' 秒';
+  }
   const acting = directorActingText();
   // 每份参考的 role + 说明 → @引用式指令块（后台注入，指挥模型如何使用每份素材）
   const kindCounters = { image: 0, video: 0, audio: 0 };
@@ -3419,9 +3443,11 @@ async function directorGenerate() {
     return `${DIR_KIND_META[kind].name}${kindCounters[kind]}（${roleText}）${note ? '：' + note : ''}`;
   }).filter(Boolean);
   const prompt = [
-    mainResolved.text,
+    contextText,
+    cutsBlock.text,
     refNotes.length ? '参考素材使用说明：\n' + refNotes.join('\n') : '',
     acting,
+    negativeRaw ? '【负面清单】画面中绝不出现：' + negativeRaw : '',
   ].filter(Boolean).join('\n');
   dirRunning += 1;
   updateDirRunPill();
@@ -3455,6 +3481,12 @@ async function directorGenerate() {
       duration, model: model || '2.0', note: $('dirPrompt').value.trim().slice(0, 120),
       // 原始输入全文（滑杆注入与参考指令之前的用户原文，含 @token）——供一键复用
       rawPrompt: $('dirPrompt').value,
+      // 结构化原始输入：情境 + 分镜 + 负面，一键整套还原
+      inputs: {
+        context: $('dirPrompt').value,
+        cuts: state.director.cuts.map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0 })),
+        negative: $('dirNegative').value,
+      },
     });
     state.director.current = 0;
     renderDirector();
@@ -3505,10 +3537,21 @@ function renderDirector() {
       reuse.onclick = (e) => {
         e.stopPropagation(); // 不触发卡片的切换播放
         const ta = $('dirPrompt');
-        ta.value = reusable;
+        if (item.inputs) {
+          // 结构化记录：情境 + 分镜 + 负面整套还原
+          ta.value = item.inputs.context || '';
+          state.director.cuts = (item.inputs.cuts || []).map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0 }));
+          state.director.negative = item.inputs.negative || '';
+          $('dirNegative').value = state.director.negative;
+          renderDirCuts();
+          scheduleSave();
+          setDirStatus('已整套还原该次生成的输入（情境 + 分镜 + 负面）✓');
+        } else {
+          ta.value = reusable;
+          setDirStatus('已填回该次生成的原始提示词 ✓（@引用会按当前参考区重新解析）');
+        }
         ta.dispatchEvent(new Event('input', { bubbles: true })); // 刷新 @chip 预览
         ta.focus();
-        setDirStatus('已填回该次生成的原始提示词 ✓（@引用会按当前参考区重新解析）');
       };
       card.appendChild(reuse);
     }
@@ -3529,6 +3572,7 @@ function restoreDirectorUI() {
     state.director.refVideoName = '';
   }
   if (state.director.animMode) $('dirAnimMode').value = state.director.animMode;
+  if (typeof renderDirCuts === 'function') renderDirCuts();
   dirSyncTier();
   renderDirector();
   syncDirActing();
@@ -5283,3 +5327,112 @@ function dirSyncTier() {
   renderDirRefs();
   updateDirGoModel();
 }
+
+// ---------------- 分镜提示词系统：CONTEXT + CUT 盒（0.1s 时长滑杆）+ 负面 ----------------
+// 空的 CUT 盒 = 完全不注入；每个设了时长的 CUT 注入硬性秒数；
+// 全部 CUT 都设时长时按累计时间戳 [x.xs–y.ys] 编排并自动对齐总时长。
+const DIR_MIN_CUTS = 4;
+
+function dirEnsureCuts() {
+  if (!Array.isArray(state.director.cuts)) state.director.cuts = [];
+  while (state.director.cuts.length < DIR_MIN_CUTS) state.director.cuts.push({ text: '', dur: 0 });
+}
+
+function renderDirCuts() {
+  const wrap = $('dirCuts');
+  if (!wrap) return;
+  dirEnsureCuts();
+  wrap.innerHTML = '';
+  state.director.cuts.forEach((cut, i) => {
+    const box = document.createElement('div');
+    box.className = 'cut-box' + (Number(cut.dur) > 0 ? ' timed' : '');
+    const head = document.createElement('div');
+    head.className = 'cut-head';
+    const title = document.createElement('span');
+    title.textContent = `🎬 CUT ${i + 1}`;
+    head.appendChild(title);
+    if (i >= DIR_MIN_CUTS) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'cut-del';
+      del.textContent = '✕';
+      del.title = '删除这个镜头';
+      del.onclick = () => {
+        state.director.cuts.splice(i, 1);
+        renderDirCuts();
+        scheduleSave();
+      };
+      head.appendChild(del);
+    }
+    const ta = document.createElement('textarea');
+    ta.className = 'dir-ta';
+    ta.rows = 2;
+    ta.placeholder = `镜头 ${i + 1} 的画面与动作（留空 = 此镜头不存在，不影响提示词）`;
+    ta.value = cut.text || '';
+    ta.oninput = () => { cut.text = ta.value; scheduleSave(); };
+    attachMentionAutocomplete(ta);
+    const durRow = document.createElement('div');
+    durRow.className = 'cut-dur';
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '0'; slider.max = '30'; slider.step = '0.1';
+    slider.value = String(Number(cut.dur) || 0);
+    const label = document.createElement('b');
+    const fmt = (v) => (v > 0 ? `严格 ${v.toFixed(1)} 秒` : '时长不限');
+    label.textContent = fmt(Number(cut.dur) || 0);
+    slider.oninput = () => {
+      cut.dur = Math.round(Number(slider.value) * 10) / 10;
+      label.textContent = fmt(cut.dur);
+      box.classList.toggle('timed', cut.dur > 0);
+      scheduleSave();
+    };
+    durRow.appendChild(slider);
+    durRow.appendChild(label);
+    box.appendChild(head);
+    box.appendChild(ta);
+    box.appendChild(durRow);
+    wrap.appendChild(box);
+  });
+}
+
+$('dirAddCut').onclick = () => {
+  dirEnsureCuts();
+  state.director.cuts.push({ text: '', dur: 0 });
+  renderDirCuts();
+  scheduleSave();
+  const boxes = $('dirCuts').querySelectorAll('.cut-box textarea');
+  const last = boxes[boxes.length - 1];
+  if (last) last.focus();
+};
+
+// 负面提示词与情境框：输入即入 state / 触发保存
+$('dirNegative').addEventListener('input', () => { state.director.negative = $('dirNegative').value; scheduleSave(); });
+$('dirPrompt').addEventListener('input', () => scheduleSave());
+
+/**
+ * 组装分镜块。resolveFn 对每段文字做 @解析并收集悬空引用。
+ * @returns {{ text: string, totalSec: number|null }} totalSec 仅在全部启用镜头都设了时长时给出
+ */
+function buildDirCutsBlock(resolveFn) {
+  dirEnsureCuts();
+  const used = state.director.cuts
+    .map((c) => ({ text: String(c.text || '').trim(), dur: Math.round((Number(c.dur) || 0) * 10) / 10 }))
+    .filter((c) => c.text);
+  if (!used.length) return { text: '', totalSec: null };
+  const allTimed = used.every((c) => c.dur > 0);
+  let t = 0;
+  const lines = used.map((c, k) => {
+    const body = resolveFn(c.text);
+    if (allTimed) {
+      const s = t;
+      t = Math.round((t + c.dur) * 10) / 10;
+      return `镜头 ${k + 1} [${s.toFixed(1)}s–${t.toFixed(1)}s]（本镜头时长严格 ${c.dur.toFixed(1)} 秒，不许拖长或缩短）：${body}`;
+    }
+    const durTxt = c.dur > 0 ? `（本镜头时长严格 ${c.dur.toFixed(1)} 秒）` : '';
+    return `镜头 ${k + 1}${durTxt}：${body}`;
+  });
+  const header = `【镜头结构】全片共 ${used.length} 个镜头、${Math.max(0, used.length - 1)} 次硬切（HARD CUT），镜头间直切、禁自加淡入淡出等转场，禁增删镜头；每镜时长按标注严格执行${allTimed ? `，全片总时长 ${t.toFixed(1)} 秒` : ''}。`;
+  return { text: header + '\n' + lines.join('\n'), totalSec: allTimed ? t : null };
+}
+
+renderDirCuts();

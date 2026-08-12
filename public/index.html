@@ -496,14 +496,6 @@
       <input type="file" id="dirFirstFile" accept="image/*" hidden>
       <input type="file" id="dirLastFile" accept="image/*" hidden>
     </section>
-  </aside>
-
-  <div class="col-center">
-    <section class="panel">
-      <h2>✍ 动作描述 <span class="hint">— 输入 @ 可直接引用参考素材（如 @image1）· 2.5 建议四拍结构：主体→动作→运镜→风格</span></h2>
-      <textarea id="dirPrompt" rows="4" placeholder="例：@image1 里的角色从静止起步，先缓慢迈出第一步（00-06s），逐渐加速冲刺（06-14s），镜头横移跟拍（14-24s），最终跃起定格（24-30s）。输入 @ 弹出参考列表。"></textarea>
-      <div id="dirMentionPreview" class="mention-preview" hidden></div>
-    </section>
     <section class="panel">
       <h2>🎭 演技滑杆 <span class="hint">— 角色表演四维 + 场面运动三维，全部注入提示词</span></h2>
       <div class="dir-sliders">
@@ -530,6 +522,19 @@
           <b id="dirActPhysicsVal">关</b></label>
       </div>
       <div class="hint" id="dirActPreview"></div>
+    </section>
+  </aside>
+
+  <div class="col-center">
+    <section class="panel highlight">
+      <h2>✍ 提示词 <span class="hint">— 情境 + 分镜头 CUT + 负面 · 输入 @ 引用参考素材 · 点入框内自动放大，无字数限制</span></h2>
+      <div class="prompt-block-label">🌍 全局情境 CONTEXT <span class="hint">— 整段视频共用：世界观 / 主体 / 画风基调（永远注入）</span></div>
+      <textarea id="dirPrompt" rows="3" class="dir-ta" placeholder="例：16:9 宽银幕电影感 2D 动画。@image1 的角色是唯一主角，赛博朋克雨夜街头。"></textarea>
+      <div id="dirMentionPreview" class="mention-preview" hidden></div>
+      <div id="dirCuts"></div>
+      <button id="dirAddCut" class="btn wide add-cut" type="button">＋ ADD CUT · 添加镜头</button>
+      <div class="prompt-block-label neg">🚫 负面提示词 <span class="hint">— 不想出现的一切（留空则不注入）</span></div>
+      <textarea id="dirNegative" rows="2" class="dir-ta neg" placeholder="例：画面模糊、闪烁、抖动、多余人物、字幕、水印、logo、3D 渲染质感、真实照片质感。"></textarea>
     </section>
     <section class="panel highlight">
       <h2>⚡ 生成</h2>
