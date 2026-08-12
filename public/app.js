@@ -3482,10 +3482,18 @@ function renderDirector() {
   $('dirFrameGrabRow').hidden = !cur;
   const list = $('dirHistory');
   list.innerHTML = '';
+  // 旧历史（未存全文）：note 是原文前 120 字 → 去提示词库（存了全文）按前缀回捞
+  const fullPromptFor = (item) => {
+    if (item.rawPrompt !== undefined) return item.rawPrompt;
+    const note = String(item.note || '').trim();
+    if (!note) return '';
+    const hit = (state.usedPrompts || []).find((u) => u && u.kind === 'director' && String(u.text || '').startsWith(note));
+    return hit ? hit.text : note;
+  };
   h.forEach((item, i) => {
     const card = document.createElement('div');
     card.className = 'gen-card' + (i === state.director.current ? ' playing' : '');
-    const reusable = item.rawPrompt !== undefined ? item.rawPrompt : (item.note || '');
+    const reusable = fullPromptFor(item);
     card.innerHTML = `<div class="head"><b>${item.model === 'doubao-seedance-2-5-260628' ? '2.5' : '2.0'} · ${item.duration}s</b><span class="hint">${item.time}</span></div>
       <div class="hint">${escapeHtml(item.note || '')}</div>`;
     if (String(reusable).trim()) {
