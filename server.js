@@ -669,16 +669,22 @@ async function artcraftOmniGenerate(cfg, opts) {
     duration_seconds: Math.max(1, Math.round(Number(duration) || 5)),
     generate_audio: typeof generateAudio === 'boolean' ? generateAudio : undefined,
   };
-  const r = await fetch(ARTCRAFT_API + '/v1/omni_api/generate/video', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.artcraftKey },
-    body: JSON.stringify(body),
-  });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok || !j.inference_job_token) {
-    throw new Error(`Artcraft 创建生成任务失败 (${r.status}): ` + JSON.stringify(j).slice(0, 300));
+  // Artcraft 后端 5xx 偶发（尤其带视频参考时）→ 自动重试 2 次再放弃
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1500 * attempt));
+    body.idempotency_token = crypto.randomUUID(); // 重试必须换 token，否则撞幂等
+    const r = await fetch(ARTCRAFT_API + '/v1/omni_api/generate/video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.artcraftKey },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.inference_job_token) return j.inference_job_token;
+    lastErr = new Error(`Artcraft 创建生成任务失败 (${r.status}): ` + JSON.stringify(j).slice(0, 300));
+    if (r.status < 500) break; // 4xx 是请求本身的问题，重试无意义
   }
-  return j.inference_job_token;
+  throw lastErr;
 }
 
 /** Omni API 单任务状态查询；成功即下载 cdn 视频到本地 */
@@ -1944,7 +1950,7 @@ app.post('/api/segments', async (req, res) => {
     try {
       const arkId = await arkCreate(cfg, firstData, lastData, prompt, duration, stylePrompt, actingPrompt, inbetweenPrompt);
       tasks[id] = { mode: 'ark', status: 'running', arkId, cost: bill && bill.cost, uid: bill && bill.uid };
-      if (fellBack) tasks[id].warning = 'Artcraft 失败已自动回退方舟: ' + fellBack;
+      if (fellBack) tasks[id].notice = 'Artcraft 失败已自动回退方舟: ' + fellBack;
     } catch (e) {
       if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
       return res.status(502).json({ error: (fellBack ? `Artcraft 失败（${fellBack}）且方舟也失败: ` : '') + String(e.message || e) });
@@ -2018,13 +2024,29 @@ app.post('/api/director', async (req, res) => {
         for (const u of (Array.isArray(refAudios) ? refAudios : []).slice(0, 10)) {
           refAudioTokens.push(await artcraftUploadAudio(cfg, u));
         }
-        const acJobToken = await artcraftOmniGenerate(cfg, {
+        const genOpts = {
           model: artcraftModel,
           prompt: fullPrompt, startToken, endToken, refTokens, refVideoTokens, refAudioTokens, duration,
           generateAudio: req.body && typeof req.body.generateAudio === 'boolean' ? req.body.generateAudio : undefined,
-        });
-        tasks[id] = { mode: 'artcraft', status: 'running', acJobToken, cost: bill && bill.cost, uid: bill && bill.uid };
-        return res.json({ id, mode: 'artcraft', status: 'running' });
+        };
+        let acJobToken;
+        let degraded = '';
+        try {
+          acJobToken = await artcraftOmniGenerate(cfg, genOpts);
+        } catch (e) {
+          // 5xx + 带视频/音频参考：Artcraft 后端对某些视频素材会内部报错（重试也 500）。
+          // 降级重试：只用图片参考 —— 拿到结果并明确告知，好过整单失败
+          const is5xx = /\(5\d\d\)/.test(String(e.message || e));
+          if (is5xx && (refVideoTokens.length || refAudioTokens.length)) {
+            acJobToken = await artcraftOmniGenerate(cfg, { ...genOpts, refVideoTokens: [], refAudioTokens: [] });
+            degraded = '⚠ Artcraft 后端拒绝了本次的视频/音频参考（500），已仅用图片参考完成生成。'
+              + '若必须用视频参考：换一段视频（短一点/mp4）再试，或稍后重试。';
+          } else {
+            throw e;
+          }
+        }
+        tasks[id] = { mode: 'artcraft', status: 'running', acJobToken, cost: bill && bill.cost, uid: bill && bill.uid, notice: degraded || undefined };
+        return res.json({ id, mode: 'artcraft', status: 'running', notice: degraded || undefined });
       } catch (e) {
         fellBack = String(e.message || e).slice(0, 200);
         console.warn('Artcraft 导演生成失败，尝试回退方舟:', fellBack);
@@ -2060,7 +2082,7 @@ app.post('/api/director', async (req, res) => {
         text: fullPrompt, duration, model: String(model || '').startsWith('artcraft:') ? undefined : model,
       });
       tasks[id] = { mode: 'ark', status: 'running', arkId, cost: bill && bill.cost, uid: bill && bill.uid };
-      if (fellBack) tasks[id].warning = 'Artcraft 失败已自动回退方舟: ' + fellBack;
+      if (fellBack) tasks[id].notice = 'Artcraft 失败已自动回退方舟: ' + fellBack;
     } catch (e) {
       if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
       return res.status(502).json({ error: (fellBack ? `Artcraft 失败（${fellBack}）且方舟也失败: ` : '') + String(e.message || e) });
@@ -2135,7 +2157,7 @@ app.post('/api/whole', async (req, res) => {
       const imageDataUrls = images.map(resolveToArkImage);
       const arkId = await arkCreateWhole(cfg, imageDataUrls, sanitizeForArk(wholeText), duration);
       tasks[id] = { mode: 'ark', status: 'running', arkId, cost: bill && bill.cost, uid: bill && bill.uid };
-      if (fellBack) tasks[id].warning = 'Artcraft 失败已自动回退方舟: ' + fellBack;
+      if (fellBack) tasks[id].notice = 'Artcraft 失败已自动回退方舟: ' + fellBack;
     } catch (e) {
       if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
       return res.status(502).json({ error: (fellBack ? `Artcraft 失败（${fellBack}）且方舟也失败: ` : '') + String(e.message || e) });
@@ -2352,7 +2374,7 @@ app.post('/api/v2v', async (req, res) => {
       }
       const arkId = await arkCreateV2VWithRetry(cfg, base + videoUrl, refDataUrls, text, duration);
       tasks[id] = { mode: 'ark', status: 'running', arkId, cost: bill && bill.cost, uid: bill && bill.uid };
-      if (fellBack) tasks[id].warning = 'Artcraft 失败已自动回退方舟: ' + fellBack;
+      if (fellBack) tasks[id].notice = 'Artcraft 失败已自动回退方舟: ' + fellBack;
     } catch (e) {
       if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
       return res.status(502).json({ error: (fellBack ? `Artcraft 失败（${fellBack}）且方舟也失败: ` : '') + String(e.message || e) });
@@ -2392,7 +2414,7 @@ app.get('/api/segments/:id', async (req, res) => {
     task.refunded = true;
     pm.refund(task.uid, task.cost, 'task-failed');
   }
-  res.json({ status: task.status, videoUrl: task.videoUrl, error: task.error, mode: task.mode, warning: task.warning });
+  res.json({ status: task.status, videoUrl: task.videoUrl, error: task.error, mode: task.mode, warning: task.warning, notice: task.notice });
 });
 
 // 顺序拼接导出 mp4（统一重编码，保证不同分段能接上）

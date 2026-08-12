@@ -3449,7 +3449,7 @@ async function directorGenerate() {
     });
     state.director.current = 0;
     renderDirector();
-    setDirStatus('完成 ✓');
+    setDirStatus(p.notice ? '完成 ✓ ' + p.notice : '完成 ✓');
     finishJob(job, true);
     scheduleSave();
   } catch (e) {
