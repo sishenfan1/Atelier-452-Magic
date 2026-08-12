@@ -662,10 +662,11 @@ const PROMPT_INTERPRETER_SYS =
   '【】标签、镜头编号、时间戳 [x.xs–y.ys]、@引用、「参考图N」等一律原样保留；' +
   '专业电影英文术语（HARD CUT、whip pan、smear、moving hold、sakuga 等）保留英文。' +
   '不增删内容、不解释、不加前后缀，只输出翻译后的提示词全文。';
-/** 出站前终审：先中文化（可用的 LLM 通道 + $20 硬顶闸门内），再执行 9999 字符硬顶 */
+/** 出站前终审：中文化默认关闭（cfg.translatePrompts=true 才启用，保留原文不 lose context），
+ *  9999 字符硬顶永远执行 */
 async function finalizePrompt(cfg, text) {
   let t = String(text || '');
-  if (hasSubstantialEnglish(t)) {
+  if (cfg.translatePrompts === true && hasSubstantialEnglish(t)) {
     try {
       const provider = cfg.llmProvider
         || (cfg.anthropicKey ? 'anthropic' : (cfg.apiKey ? 'ark' : (cfg.openaiKey ? 'openai' : '')));
@@ -1242,6 +1243,7 @@ app.get('/api/config', (req, res) => {
     colorPrompt: cfg.colorPrompt,
     refinePrompt: cfg.refinePrompt,
     evergreen: cfg.evergreen || '',
+    translatePrompts: cfg.translatePrompts === true,
     imgModel: cfg.imgModel,
     imgProvider: cfg.imgProvider,
     openaiBase: cfg.openaiBase,
@@ -1272,6 +1274,7 @@ app.post('/api/config', (req, res) => {
   if (colorPrompt !== undefined) cur.colorPrompt = colorPrompt;
   if (refinePrompt !== undefined) cur.refinePrompt = refinePrompt;
   if (req.body && req.body.evergreen !== undefined) cur.evergreen = String(req.body.evergreen || '');
+  if (req.body && req.body.translatePrompts !== undefined) cur.translatePrompts = req.body.translatePrompts === true;
   if (Array.isArray(presets)) cur.presets = presets;
   if (Array.isArray(req.body && req.body.promptFolders)) cur.promptFolders = req.body.promptFolders;
   if (publicBase !== undefined) cur.publicBase = publicBase;

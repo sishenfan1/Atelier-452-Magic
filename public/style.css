@@ -1014,3 +1014,13 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
   background: none; font-weight: 700; padding: 12px 0; border-radius: 12px;
 }
 .add-cut:hover { border-color: rgba(120, 140, 255, .8); background: rgba(120, 140, 255, .08); }
+
+/* CUT 盒运镜切换钮 */
+.cut-box .cut-toggle {
+  border: 1px solid rgba(120, 140, 255, .3); background: none; color: inherit;
+  border-radius: 999px; padding: 2px 10px; font-size: 11px; cursor: pointer; opacity: .55;
+  transition: opacity .1s, background .1s;
+}
+.cut-box .cut-toggle:hover { opacity: .85; }
+.cut-box .cut-toggle.on { opacity: 1; background: rgba(120, 140, 255, .18); border-color: rgba(120, 140, 255, .6); font-weight: 700; }
+.cut-box .cut-toggle.on.hold { background: rgba(255, 159, 10, .15); border-color: rgba(255, 159, 10, .55); }

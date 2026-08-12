@@ -2694,6 +2694,7 @@ async function refreshConfig() {
   serverProvider = cfg.preferredProvider || 'ark';
   syncModelSeg();
   if (typeof dirSyncTier === 'function') dirSyncTier(); // 参考区档位/徽标跟随全局模型
+  if ($('dirTranslate')) $('dirTranslate').checked = cfg.translatePrompts === true;
   $('verChip').textContent = cfg.appVersion ? 'v' + cfg.appVersion : '';
   const chip = $('modeChip');
   if (cfg.hasKey) {
@@ -3484,7 +3485,7 @@ async function directorGenerate() {
       // 结构化原始输入：情境 + 分镜 + 负面，一键整套还原
       inputs: {
         context: $('dirPrompt').value,
-        cuts: state.director.cuts.map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0 })),
+        cuts: state.director.cuts.map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold })),
         negative: $('dirNegative').value,
       },
     });
@@ -3540,7 +3541,7 @@ function renderDirector() {
         if (item.inputs) {
           // 结构化记录：情境 + 分镜 + 负面整套还原
           ta.value = item.inputs.context || '';
-          state.director.cuts = (item.inputs.cuts || []).map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0 }));
+          state.director.cuts = (item.inputs.cuts || []).map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold }));
           state.director.negative = item.inputs.negative || '';
           $('dirNegative').value = state.director.negative;
           renderDirCuts();
@@ -5351,6 +5352,25 @@ function renderDirCuts() {
     const title = document.createElement('span');
     title.textContent = `🎬 CUT ${i + 1}`;
     head.appendChild(title);
+    // 运镜切换钮：固定机位 / moving hold（互斥）
+    const mkToggle = (label, key, otherKey, extraClass, tip) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'cut-toggle' + (extraClass ? ' ' + extraClass : '') + (cut[key] ? ' on' : '');
+      b.textContent = label;
+      b.title = tip;
+      b.onclick = () => {
+        cut[key] = !cut[key];
+        if (cut[key]) cut[otherKey] = false; // 互斥：锁死机位与手持晃动不能共存
+        renderDirCuts();
+        scheduleSave();
+      };
+      return b;
+    };
+    head.appendChild(mkToggle('📌 固定机位', 'fixedCam', 'movingHold', '',
+      '注入硬性指令：本镜头零运镜——机位完全锁死，画框纹丝不动'));
+    head.appendChild(mkToggle('🎥 moving hold', 'movingHold', 'fixedCam', 'hold',
+      '注入硬性指令：moving hold 活动保持 + 手持摇曳质感'));
     if (i >= DIR_MIN_CUTS) {
       const del = document.createElement('button');
       del.type = 'button';
@@ -5409,20 +5429,50 @@ $('dirAddCut').onclick = () => {
 $('dirNegative').addEventListener('input', () => { state.director.negative = $('dirNegative').value; scheduleSave(); });
 $('dirPrompt').addEventListener('input', () => scheduleSave());
 
+// 出站中文化翻译开关（默认关 — 原文一字不动直发；开 = 大段英文全文译中）
+$('dirTranslate').onchange = async () => {
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ translatePrompts: $('dirTranslate').checked }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    setDirStatus($('dirTranslate').checked
+      ? '出站中文化已开启 — 大段英文会被 LLM 全文译中（可能损失措辞精度）'
+      : '出站中文化已关闭 ✓ 你的原文将一字不动直接出站');
+  } catch (e) {
+    $('dirTranslate').checked = !$('dirTranslate').checked; // 保存失败回滚
+    setDirStatus('开关保存失败: ' + errMsg(e));
+  }
+};
+
 /**
  * 组装分镜块。resolveFn 对每段文字做 @解析并收集悬空引用。
  * @returns {{ text: string, totalSec: number|null }} totalSec 仅在全部启用镜头都设了时长时给出
  */
+// 运镜切换钮的注入文案（按 CINEDANCE 物理化写法：写可见结果，不写抽象概念）
+const CUT_FIXED_CAM_EMBED =
+  '（机位锁死：三脚架完全固定，零运镜——不推、不拉、不摇、不移、不跟、无变焦、无手持晃动，画框纹丝不动，仅画面内的主体在运动）';
+const CUT_MOVING_HOLD_EMBED =
+  '（moving hold 活动保持：角色保持关键姿态的同时全程微动——呼吸起伏、重心细微调整、发丝衣角轻摆，绝不冻结；' +
+  '镜头为手持肩扛质感：轻微的呼吸式晃动、缓慢的漂移与人手修正感，摇曳但不失控）';
 function buildDirCutsBlock(resolveFn) {
   dirEnsureCuts();
   const used = state.director.cuts
-    .map((c) => ({ text: String(c.text || '').trim(), dur: Math.round((Number(c.dur) || 0) * 10) / 10 }))
+    .map((c) => ({
+      text: String(c.text || '').trim(),
+      dur: Math.round((Number(c.dur) || 0) * 10) / 10,
+      fixedCam: !!c.fixedCam,
+      movingHold: !!c.movingHold,
+    }))
     .filter((c) => c.text);
   if (!used.length) return { text: '', totalSec: null };
   const allTimed = used.every((c) => c.dur > 0);
   let t = 0;
   const lines = used.map((c, k) => {
-    const body = resolveFn(c.text);
+    const body = resolveFn(c.text)
+      + (c.fixedCam ? CUT_FIXED_CAM_EMBED : '')
+      + (c.movingHold ? CUT_MOVING_HOLD_EMBED : '');
     if (allTimed) {
       const s = t;
       t = Math.round((t + c.dur) * 10) / 10;
