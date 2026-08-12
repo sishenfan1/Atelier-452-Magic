@@ -5138,3 +5138,33 @@ window.addEventListener('message', async (e) => {
     await addClipboardRefBlob(new Blob([d.buf], { type: d.mime || 'image/png' }), d.name || '');
   } catch (err) { setDirStatus('粘贴上传失败: ' + errMsg(err)); }
 });
+
+// ---------------- 常青提示词：全局质量/风格锚（注入所有工作区每一次生成） ----------------
+async function egRefreshBadge() {
+  try {
+    const cfg = await (await fetch('/api/config')).json();
+    const active = !!(cfg.evergreen && cfg.evergreen.trim());
+    $('btnEvergreen').textContent = active ? '🌲●' : '🌲';
+    $('btnEvergreen').classList.toggle('primary', active);
+    return cfg.evergreen || '';
+  } catch { return ''; }
+}
+$('btnEvergreen').onclick = async () => {
+  $('egStatus').textContent = '';
+  $('egText').value = await egRefreshBadge();
+  $('egDialog').showModal();
+};
+$('egSave').onclick = async () => {
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ evergreen: $('egText').value }),
+    });
+    if (!res.ok) throw new Error('保存失败 ' + res.status);
+    $('egStatus').textContent = '已保存 ✓ 之后的每一次生成都会带上这段锚点';
+    egRefreshBadge();
+  } catch (e) { $('egStatus').textContent = '保存失败: ' + errMsg(e); }
+};
+$('egClear').onclick = () => { $('egText').value = ''; };
+$('egClose').onclick = () => $('egDialog').close();
+egRefreshBadge();

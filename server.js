@@ -622,6 +622,18 @@ function animModePrompt(mode) {
   return ANIM_MODE_PROMPTS[mode] || '';
 }
 
+// ---------- 常青提示词：全局质量/风格锚，注入所有工作区的每一次生成 ----------
+function evergreenText(cfg) {
+  const t = String(cfg.evergreen || '').trim();
+  return t ? '【常青锚点 · 全片恒定】' + t : '';
+}
+function evergreenJoin(cfg, prompt) {
+  const eg = evergreenText(cfg);
+  const base = String(prompt || '').trim();
+  if (!eg) return base;
+  return base ? base + '\n' + eg : eg;
+}
+
 /** 全局 provider 决策：优先 Artcraft（用户显式选择且已配 key） */
 function useArtcraftFirst(cfg) {
   return cfg.preferredProvider === 'artcraft' && !!cfg.artcraftKey;
@@ -1159,6 +1171,7 @@ app.get('/api/config', (req, res) => {
     inbetweenPrompt: cfg.inbetweenPrompt,
     colorPrompt: cfg.colorPrompt,
     refinePrompt: cfg.refinePrompt,
+    evergreen: cfg.evergreen || '',
     imgModel: cfg.imgModel,
     imgProvider: cfg.imgProvider,
     openaiBase: cfg.openaiBase,
@@ -1188,6 +1201,7 @@ app.post('/api/config', (req, res) => {
   if (inbetweenPrompt !== undefined) cur.inbetweenPrompt = inbetweenPrompt;
   if (colorPrompt !== undefined) cur.colorPrompt = colorPrompt;
   if (refinePrompt !== undefined) cur.refinePrompt = refinePrompt;
+  if (req.body && req.body.evergreen !== undefined) cur.evergreen = String(req.body.evergreen || '');
   if (Array.isArray(presets)) cur.presets = presets;
   if (Array.isArray(req.body && req.body.promptFolders)) cur.promptFolders = req.body.promptFolders;
   if (publicBase !== undefined) cur.publicBase = publicBase;
@@ -1891,9 +1905,10 @@ app.get('/api/artcraft/test', async (req, res) => {
 });
 
 app.post('/api/segments', async (req, res) => {
-  const { first, last, prompt, duration, stylePrompt, actingPrompt, inbetweenPrompt } = req.body || {};
+  const { first, last, prompt: userPrompt, duration, stylePrompt, actingPrompt, inbetweenPrompt } = req.body || {};
   if (!first || !last) return res.status(400).json({ error: '缺少首帧或尾帧图片' });
   const cfg = loadConfig();
+  const prompt = evergreenJoin(cfg, userPrompt); // 常青锚点：注入每一镜
   const id = newId();
   let firstData, lastData;
   try {
@@ -1907,7 +1922,7 @@ app.post('/api/segments', async (req, res) => {
     bill = pm.charge(req, 'segment', clampDuration(duration));
     if (!bill.ok) return res.status(402).json({ error: bill.error });
   }
-  logUsedPrompt(cfg, 'segment', prompt);
+  logUsedPrompt(cfg, 'segment', userPrompt);
   // Provider 优先级：Artcraft（用户显式选择）→ 失败自动回退方舟
   let fellBack = '';
   if (useArtcraftFirst(cfg)) {
@@ -1954,14 +1969,14 @@ app.post('/api/whole/preview', (req, res) => {
     wholePromptFor(Number(count) || 0, gapList),
     (inbetweenPrompt !== undefined && inbetweenPrompt !== '' ? inbetweenPrompt : (cfg.inbetweenPrompt || DEFAULT_INBETWEEN_PROMPT)),
     (actingPrompt || '').trim(),
-    (prompt || '').trim(),
+    evergreenJoin(cfg, prompt),
   ].map((s) => s.trim()).filter(Boolean).join('\n');
   res.json({ text });
 });
 
 // 一体生成：全部关键帧一次生成一段连续动画
 app.post('/api/director', async (req, res) => {
-  const { firstFrame, lastFrame, refVideoUrl, refImages = [], refVideos = [], refAudios = [], prompt, duration, model, animMode } = req.body || {};
+  const { firstFrame, lastFrame, refVideoUrl, refImages = [], refVideos = [], refAudios = [], prompt: userPrompt, duration, model, animMode } = req.body || {};
   // 首帧可选：纯参考素材 + 提示词即可生成（这正是 REFERENCES TOOL 的本职）
   const hasAnyInput = firstFrame || (Array.isArray(refImages) && refImages.length)
     || (Array.isArray(refVideos) && refVideos.length) || (Array.isArray(refAudios) && refAudios.length) || refVideoUrl;
@@ -1973,9 +1988,9 @@ app.post('/api/director', async (req, res) => {
     bill = pm.charge(req, 'whole', clampDurationFor(model, duration));
     if (!bill.ok) return res.status(402).json({ error: bill.error });
   }
-  logUsedPrompt(cfg, 'director', prompt);
+  logUsedPrompt(cfg, 'director', userPrompt);
   // 动画帧率指令：本工具面向动画生产，默认 12fps 卡帧（隐藏注入，客户端可选 variable/off）
-  const fullPrompt = [animModePrompt(animMode === undefined ? '12fps' : animMode), String(prompt || '')]
+  const fullPrompt = [animModePrompt(animMode === undefined ? '12fps' : animMode), evergreenJoin(cfg, userPrompt)]
     .filter(Boolean).join('\n');
   // Provider 决策：显式 artcraft: 前缀 > 空模型时跟随全局 preferredProvider
   const wantArtcraft = String(model || '').startsWith('artcraft:')
@@ -2076,7 +2091,7 @@ app.post('/api/director', async (req, res) => {
 });
 
 app.post('/api/whole', async (req, res) => {
-  const { images = [], prompt, stylePrompt, actingPrompt, inbetweenPrompt, duration, timings, gaps } = req.body || {};
+  const { images = [], prompt: userPrompt, stylePrompt, actingPrompt, inbetweenPrompt, duration, timings, gaps } = req.body || {};
   const gapList = Array.isArray(gaps) ? gaps : (Array.isArray(timings) ? timings.map((s) => ({ seconds: s })) : null);
   if (!Array.isArray(images) || images.length < 2) return res.status(400).json({ error: '至少需要 2 张关键帧' });
   if (images.length > 100) return res.status(400).json({ error: '最多 100 张关键帧' });
@@ -2087,7 +2102,7 @@ app.post('/api/whole', async (req, res) => {
     bill = pm.charge(req, 'whole', clampDuration(duration));
     if (!bill.ok) return res.status(402).json({ error: bill.error });
   }
-  logUsedPrompt(cfg, 'whole', prompt);
+  logUsedPrompt(cfg, 'whole', userPrompt);
   if (Array.isArray(gaps)) for (const g of gaps) logUsedPrompt(cfg, 'gap', g && g.prompt);
   const wholeText = [
     (stylePrompt !== undefined ? stylePrompt : cfg.stylePrompt) || '',
@@ -2097,7 +2112,7 @@ app.post('/api/whole', async (req, res) => {
       ? inbetweenPrompt
       : (cfg.inbetweenPrompt || DEFAULT_INBETWEEN_PROMPT)),
     (actingPrompt || '').trim(),
-    (prompt || '').trim(),
+    evergreenJoin(cfg, userPrompt),
   ].map((s) => s.trim()).filter(Boolean).join('\n');
   // Provider 优先级：Artcraft → 失败自动回退方舟
   let fellBack = '';
@@ -2152,8 +2167,8 @@ app.post('/api/refine', async (req, res) => {
   if (!image) return res.status(400).json({ error: '缺少源图片' });
   const cfg = loadConfig();
   const id = newId();
-  // 隐藏系统指令永远前置；用户可见的精修提示词与补充描述随后
-  const fullPrompt = [GENGA_SYSTEM_PROMPT, (prompt || cfg.refinePrompt || '').trim()]
+  // 隐藏系统指令永远前置；用户可见的精修提示词与补充描述随后；常青锚点收尾
+  const fullPrompt = [GENGA_SYSTEM_PROMPT, (prompt || cfg.refinePrompt || '').trim(), evergreenText(cfg)]
     .filter(Boolean).join('\n');
   logUsedPrompt(cfg, 'refine', prompt);
   let bill = null;
@@ -2270,7 +2285,7 @@ app.post('/api/refine', async (req, res) => {
 
 // 视频转视频（上色/转绘）任务
 app.post('/api/v2v', async (req, res) => {
-  const { videoUrl, refs = [], prompt, colorPrompt, duration } = req.body || {};
+  const { videoUrl, refs = [], prompt: userPrompt, colorPrompt, duration } = req.body || {};
   const srcFile = videoUrl && localFileOf(videoUrl);
   if (!srcFile || !fs.existsSync(srcFile)) return res.status(400).json({ error: '源视频不存在，请先上传或生成' });
   const cfg = loadConfig();
@@ -2280,10 +2295,10 @@ app.post('/api/v2v', async (req, res) => {
     bill = pm.charge(req, 'v2v', clampDuration(duration));
     if (!bill.ok) return res.status(402).json({ error: bill.error });
   }
-  logUsedPrompt(cfg, 'v2v', prompt);
+  logUsedPrompt(cfg, 'v2v', userPrompt);
   const v2vText = [
     ((colorPrompt !== undefined ? colorPrompt : cfg.colorPrompt) || '').trim(),
-    (prompt || '').trim(),
+    evergreenJoin(cfg, userPrompt),
   ].filter(Boolean).join('\n');
   // Provider 优先级：Artcraft（视频直接上传，无需公网隧道！）→ 失败自动回退方舟
   let fellBack = '';

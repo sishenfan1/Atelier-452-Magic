@@ -61,6 +61,7 @@
       <button data-model="doubao-seedance-2-0-260128">2.0</button><button data-model="doubao-seedance-2-5-260628">2.5</button>
     </span>
     <button id="btnLayoutReset" class="btn ghost" title="重置面板布局（折叠 / 顺序 / 栏宽）">🧩</button>
+    <button id="btnEvergreen" class="btn ghost" title="常青提示词 — 全局质量/风格锚，注入所有工作区的每一次生成">🌲</button>
     <button id="btnLibrary" class="btn ghost" title="提示词库 / Prompt Library">📚</button>
     <button id="btnTour" class="btn ghost" title="新手引导 / Tour">❓</button>
     <span id="langSeg" class="lang-seg" role="group" aria-label="Language">
@@ -720,6 +721,22 @@
 </dialog>
 
 <!-- API 设置弹窗 -->
+<!-- 常青提示词：全片恒定的质量/风格锚，注入所有工作区的每一次生成 -->
+<dialog id="egDialog">
+  <h3>🌲 常青提示词 <span class="hint">— 每一镜都带上的质量与风格锚点</span></h3>
+  <div class="hint" style="margin-bottom:8px">
+    写在这里的内容<b>不随镜头变化</b>，会自动追加到 Gen Studio <b>所有工作区</b>（中割 / 一体 / 转绘 / 精修 / REFERENCES TOOL）
+    每一次生成的提示词末尾，作为「常青锚点」。适合放：画质要求、介质质感、光影原则、全片色彩章程、防 AI 感条款。
+  </div>
+  <textarea id="egText" rows="12" style="width:100%" placeholder="例：赛璐璐动画质感，干净利落的线条与均匀色块；柔和自然的光影层次；画面稳定无闪烁无抖动；角色比例与画风全片恒定；禁 3D 渲染质感、禁真实照片质感。"></textarea>
+  <div class="dialog-actions">
+    <button id="egSave" class="btn primary">保存（立即生效）</button>
+    <button id="egClear" class="btn">清空</button>
+    <button id="egClose" class="btn ghost">关闭</button>
+  </div>
+  <div id="egStatus" class="hint accent"></div>
+</dialog>
+
 <dialog id="settingsDialog">
   <h3>API 设置（火山方舟 · Seedance）</h3>
   <div class="field">
