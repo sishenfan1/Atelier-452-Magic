@@ -3606,7 +3606,12 @@ function renderDirector() {
           setDirStatus('已填回该次生成的原始提示词 ✓（@引用会按当前参考区重新解析）');
         }
         ta.dispatchEvent(new Event('input', { bubbles: true })); // 刷新 @chip 预览
-        ta.focus();
+        // confirm 弹窗归还焦点是异步的：下一拍再 focus 并显式展开，
+        // 避免 activeElement 被静默设置导致后续 focusin 永不触发、框无法展开
+        setTimeout(() => {
+          ta.focus();
+          if (typeof taGrow === 'function') taGrow(ta);
+        }, 0);
       };
       card.appendChild(reuse);
     }
@@ -3866,6 +3871,11 @@ const taGrow = (el) => {
 };
 document.addEventListener('focusin', (e) => {
   if (e.target.tagName === 'TEXTAREA') taGrow(e.target);
+});
+// 点击也驱动展开：confirm/系统弹窗抢走窗口焦点后，focus() 只改 activeElement
+// 而不触发 focusin（实测），此时再点"已活动"的框 focusin 永远不来 → 用 pointerdown 兜底
+document.addEventListener('pointerdown', (e) => {
+  if (e.target.tagName === 'TEXTAREA') setTimeout(() => taGrow(e.target), 0);
 });
 document.addEventListener('input', (e) => {
   if (e.target.tagName === 'TEXTAREA' && document.activeElement === e.target) taGrow(e.target);
