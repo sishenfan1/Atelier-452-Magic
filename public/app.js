@@ -3453,6 +3453,8 @@ async function directorGenerate() {
       videoUrl: p.videoUrl,
       time: new Date().toLocaleString('zh-CN', { hour12: false }),
       duration, model: model || '2.0', note: $('dirPrompt').value.trim().slice(0, 120),
+      // 原始输入全文（滑杆注入与参考指令之前的用户原文，含 @token）——供一键复用
+      rawPrompt: $('dirPrompt').value,
     });
     state.director.current = 0;
     renderDirector();
@@ -3483,8 +3485,25 @@ function renderDirector() {
   h.forEach((item, i) => {
     const card = document.createElement('div');
     card.className = 'gen-card' + (i === state.director.current ? ' playing' : '');
+    const reusable = item.rawPrompt !== undefined ? item.rawPrompt : (item.note || '');
     card.innerHTML = `<div class="head"><b>${item.model === 'doubao-seedance-2-5-260628' ? '2.5' : '2.0'} · ${item.duration}s</b><span class="hint">${item.time}</span></div>
       <div class="hint">${escapeHtml(item.note || '')}</div>`;
+    if (String(reusable).trim()) {
+      const reuse = document.createElement('button');
+      reuse.type = 'button';
+      reuse.className = 'btn ghost reuse-prompt';
+      reuse.textContent = '↩ 复用提示词';
+      reuse.title = '把这一条生成时的原始输入（滑杆与参考指令注入之前的原文）填回动作描述框';
+      reuse.onclick = (e) => {
+        e.stopPropagation(); // 不触发卡片的切换播放
+        const ta = $('dirPrompt');
+        ta.value = reusable;
+        ta.dispatchEvent(new Event('input', { bubbles: true })); // 刷新 @chip 预览
+        ta.focus();
+        setDirStatus('已填回该次生成的原始提示词 ✓（@引用会按当前参考区重新解析）');
+      };
+      card.appendChild(reuse);
+    }
     card.onclick = () => { state.director.current = i; renderDirector(); };
     list.appendChild(card);
   });
