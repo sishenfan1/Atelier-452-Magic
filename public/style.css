@@ -1032,3 +1032,23 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
   cursor: pointer; white-space: nowrap; flex: none;
 }
 .dir-ref-copy:hover { background: rgba(52, 168, 83, .12); }
+
+/* 问题引用定位：chip 可点 + 目标框闪烁 */
+.mention-chip.bad { cursor: pointer; }
+.mention-chip.bad:hover { background: rgba(255, 90, 110, .22); transform: translateY(-1px); }
+.mention-flash { outline: 3px solid rgba(255, 90, 110, .8); outline-offset: 2px; transition: outline-color .3s; }
+
+/* 提示词框清空钮 */
+.box-clear {
+  margin-left: auto; border: none; background: none; cursor: pointer;
+  font-size: 11px; opacity: .5; padding: 1px 8px; border-radius: 6px;
+}
+.box-clear:hover { opacity: 1; background: rgba(208, 69, 76, .12); color: #d0454c; }
+.cut-clear { margin-left: 4px; }
+
+/* 参考素材拖拽重排 */
+.dir-ref-drag { cursor: grab; opacity: .4; font-size: 13px; flex: none; user-select: none; }
+.dir-ref-drag:hover { opacity: .9; }
+.dir-ref-row.dragging { opacity: .45; }
+.dir-ref-row.drop-above { box-shadow: 0 -3px 0 0 #0a84ff; }
+.dir-ref-row.drop-below { box-shadow: 0 3px 0 0 #0a84ff; }

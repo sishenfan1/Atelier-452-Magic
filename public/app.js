@@ -3301,6 +3301,26 @@ function dirRefsOf(kind) {
   return state.director.refs.filter((r) => (r.kind || 'image') === kind);
 }
 
+// 参考素材拖拽重排：同类内移动，@编号按新位置自动重算（image7 拖到顶 = image1）
+let dirDragRefId = null;
+function dirReorderRef(srcId, targetId, before) {
+  const kindItems = dirRefsOf(dirRefKind);
+  const src = kindItems.find((x) => x.id === srcId);
+  if (!src || srcId === targetId) return;
+  const order = kindItems.filter((x) => x.id !== srcId);
+  const ti = order.findIndex((x) => x.id === targetId);
+  if (ti < 0) return;
+  order.splice(before ? ti : ti + 1, 0, src);
+  // 回写：当前类的元素按新顺序填回它们在总数组中原有的槽位（不打乱其他类型）
+  const slots = [];
+  state.director.refs.forEach((x, i) => { if ((x.kind || 'image') === dirRefKind) slots.push(i); });
+  slots.forEach((slot, k) => { state.director.refs[slot] = order[k]; });
+  renderDirRefs(); // 内部会刷新 @chip 预览（编号已变）
+  scheduleSave();
+  const newIdx = order.findIndex((x) => x.id === srcId) + 1;
+  setDirStatus(`已移动到第 ${newIdx} 位 — 该素材现在是 @${(dirRefKind === 'image' ? 'image' : dirRefKind)}${newIdx}，提示词里的旧编号请留意`);
+}
+
 function renderDirRefs() {
   const caps = dirRefCaps();
   for (const k of ['image', 'video', 'audio']) {
@@ -3334,6 +3354,7 @@ function renderDirRefs() {
       <div class="ref-cell">${thumb}<button type="button" aria-label="移除">✕</button></div>
       <div class="dir-ref-meta">
         <div class="dir-ref-head">
+          <span class="dir-ref-drag" title="按住拖拽调整顺序 — @编号随位置自动重算">⠿</span>
           <span class="dir-ref-idx">${DIR_KIND_META[r.kind || 'image'].icon} ${i + 1} · ${escapeHtml((r.name || '').slice(0, 18))}</span>
           <select class="dir-ref-role" title="这份参考对模型的作用（注入后台提示词）">${roleOpts}</select>
           <button type="button" class="dir-ref-copy" title="把这份参考连同 role 与说明词复制到 Seedance ${otherLabel} 档的参考集">⇄ ${otherLabel}</button>
@@ -3350,6 +3371,31 @@ function renderDirRefs() {
     row.querySelector('.dir-ref-note').onchange = (e) => { r.note = e.target.value; scheduleSave(); };
     row.querySelector('.dir-ref-copy').onclick = () => dirCopyRefToOtherTier(r, true);
     if (typeof attachMentionAutocomplete === 'function') attachMentionAutocomplete(row.querySelector('.dir-ref-note'));
+    // 拖拽重排（同类内）：把 image7 拖到顶就变 image1，其余顺延
+    const handle = row.querySelector('.dir-ref-drag');
+    handle.onmousedown = () => { row.draggable = true; };
+    row.addEventListener('dragstart', (e) => {
+      dirDragRefId = r.id;
+      row.classList.add('dragging');
+      try { e.dataTransfer.setData('text/plain', String(r.id)); } catch {}
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    row.addEventListener('dragend', () => { row.classList.remove('dragging'); row.draggable = false; dirDragRefId = null; });
+    row.addEventListener('dragover', (e) => {
+      if (dirDragRefId === null || dirDragRefId === r.id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      row.classList.toggle('drop-above', e.offsetY < row.offsetHeight / 2);
+      row.classList.toggle('drop-below', e.offsetY >= row.offsetHeight / 2);
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drop-above', 'drop-below'));
+    row.addEventListener('drop', (e) => {
+      row.classList.remove('drop-above', 'drop-below');
+      if (dirDragRefId === null || dirDragRefId === r.id) return;
+      e.preventDefault();
+      e.stopPropagation(); // 不触发面板级的文件拖入处理
+      dirReorderRef(dirDragRefId, r.id, e.offsetY < row.offsetHeight / 2);
+    });
     list.appendChild(row);
   });
   // 参考增删/换模型会改变编号 → 提示词里的 @chip 预览同步刷新
@@ -4887,22 +4933,31 @@ function resolveMentions(text) {
 }
 
 // ---- 实时解析预览（chip 条：绿=已解析到素材，红=找不到） ----
+/** 所有含 @引用 的提示词框（CONTEXT + 每个 CUT + 负面），按页面顺序 */
+function dirMentionSources() {
+  const list = [{ ta: $('dirPrompt'), label: 'CONTEXT' }];
+  document.querySelectorAll('#dirCuts .cut-box textarea').forEach((ta, i) => list.push({ ta, label: `CUT ${i + 1}` }));
+  if ($('dirNegative')) list.push({ ta: $('dirNegative'), label: '负面' });
+  return list.filter((s) => s.ta);
+}
+
 function renderMentionPreview() {
   const box = $('dirMentionPreview');
   if (!box) return;
-  const text = $('dirPrompt').value;
   const tokens = dirMentionTokens();
   const byToken = new Map(tokens.map((t) => [t.token, t]));
   const seen = new Set();
   const chips = [];
-  let m;
-  MENTION_RE.lastIndex = 0;
-  while ((m = MENTION_RE.exec(text))) {
-    const kind = MENTION_ALIAS[m[1].toLowerCase()] || MENTION_ALIAS[m[1]];
-    const key = kind ? kind + Number(m[2]) : m[0];
-    if (seen.has(key)) continue;
-    seen.add(key);
-    chips.push({ raw: m[0], hit: byToken.get(key) || null });
+  for (const src of dirMentionSources()) {
+    let m;
+    MENTION_RE.lastIndex = 0;
+    while ((m = MENTION_RE.exec(src.ta.value))) {
+      const kind = MENTION_ALIAS[m[1].toLowerCase()] || MENTION_ALIAS[m[1]];
+      const key = kind ? kind + Number(m[2]) : m[0];
+      if (seen.has(key)) continue;
+      seen.add(key);
+      chips.push({ raw: m[0], key, hit: byToken.get(key) || null });
+    }
   }
   box.innerHTML = '';
   box.hidden = !chips.length;
@@ -4922,11 +4977,41 @@ function renderMentionPreview() {
     const label = document.createElement('span');
     label.textContent = c.hit
       ? `@${c.hit.token} → ${c.hit.zhLabel}${c.hit.name ? ' · ' + c.hit.name.slice(0, 14) : ''}`
-      : `${c.raw} 找不到对应参考`;
+      : `${c.raw} 找不到对应参考 · 点我定位`;
     chip.appendChild(label);
-    chip.title = c.hit ? `${c.hit.zhLabel}（${c.hit.role ? c.hit.role[0] : ''}）${c.hit.name}` : '参考区里没有这个编号的素材';
+    if (c.hit) {
+      chip.title = `${c.hit.zhLabel}（${c.hit.role ? c.hit.role[0] : ''}）${c.hit.name}`;
+    } else {
+      chip.title = '点击跳到出现这个引用的位置并高亮选中；再点跳到下一处，直到全部修完';
+      chip.onclick = () => jumpToMentionProblem(c.key);
+    }
     box.appendChild(chip);
   }
+}
+
+// 问题引用定位器：点 chip → 跳到下一处出现位置并高亮选中（跨 CONTEXT/CUT/负面循环）
+const mentionJump = { key: null, idx: -1 };
+function jumpToMentionProblem(key) {
+  const occ = [];
+  for (const src of dirMentionSources()) {
+    let m;
+    MENTION_RE.lastIndex = 0;
+    while ((m = MENTION_RE.exec(src.ta.value))) {
+      const kind = MENTION_ALIAS[m[1].toLowerCase()] || MENTION_ALIAS[m[1]];
+      const k = kind ? kind + Number(m[2]) : m[0];
+      if (k === key) occ.push({ ta: src.ta, label: src.label, start: m.index, end: m.index + m[0].length, raw: m[0] });
+    }
+  }
+  if (!occ.length) { renderMentionPreview(); return; } // 已全部修完 → chips 自刷新
+  if (mentionJump.key !== key) { mentionJump.key = key; mentionJump.idx = 0; }
+  else mentionJump.idx = (mentionJump.idx + 1) % occ.length;
+  const o = occ[mentionJump.idx];
+  o.ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  o.ta.focus();
+  o.ta.setSelectionRange(o.start, o.end);
+  o.ta.classList.add('mention-flash');
+  setTimeout(() => o.ta.classList.remove('mention-flash'), 1000);
+  setDirStatus(`已定位 ${o.raw} — ${o.label} 框内第 ${mentionJump.idx + 1}/${occ.length} 处，改完再点 chip 跳下一处`);
 }
 
 // ---- @ 自动补全下拉 ----
@@ -5392,6 +5477,19 @@ function renderDirCuts() {
       '注入硬性指令：本镜头零运镜——机位完全锁死，画框纹丝不动'));
     head.appendChild(mkToggle('🎥 moving hold', 'movingHold', 'fixedCam', 'hold',
       '注入硬性指令：moving hold 活动保持 + 手持摇曳质感'));
+    const clr = document.createElement('button');
+    clr.type = 'button';
+    clr.className = 'cut-toggle cut-clear';
+    clr.textContent = '🗑 清零';
+    clr.title = '一键清空这个镜头：文字清空 + 时长归 0 + 运镜开关全关';
+    clr.onclick = () => {
+      cut.text = ''; cut.dur = 0; cut.fixedCam = false; cut.movingHold = false;
+      renderDirCuts();
+      syncDurationFromCuts();
+      renderMentionPreview();
+      scheduleSave();
+    };
+    head.appendChild(clr);
     if (i >= DIR_MIN_CUTS) {
       const del = document.createElement('button');
       del.type = 'button';
@@ -5410,7 +5508,7 @@ function renderDirCuts() {
     ta.rows = 2;
     ta.placeholder = `镜头 ${i + 1} 的画面与动作（留空 = 此镜头不存在，不影响提示词）`;
     ta.value = cut.text || '';
-    ta.oninput = () => { cut.text = ta.value; scheduleSave(); };
+    ta.oninput = () => { cut.text = ta.value; syncDurationFromCuts(); renderMentionPreview(); scheduleSave(); };
     attachMentionAutocomplete(ta);
     const durRow = document.createElement('div');
     durRow.className = 'cut-dur';
@@ -5425,6 +5523,7 @@ function renderDirCuts() {
       cut.dur = Math.round(Number(slider.value) * 10) / 10;
       label.textContent = fmt(cut.dur);
       box.classList.toggle('timed', cut.dur > 0);
+      syncDurationFromCuts(); // 分镜秒数实时同步总时长，不用再去生成面板手调
       scheduleSave();
     };
     durRow.appendChild(slider);
@@ -5434,6 +5533,17 @@ function renderDirCuts() {
     box.appendChild(durRow);
     wrap.appendChild(box);
   });
+}
+
+/** 分镜秒数 → 生成面板总时长实时同步（所有启用镜头都设了时长才生效） */
+function syncDurationFromCuts() {
+  const used = state.director.cuts.filter((c) => String(c.text || '').trim());
+  if (!used.length || !used.every((c) => Number(c.dur) > 0)) return;
+  const total = used.reduce((s, c) => s + Number(c.dur), 0);
+  const slider = $('dirDuration');
+  const v = Math.min(Number(slider.max), Math.max(Number(slider.min), Math.round(total)));
+  slider.value = v;
+  $('dirDurationVal').textContent = `${v} 秒（分镜合计 ${total.toFixed(1)}s）`;
 }
 
 $('dirAddCut').onclick = () => {
@@ -5446,9 +5556,17 @@ $('dirAddCut').onclick = () => {
   if (last) last.focus();
 };
 
-// 负面提示词与情境框：输入即入 state / 触发保存
-$('dirNegative').addEventListener('input', () => { state.director.negative = $('dirNegative').value; scheduleSave(); });
+// 负面提示词与情境框：输入即入 state / 触发保存 / 联动 @chip 扫描
+$('dirNegative').addEventListener('input', () => { state.director.negative = $('dirNegative').value; renderMentionPreview(); scheduleSave(); });
 $('dirPrompt').addEventListener('input', () => scheduleSave());
+$('dirCtxClear').onclick = () => {
+  $('dirPrompt').value = '';
+  $('dirPrompt').dispatchEvent(new Event('input', { bubbles: true }));
+};
+$('dirNegClear').onclick = () => {
+  $('dirNegative').value = '';
+  $('dirNegative').dispatchEvent(new Event('input', { bubbles: true }));
+};
 
 // 出站中文化翻译开关（默认关 — 原文一字不动直发；开 = 大段英文全文译中）
 $('dirTranslate').onchange = async () => {

@@ -513,12 +513,14 @@
       <label class="check" style="font-size:12px" title="开启后：出站提示词里的大段英文会被 LLM 全文译成中文（可能损失原文措辞精度）。默认关闭 = 原文一字不动直接出站">
         <input type="checkbox" id="dirTranslate"> 出站中文化翻译（默认关 — 原文直发不改一字）
       </label>
-      <div class="prompt-block-label">🌍 全局情境 CONTEXT <span class="hint">— 整段视频共用：世界观 / 主体 / 画风基调（永远注入）</span></div>
+      <div class="prompt-block-label">🌍 全局情境 CONTEXT <span class="hint">— 整段视频共用：世界观 / 主体 / 画风基调（永远注入）</span>
+        <button id="dirCtxClear" class="box-clear" type="button" title="清空全局情境">🗑 清空</button></div>
       <textarea id="dirPrompt" rows="3" class="dir-ta" placeholder="例：16:9 宽银幕电影感 2D 动画。@image1 的角色是唯一主角，赛博朋克雨夜街头。"></textarea>
       <div id="dirMentionPreview" class="mention-preview" hidden></div>
       <div id="dirCuts"></div>
       <button id="dirAddCut" class="btn wide add-cut" type="button">＋ ADD CUT · 添加镜头</button>
-      <div class="prompt-block-label neg">🚫 负面提示词 <span class="hint">— 不想出现的一切（留空则不注入）</span></div>
+      <div class="prompt-block-label neg">🚫 负面提示词 <span class="hint">— 不想出现的一切（留空则不注入）</span>
+        <button id="dirNegClear" class="box-clear" type="button" title="清空负面提示词">🗑 清空</button></div>
       <textarea id="dirNegative" rows="2" class="dir-ta neg" placeholder="例：画面模糊、闪烁、抖动、多余人物、字幕、水印、logo、3D 渲染质感、真实照片质感。"></textarea>
     </section>
     <section class="panel highlight">
