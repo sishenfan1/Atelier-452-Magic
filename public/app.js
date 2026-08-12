@@ -3268,31 +3268,11 @@ $('dirModel').onchange = () => {
 $('dirDuration').oninput = (e) => { $('dirDurationVal').textContent = e.target.value + ' 秒'; };
 $('dirAnimMode').onchange = () => { state.director.animMode = $('dirAnimMode').value; scheduleSave(); };
 
-// 首帧 / 尾帧上传
+// 首帧/尾帧已从 REFERENCES TOOL 移除（本工具只做参考驱动生成）；保留空实现兼容旧工程 restore
 function setDirFrame(slot, url, name) {
   state.director[slot] = url ? { url, name: name || '' } : null;
-  const img = $(slot === 'first' ? 'dirFirstImg' : 'dirLastImg');
-  const lbl = $(slot === 'first' ? 'dirFirstLabel' : 'dirLastLabel');
-  if (url) { img.src = url; img.hidden = false; lbl.hidden = true; }
-  else { img.hidden = true; img.removeAttribute('src'); lbl.hidden = false; }
-  if (slot === 'last') $('dirLastClear').hidden = !url;
   scheduleSave();
 }
-$('dirFirstDrop').onclick = () => $('dirFirstFile').click();
-$('dirLastDrop').onclick = () => $('dirLastFile').click();
-$('dirFirstFile').onchange = async (e) => {
-  const f = e.target.files[0]; e.target.value = '';
-  if (!f) return;
-  try { setDirFrame('first', await uploadAsset(f), f.name); setDirStatus(''); }
-  catch (err) { setDirStatus('首帧上传失败: ' + errMsg(err)); }
-};
-$('dirLastFile').onchange = async (e) => {
-  const f = e.target.files[0]; e.target.value = '';
-  if (!f) return;
-  try { setDirFrame('last', await uploadAsset(f), f.name); setDirStatus(''); }
-  catch (err) { setDirStatus('尾帧上传失败: ' + errMsg(err)); }
-};
-$('dirLastClear').onclick = () => setDirFrame('last', null);
 
 // ---------------- 参考素材体系：图/视频/音频三类，按模型精确上限，逐条 role + 说明词 ----------------
 // Seedance 2.5 官方参考上限：30 图 + 10 视频 + 10 音频（三个独立上限）；2.0：9 图 + 3 视频 + 3 音频
@@ -3409,8 +3389,8 @@ function updateDirRunPill() {
   pill.textContent = `⏳ ${dirRunning} 个生成进行中`;
 }
 async function directorGenerate() {
-  if (!state.director.first && !state.director.refs.length) {
-    setDirStatus('至少需要一份参考素材（图/视频/音频）或首帧');
+  if (!state.director.refs.length) {
+    setDirStatus('至少需要一份参考素材（图/视频/音频）');
     return;
   }
   // @引用解析：@image1 → 「参考图1」；找不到的编号直接拦下，避免模型收到悬空引用
@@ -3465,8 +3445,8 @@ async function directorGenerate() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        firstFrame: state.director.first ? state.director.first.url : null,
-        lastFrame: state.director.last ? state.director.last.url : null,
+        firstFrame: null, // 首帧/尾帧已移除 — 纯参考驱动
+        lastFrame: null,
         refImages: dirRefsOf('image').map((r) => r.url),
         refVideos: dirRefsOf('video').map((r) => r.url),
         refAudios: dirRefsOf('audio').map((r) => r.url),
@@ -3566,8 +3546,6 @@ function renderDirector() {
   });
 }
 function restoreDirectorUI() {
-  if (state.director.first) setDirFrame('first', state.director.first.url, state.director.first.name);
-  if (state.director.last) setDirFrame('last', state.director.last.url, state.director.last.name);
   // 旧版单参考视频字段 → 迁移进分类参考池（kind=video）
   if (state.director.refVideo) {
     state.director.refs.push({
@@ -4721,15 +4699,6 @@ $('dirRefAdd').onclick = () => {
 };
 $('dirRefAddNative').onclick = () => $('dirRefFiles').click();
 
-// 首帧 / 尾帧
-$('dirFirstDrop').onclick = () => openMediaPicker({
-  kinds: ['image'], lockKinds: true, multi: false, nativeInput: $('dirFirstFile'), title: '📁 选择首帧',
-  onDone: (items) => { if (items[0]) setDirFrame('first', items[0].url, items[0].name); },
-});
-$('dirLastDrop').onclick = () => openMediaPicker({
-  kinds: ['image'], lockKinds: true, multi: false, nativeInput: $('dirLastFile'), title: '📁 选择尾帧',
-  onDone: (items) => { if (items[0]) setDirFrame('last', items[0].url, items[0].name); },
-});
 
 // 中割关键帧
 $('btnKfBrowse').onclick = () => openMediaPicker({
@@ -4781,28 +4750,6 @@ $('btnKfBrowse').onclick = () => openMediaPicker({
   });
 })();
 
-// 首帧/尾帧格子也接受直接拖图
-for (const [slotId, slotName] of [['dirFirstDrop', 'first'], ['dirLastDrop', 'last']]) {
-  const el = $(slotId);
-  if (!el) continue;
-  el.addEventListener('dragover', (e) => {
-    if (Array.from(e.dataTransfer.types || []).includes('Files')) {
-      e.preventDefault();
-      el.classList.add('file-drop-hot');
-    }
-  });
-  el.addEventListener('dragleave', () => el.classList.remove('file-drop-hot'));
-  el.addEventListener('drop', async (e) => {
-    const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (!f || !f.type.startsWith('image/')) return;
-    e.preventDefault();
-    el.classList.remove('file-drop-hot');
-    try {
-      const url = await uploadAsset(f);
-      setDirFrame(slotName, url, f.name);
-    } catch (err) { setDirStatus('上传失败: ' + errMsg(err)); }
-  });
-}
 
 // ---------------- Ctrl+V 粘贴截图 → 参考图（REFERENCES TOOL 激活时） ----------------
 document.addEventListener('paste', async (e) => {
