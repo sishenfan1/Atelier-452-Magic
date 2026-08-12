@@ -5143,12 +5143,21 @@ window.addEventListener('message', async (e) => {
 async function egRefreshBadge() {
   try {
     const cfg = await (await fetch('/api/config')).json();
-    const active = !!(cfg.evergreen && cfg.evergreen.trim());
+    const text = String(cfg.evergreen || '').trim();
+    const active = !!text;
     $('btnEvergreen').textContent = active ? '🌲●' : '🌲';
     $('btnEvergreen').classList.toggle('primary', active);
+    const bar = $('egBar');
+    if (bar) {
+      bar.classList.toggle('active', active);
+      $('egBarText').textContent = active
+        ? `常青锚点生效中：${text.slice(0, 90)}${text.length > 90 ? '…' : ''}`
+        : '常青锚点：未设置 — 点这里写全片恒定的画质与风格锚（每一次生成都会自动带上）';
+    }
     return cfg.evergreen || '';
   } catch { return ''; }
 }
+$('egBar').onclick = () => $('btnEvergreen').click();
 $('btnEvergreen').onclick = async () => {
   $('egStatus').textContent = '';
   $('egText').value = await egRefreshBadge();
