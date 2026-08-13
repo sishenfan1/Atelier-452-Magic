@@ -3364,6 +3364,7 @@ function renderDirRefs() {
   dirRefsOf(dirRefKind).forEach((r, i) => {
     const row = document.createElement('div');
     row.className = 'dir-ref-row';
+    row.dataset.refId = r.id; // 供问题引用定位器按 id 找到说明词框
     const thumb = (r.kind || 'image') === 'image'
       ? `<img src="${r.url}" alt="${escapeHtml(r.name)}" title="${escapeHtml(r.name)}">`
       : `<span class="dir-ref-icon" title="${escapeHtml(r.name)}">${DIR_KIND_META[r.kind].icon}</span>`;
@@ -3396,6 +3397,7 @@ function renderDirRefs() {
     };
     row.querySelector('.dir-ref-role').onchange = (e) => { r.role = e.target.value; scheduleSave(); };
     row.querySelector('.dir-ref-note').onchange = (e) => { r.note = e.target.value; scheduleSave(); };
+    row.querySelector('.dir-ref-note').addEventListener('input', (e) => { r.note = e.target.value; renderMentionPreview(); });
     for (const [cls, key] of [['ref-weight', 'weight'], ['ref-fidelity', 'fidelity']]) {
       const s = row.querySelector('.' + cls);
       s.oninput = () => { r[key] = Number(s.value); s.nextElementSibling.textContent = s.value; scheduleSave(); };
@@ -4999,10 +5001,16 @@ function resolveMentions(text) {
 }
 
 // ---- 实时解析预览（chip 条：绿=已解析到素材，红=找不到） ----
-/** 所有含 @引用 的提示词框（CONTEXT + 每个 CUT + 负面），按页面顺序 */
+/** 所有含 @引用 的输入框（CONTEXT + 每个 CUT 正文与 60/30/10 三框 + 负面），按页面顺序 */
 function dirMentionSources() {
   const list = [{ ta: $('dirPrompt'), label: 'CONTEXT' }];
-  document.querySelectorAll('#dirCuts .cut-box textarea').forEach((ta, i) => list.push({ ta, label: `CUT ${i + 1}` }));
+  document.querySelectorAll('#dirCuts .cut-box').forEach((box, i) => {
+    const ta = box.querySelector('textarea');
+    if (ta) list.push({ ta, label: `CUT ${i + 1}` });
+    box.querySelectorAll('.cut-comp input').forEach((inp, k) => {
+      list.push({ ta: inp, label: `CUT ${i + 1} · ${['%60', '%30', '%10'][k] || '构图'}` });
+    });
+  });
   if ($('dirNegative')) list.push({ ta: $('dirNegative'), label: '负面' });
   return list.filter((s) => s.ta);
 }
@@ -5014,17 +5022,20 @@ function renderMentionPreview() {
   const byToken = new Map(tokens.map((t) => [t.token, t]));
   const seen = new Set();
   const chips = [];
-  for (const src of dirMentionSources()) {
+  const scanText = (text) => {
     let m;
     MENTION_RE.lastIndex = 0;
-    while ((m = MENTION_RE.exec(src.ta.value))) {
+    while ((m = MENTION_RE.exec(String(text || '')))) {
       const kind = MENTION_ALIAS[m[1].toLowerCase()] || MENTION_ALIAS[m[1]];
       const key = kind ? kind + Number(m[2]) : m[0];
       if (seen.has(key)) continue;
       seen.add(key);
       chips.push({ raw: m[0], key, hit: byToken.get(key) || null });
     }
-  }
+  };
+  for (const src of dirMentionSources()) scanText(src.ta.value);
+  // 参考素材的说明词也在扫描范围（从 state 扫——未显示的分区同样覆盖）
+  for (const ref of state.director.refs) scanText(ref.note);
   box.innerHTML = '';
   box.hidden = !chips.length;
   for (const c of chips) {
@@ -5055,29 +5066,62 @@ function renderMentionPreview() {
   }
 }
 
-// 问题引用定位器：点 chip → 跳到下一处出现位置并高亮选中（跨 CONTEXT/CUT/负面循环）
+// 问题引用定位器：点 chip / 生成被拦 → 跳到下一处出现位置并高亮选中
+// 覆盖全部可去位置：CONTEXT / 每个 CUT 正文 / 60/30/10 三框 / 负面 / 每份参考的说明词
+//（说明词在未显示的分区时自动切 tab 再定位）
 const mentionJump = { key: null, idx: -1 };
+function flashAndSelect(el, start, end) {
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.focus();
+  try { el.setSelectionRange(start, end); } catch {}
+  el.classList.add('mention-flash');
+  setTimeout(() => el.classList.remove('mention-flash'), 1000);
+}
 function jumpToMentionProblem(key) {
+  const normKey = (m) => {
+    const kind = MENTION_ALIAS[m[1].toLowerCase()] || MENTION_ALIAS[m[1]];
+    return kind ? kind + Number(m[2]) : m[0];
+  };
   const occ = [];
   for (const src of dirMentionSources()) {
     let m;
     MENTION_RE.lastIndex = 0;
     while ((m = MENTION_RE.exec(src.ta.value))) {
-      const kind = MENTION_ALIAS[m[1].toLowerCase()] || MENTION_ALIAS[m[1]];
-      const k = kind ? kind + Number(m[2]) : m[0];
-      if (k === key) occ.push({ ta: src.ta, label: src.label, start: m.index, end: m.index + m[0].length, raw: m[0] });
+      if (normKey(m) !== key) continue;
+      const el = src.ta;
+      const start = m.index;
+      const end = m.index + m[0].length;
+      occ.push({ label: src.label, raw: m[0], jump: () => flashAndSelect(el, start, end) });
+    }
+  }
+  // 参考说明词：从 state 扫（哪怕那个分区当前没显示）
+  for (const ref of state.director.refs) {
+    const rKind = ref.kind || 'image';
+    let m;
+    MENTION_RE.lastIndex = 0;
+    while ((m = MENTION_RE.exec(String(ref.note || '')))) {
+      if (normKey(m) !== key) continue;
+      const start = m.index;
+      const end = m.index + m[0].length;
+      const pos = dirRefsOf(rKind).findIndex((x) => x.id === ref.id) + 1;
+      occ.push({
+        label: `参考素材 · ${DIR_KIND_META[rKind].icon} ${DIR_KIND_META[rKind].name}${pos} 的说明词`,
+        raw: m[0],
+        jump: () => {
+          if (dirRefKind !== rKind) { dirRefKind = rKind; renderDirRefs(); } // 自动切到对应分区
+          const row = document.querySelector(`#dirRefList .dir-ref-row[data-ref-id="${ref.id}"]`);
+          const ta = row && row.querySelector('.dir-ref-note');
+          if (ta) flashAndSelect(ta, start, end);
+        },
+      });
     }
   }
   if (!occ.length) { renderMentionPreview(); return; } // 已全部修完 → chips 自刷新
   if (mentionJump.key !== key) { mentionJump.key = key; mentionJump.idx = 0; }
   else mentionJump.idx = (mentionJump.idx + 1) % occ.length;
   const o = occ[mentionJump.idx];
-  o.ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  o.ta.focus();
-  o.ta.setSelectionRange(o.start, o.end);
-  o.ta.classList.add('mention-flash');
-  setTimeout(() => o.ta.classList.remove('mention-flash'), 1000);
-  setDirStatus(`已定位 ${o.raw} — ${o.label} 框内第 ${mentionJump.idx + 1}/${occ.length} 处，改完再点 chip 跳下一处`);
+  o.jump();
+  setDirStatus(`已定位 ${o.raw} — ${o.label}，第 ${mentionJump.idx + 1}/${occ.length} 处，改完再点跳下一处`);
 }
 
 // ---- @ 自动补全下拉 ----
@@ -5621,7 +5665,8 @@ function renderDirCuts() {
         inp.type = 'text';
         inp.value = cut.comp[key] || '';
         inp.placeholder = ph;
-        inp.oninput = () => { cut.comp[key] = inp.value; scheduleSave(); };
+        inp.oninput = () => { cut.comp[key] = inp.value; renderMentionPreview(); scheduleSave(); };
+        attachMentionAutocomplete(inp); // 60/30/10 三框同样支持 @引用参考素材
         lab.appendChild(b);
         lab.appendChild(inp);
         compRow.appendChild(lab);
