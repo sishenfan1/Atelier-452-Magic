@@ -3292,6 +3292,7 @@ const DIR_REF_ROLES = {
   style: ['风格参考', '沿用其画风、笔触与质感'],
   action: ['动作参考', '模仿其肢体动态与运动轨迹'],
   character: ['角色一致性', '严格保持该角色的外观、发型与服装不变'],
+  props: ['道具还原', '严格复刻该道具的造型、材质、比例与细节'],
   scene: ['场景环境', '沿用其环境、空间与光线氛围'],
   performance: ['表演情绪', '模仿其表情、情绪与表演方式'],
   rhythm: ['节奏韵律', '按其节奏与韵律驱动画面运动'],
@@ -3366,6 +3367,12 @@ function renderDirRefs() {
         </div>
         <textarea class="dir-ref-note" rows="1" data-min-grow="80" maxlength="160"
           placeholder="补充说明：这份素材是什么 / 想让模型学到什么">${escapeHtml(r.note || '')}</textarea>
+        <div class="ref-sliders">
+          <label title="这份参考对整体生成的影响力权重：100=最高优先级（与其它参考冲突时以此为准），0=仅作最轻微参考。50=中性不注入">
+            <span>影响力</span><input type="range" class="ref-weight" min="0" max="100" step="1" value="${r.weight === undefined ? 50 : Number(r.weight)}"><b>${r.weight === undefined ? 50 : Number(r.weight)}</b></label>
+          <label title="忠实度：100=必须原封不动逐细节复刻这份素材；0=完全创作自由，绝不把它当构图用。50=中性不注入">
+            <span>忠实度</span><input type="range" class="ref-fidelity" min="0" max="100" step="1" value="${r.fidelity === undefined ? 50 : Number(r.fidelity)}"><b>${r.fidelity === undefined ? 50 : Number(r.fidelity)}</b></label>
+        </div>
       </div>`;
     row.querySelector('.ref-cell button').onclick = () => {
       state.director.refs = state.director.refs.filter((x) => x.id !== r.id);
@@ -3374,6 +3381,10 @@ function renderDirRefs() {
     };
     row.querySelector('.dir-ref-role').onchange = (e) => { r.role = e.target.value; scheduleSave(); };
     row.querySelector('.dir-ref-note').onchange = (e) => { r.note = e.target.value; scheduleSave(); };
+    for (const [cls, key] of [['ref-weight', 'weight'], ['ref-fidelity', 'fidelity']]) {
+      const s = row.querySelector('.' + cls);
+      s.oninput = () => { r[key] = Number(s.value); s.nextElementSibling.textContent = s.value; scheduleSave(); };
+    }
     row.querySelector('.dir-ref-copy').onclick = () => dirCopyRefToOtherTier(r, true);
     if (typeof attachMentionAutocomplete === 'function') attachMentionAutocomplete(row.querySelector('.dir-ref-note'));
     // 拖拽重排（同类内）：把 image7 拖到顶就变 image1，其余顺延
@@ -3454,10 +3465,6 @@ async function directorGenerate() {
   const contextText = rs($('dirPrompt').value);
   const cutsBlock = buildDirCutsBlock(rs);
   const negativeRaw = rs($('dirNegative').value);
-  if (unknownAll.length) {
-    setDirStatus('⚠ 找不到引用 ' + Array.from(new Set(unknownAll)).join('、') + ' — 参考区没有这个编号的素材');
-    return;
-  }
   const model = $('dirModel').value || undefined;
   let duration = Number($('dirDuration').value);
   if (cutsBlock.totalSec) {
@@ -3475,10 +3482,27 @@ async function directorGenerate() {
     kindCounters[kind] += 1;
     const roleDef = DIR_REF_ROLES[r.role || DIR_KIND_META[kind].defaultRole];
     const roleText = roleDef ? `${roleDef[0]}——${roleDef[1]}` : '';
-    const note = resolveMentions((r.note || '').trim()).text; // 说明里也可 @引用其它素材
-    if (!roleText && !note) return null;
-    return `${DIR_KIND_META[kind].name}${kindCounters[kind]}（${roleText}）${note ? '：' + note : ''}`;
+    const note = rs((r.note || '').trim()); // 说明里也可 @引用其它素材（悬空引用同样计入拦截）
+    // 影响力 / 忠实度滑杆 → 档位指令（50 为中性不注入，避免提示词臃肿）
+    const w = r.weight === undefined ? 50 : Number(r.weight);
+    const f = r.fidelity === undefined ? 50 : Number(r.fidelity);
+    const weightText = w >= 85 ? '【最高权重】此参考优先级最高，与其它参考冲突时一律以此为准'
+      : w >= 65 ? '高权重参考，优先遵循'
+      : w <= 15 ? '最低权重，仅作最轻微的参考'
+      : w <= 35 ? '低权重参考，其它参考优先' : '';
+    const fidelityText = f >= 85 ? '必须原封不动地使用这份素材的画面内容与构图，逐细节复刻，禁止任何再创作'
+      : f >= 65 ? '高度贴近原素材，仅允许细微变化'
+      : f <= 15 ? '完全创作自由：任何情况下都不得将其用作构图或画面布局，仅作气质与要素的启发'
+      : f <= 35 ? '大幅再创作：只取其要素与精神，画面构图自由重构' : '';
+    const clauses = [roleText, weightText, fidelityText].filter(Boolean).join('；');
+    if (!clauses && !note) return null;
+    return `${DIR_KIND_META[kind].name}${kindCounters[kind]}（${clauses}）${note ? '：' + note : ''}`;
   }).filter(Boolean);
+  // 悬空 @引用统一拦截门：情境 / 分镜（含 60/30/10）/ 负面 / 每份参考的说明词全覆盖
+  if (unknownAll.length) {
+    setDirStatus('⚠ 找不到引用 ' + Array.from(new Set(unknownAll)).join('、') + ' — 参考区没有这个编号的素材');
+    return;
+  }
   const prompt = [
     contextText,
     cutsBlock.text,
@@ -3489,12 +3513,13 @@ async function directorGenerate() {
   // 点击瞬间快照（注入前的原文 + 当时的全部参考）：生成期间用户改框也不影响历史记录
   const genSnapshot = {
     context: $('dirPrompt').value,
-    cuts: state.director.cuts.map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold })),
+    cuts: state.director.cuts.map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold, comp: c.comp ? { on: !!c.comp.on, p60: c.comp.p60 || '', p30: c.comp.p30 || '', p10: c.comp.p10 || '' } : undefined })),
     negative: $('dirNegative').value,
     animMode: $('dirAnimMode').value,
     refs: state.director.refs.map((r) => ({
       name: r.name || '', url: r.url, kind: r.kind || 'image',
       role: r.role || DIR_KIND_META[r.kind || 'image'].defaultRole, note: r.note || '',
+      weight: r.weight, fidelity: r.fidelity,
     })),
   };
   dirRunning += 1;
@@ -3584,7 +3609,7 @@ function renderDirector() {
         if (item.inputs) {
           // 完整重现：情境 + 分镜 + 负面 + 帧率 + 当时的全部参考素材（含 role/说明词）
           ta.value = item.inputs.context || '';
-          state.director.cuts = (item.inputs.cuts || []).map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold }));
+          state.director.cuts = (item.inputs.cuts || []).map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold, comp: c.comp ? { on: !!c.comp.on, p60: c.comp.p60 || '', p30: c.comp.p30 || '', p10: c.comp.p10 || '' } : { on: false, p60: '', p30: '', p10: '' } }));
           state.director.negative = item.inputs.negative || '';
           $('dirNegative').value = state.director.negative;
           if (item.inputs.animMode) { $('dirAnimMode').value = item.inputs.animMode; state.director.animMode = item.inputs.animMode; }
@@ -3596,6 +3621,7 @@ function renderDirector() {
               state.director.refs = snap.map((r) => ({
                 id: nextRefId++, name: r.name || '', url: r.url,
                 kind: r.kind || 'image', role: r.role || DIR_KIND_META[r.kind || 'image'].defaultRole, note: r.note || '',
+                weight: r.weight, fidelity: r.fidelity,
               }));
               renderDirRefs();
               refsRestored = true;
@@ -5402,7 +5428,7 @@ function dirCopyRefToOtherTier(r, verbose) {
   const label = `Seedance ${target === '25' ? '2.5' : '2.0'}`;
   const dup = list.find((x) => x.url === r.url);
   if (dup) {
-    dup.name = r.name; dup.role = r.role; dup.note = r.note; dup.kind = kind;
+    dup.name = r.name; dup.role = r.role; dup.note = r.note; dup.kind = kind; dup.weight = r.weight; dup.fidelity = r.fidelity;
     scheduleSave();
     if (verbose) setDirStatus(`该素材已在 ${label} 档 — 已同步其 role 与说明词 ✓`);
     return 'updated';
@@ -5412,7 +5438,7 @@ function dirCopyRefToOtherTier(r, verbose) {
     if (verbose) setDirStatus(`${label} 档的${DIR_KIND_META[kind].name}位已满（上限 ${caps[kind]}）`);
     return 'full';
   }
-  list.push({ id: nextRefId++, name: r.name, url: r.url, kind, role: r.role, note: r.note });
+  list.push({ id: nextRefId++, name: r.name, url: r.url, kind, role: r.role, note: r.note, weight: r.weight, fidelity: r.fidelity });
   scheduleSave();
   if (verbose) setDirStatus(`已复制到 ${label} 档 ✓（顶栏切档即可看到）`);
   return 'added';
@@ -5492,13 +5518,26 @@ function renderDirCuts() {
       '注入硬性指令：本镜头零运镜——机位完全锁死，画框纹丝不动'));
     head.appendChild(mkToggle('🎥 moving hold', 'movingHold', 'fixedCam', 'hold',
       '注入硬性指令：moving hold 活动保持 + 手持摇曳质感'));
+    // 60/30/10 构图章程开关（film-prompt-engineer 铁律：60%主导/30%次要/10%强调=叙事焦点）
+    if (!cut.comp || typeof cut.comp !== 'object') cut.comp = { on: false, p60: '', p30: '', p10: '' };
+    const compBtn = document.createElement('button');
+    compBtn.type = 'button';
+    compBtn.className = 'cut-toggle comp' + (cut.comp.on ? ' on' : '');
+    compBtn.textContent = '🎨 60/30/10';
+    compBtn.title = '构图章程：画面 60% 主导 / 30% 次要 / 10% 强调（强调项即视觉焦点）。开启且填了内容才注入';
+    compBtn.onclick = () => {
+      cut.comp.on = !cut.comp.on;
+      renderDirCuts();
+      scheduleSave();
+    };
+    head.appendChild(compBtn);
     const clr = document.createElement('button');
     clr.type = 'button';
     clr.className = 'cut-toggle cut-clear';
     clr.textContent = '🗑 清零';
     clr.title = '一键清空这个镜头：文字清空 + 时长归 0 + 运镜开关全关';
     clr.onclick = () => {
-      cut.text = ''; cut.dur = 0; cut.fixedCam = false; cut.movingHold = false;
+      cut.text = ''; cut.dur = 0; cut.fixedCam = false; cut.movingHold = false; cut.comp = { on: false, p60: '', p30: '', p10: '' };
       renderDirCuts();
       syncDurationFromCuts();
       renderMentionPreview();
@@ -5546,6 +5585,24 @@ function renderDirCuts() {
     box.appendChild(head);
     box.appendChild(ta);
     box.appendChild(durRow);
+    if (cut.comp.on) {
+      const compRow = document.createElement('div');
+      compRow.className = 'cut-comp';
+      for (const [key, tag, ph] of [['p60', '%60', '主导（占据画面主体的东西）'], ['p30', '%30', '次要（衬托层）'], ['p10', '%10', '强调（视觉焦点）']]) {
+        const lab = document.createElement('label');
+        const b = document.createElement('b');
+        b.textContent = tag;
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.value = cut.comp[key] || '';
+        inp.placeholder = ph;
+        inp.oninput = () => { cut.comp[key] = inp.value; scheduleSave(); };
+        lab.appendChild(b);
+        lab.appendChild(inp);
+        compRow.appendChild(lab);
+      }
+      box.appendChild(compRow);
+    }
     wrap.appendChild(box);
   });
 }
@@ -5618,13 +5675,24 @@ function buildDirCutsBlock(resolveFn) {
       dur: Math.round((Number(c.dur) || 0) * 10) / 10,
       fixedCam: !!c.fixedCam,
       movingHold: !!c.movingHold,
+      comp: c.comp && c.comp.on ? { p60: String(c.comp.p60 || '').trim(), p30: String(c.comp.p30 || '').trim(), p10: String(c.comp.p10 || '').trim() } : null,
     }))
     .filter((c) => c.text);
   if (!used.length) return { text: '', totalSec: null };
   const allTimed = used.every((c) => c.dur > 0);
   let t = 0;
   const lines = used.map((c, k) => {
+    // 60/30/10 构图章程（开关开启 + 至少一项有内容才注入）
+    let compEmbed = '';
+    if (c.comp && (c.comp.p60 || c.comp.p30 || c.comp.p10)) {
+      const parts = [];
+      if (c.comp.p60) parts.push(`60% 由「${resolveFn(c.comp.p60)}」主导占据`);
+      if (c.comp.p30) parts.push(`30% 为「${resolveFn(c.comp.p30)}」作次要衬托`);
+      if (c.comp.p10) parts.push(`10% 为「${resolveFn(c.comp.p10)}」点睛强调——强调项即视觉焦点`);
+      compEmbed = `（构图章程 60/30/10：画面${parts.join('，')}；该占比在整个镜头内严格保持，不许漂移）`;
+    }
     const body = resolveFn(c.text)
+      + compEmbed
       + (c.fixedCam ? CUT_FIXED_CAM_EMBED : '')
       + (c.movingHold ? CUT_MOVING_HOLD_EMBED : '');
     if (allTimed) {

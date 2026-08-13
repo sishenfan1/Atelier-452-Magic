@@ -1052,3 +1052,23 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .dir-ref-row.dragging { opacity: .45; }
 .dir-ref-row.drop-above { box-shadow: 0 -3px 0 0 #0a84ff; }
 .dir-ref-row.drop-below { box-shadow: 0 3px 0 0 #0a84ff; }
+
+/* 60/30/10 构图章程输入行 */
+.cut-comp {
+  display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap;
+}
+.cut-comp label {
+  flex: 1 1 30%; min-width: 120px; display: flex; align-items: center; gap: 4px; font-size: 11px;
+}
+.cut-comp label b { flex: none; color: #c77800; font-variant-numeric: tabular-nums; }
+.cut-comp input {
+  flex: 1; min-width: 0; font-size: 11.5px; padding: 3px 6px; border-radius: 7px;
+}
+.cut-toggle.comp.on { background: rgba(199, 120, 0, .14); border-color: rgba(199, 120, 0, .55); }
+
+/* 参考素材：影响力 / 忠实度双滑杆 */
+.ref-sliders { display: flex; gap: 10px; margin-top: 4px; }
+.ref-sliders label { flex: 1; display: flex; align-items: center; gap: 5px; font-size: 10.5px; }
+.ref-sliders label span { flex: none; opacity: .7; }
+.ref-sliders input[type=range] { flex: 1; min-width: 0; height: 4px; }
+.ref-sliders label b { min-width: 20px; text-align: right; font-variant-numeric: tabular-nums; font-size: 10.5px; }
