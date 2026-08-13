@@ -3238,7 +3238,12 @@ for (const id of ['dirActOverall', 'dirActFace', 'dirActBody', 'dirActTempo', 'd
 // Artcraft 各模型特性（时长上限 / 是否支持音频）——依据官方 Omni API 文档
 const ARTCRAFT_MODEL_META = {
   seedance_2p5: { max: 30, audio: true, label: 'Seedance 2.5 · 最长 30 秒' },
+  seedance_2p5_u: { max: 30, audio: true, label: 'Seedance 2.5 Ultra · 最长 30 秒 · 宽限内容（恐怖/动作等）' },
   seedance_2p0: { max: 15, audio: false, label: 'Seedance 2.0 · 4-15 秒' },
+  seedance_2p0_bpu: { max: 15, audio: false, label: 'Seedance 2.0 Plus Ultra · 4-15 秒 · 宽限内容（恐怖/动作等）' },
+  seedance_2p0_bp: { max: 15, audio: false, label: 'Seedance 2.0 Plus · 4-15 秒 · 宽限人脸/IP' },
+  seedance_2p0_bpu_fast: { max: 15, audio: false, label: 'Seedance 2.0 Plus Ultra Fast · 4-15 秒 · 宽限内容+提速' },
+  seedance_2p0_bp_fast: { max: 15, audio: false, label: 'Seedance 2.0 Plus Fast · 4-15 秒 · 宽限人脸/IP+提速' },
   kling_3p0_pro: { max: 10, audio: true, label: 'Kling 3.0 Pro · 5/10 秒 · 支持音频' },
   kling_3p0_standard: { max: 10, audio: true, label: 'Kling 3.0 Standard · 5/10 秒 · 支持音频' },
   veo_3p1: { max: 8, audio: true, label: 'Veo 3.1 · ≤8 秒 · 原生音频' },

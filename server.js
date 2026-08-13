@@ -780,7 +780,7 @@ async function artcraftPoll(cfg, task, localId) {
 
 // ---------- 导演生成：首尾帧 + 参考视频 + 参考图混合单次生成（Seedance 2.0 / 2.5） ----------
 const SEEDANCE_25_MODEL = 'doubao-seedance-2-5-260628'; // 方舟模型卡已公开；API 开放即插即用
-function isSeedance25(model) { return /2-5/.test(String(model || '')); }
+function isSeedance25(model) { return /2-5|2p5/.test(String(model || '')); }
 function clampDurationFor(model, d) {
   return isSeedance25(model) ? clampDuration(d, 5, 4, 30) : clampDuration(d);
 }
