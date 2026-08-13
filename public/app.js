@@ -173,6 +173,7 @@ function snapshot() {
       refVideo: state.director.refVideo,
       refVideoName: state.director.refVideoName,
       animMode: state.director.animMode,
+      model: $('dirModel') ? $('dirModel').value : '',
       refs: state.director.refs,
       refsStash: state.director.refsStash,
       refTier: state.director.refTier,
@@ -277,6 +278,11 @@ async function loadProject() {
     state.director.refVideo = dr.refVideo || null;
     state.director.refVideoName = dr.refVideoName || '';
     state.director.animMode = dr.animMode || '12fps';
+    if (typeof dr.model === 'string' && $('dirModel')) {
+      // 模型选择随工程持久化（否则每次重开都退回"跟随全局"）
+      const opt = Array.from($('dirModel').options).some((o) => o.value === dr.model);
+      if (opt) $('dirModel').value = dr.model;
+    }
     state.director.refs = Array.isArray(dr.refs) ? dr.refs : [];
     state.director.refsStash = (dr.refsStash && typeof dr.refsStash === 'object') ? dr.refsStash : { t20: [], t25: [] };
     state.director.refTier = dr.refTier || null;
@@ -3138,7 +3144,15 @@ const adwPromptParam = (() => {
 })();
 
 // ---------------- 工作区 6：导演生成（首尾帧 + 参考视频 + 参考图 · 演技滑杆组） ----------------
-function setDirStatus(t) { $('dirStatus').textContent = t || ''; }
+function setDirStatus(t) {
+  $('dirStatus').textContent = t || '';
+  // 镜像到右栏大按钮下方：用户盯着大按钮点，中栏的状态行看不见
+  const mirror = $('dirGoStatus');
+  if (mirror) {
+    mirror.textContent = t || '';
+    mirror.classList.toggle('warn', /^⚠|失败|已满|找不到|已定位/.test(t || ''));
+  }
+}
 
 /**
  * 演技滑杆（角色四维 + 场面三维）→ 结构化表演指导块（0 = 关闭该维度）。
@@ -3269,6 +3283,7 @@ $('dirModel').onchange = () => {
       ? '2.5：4-30 秒 · 480P/720P（1080P 自动降档）· 需已在方舟控制台开通该模型'
       : '2.0：4-15 秒 · 使用 ⚙ API 设置里的当前模型与分辨率';
   dirSyncTier(); // 上限 + 双档参考集 + 生效模型徽标一并同步
+  scheduleSave(); // 模型选择随工程持久化
 };
 $('dirDuration').oninput = (e) => { $('dirDurationVal').textContent = e.target.value + ' 秒'; };
 $('dirAnimMode').onchange = () => { state.director.animMode = $('dirAnimMode').value; scheduleSave(); };
@@ -3500,7 +3515,17 @@ async function directorGenerate() {
   }).filter(Boolean);
   // 悬空 @引用统一拦截门：情境 / 分镜（含 60/30/10）/ 负面 / 每份参考的说明词全覆盖
   if (unknownAll.length) {
-    setDirStatus('⚠ 找不到引用 ' + Array.from(new Set(unknownAll)).join('、') + ' — 参考区没有这个编号的素材');
+    setDirStatus('⚠ 找不到引用 ' + Array.from(new Set(unknownAll)).join('、') + ' — 已跳到问题位置，改完再点生成');
+    // 直接把用户带到第一处问题引用并高亮选中（与红 chip 点击同一套定位器）
+    const first = Array.from(new Set(unknownAll))[0];
+    const m = /^@(image|img|图|圖|video|vid|视频|audio|aud|音频)(\d+)$/i.exec(first);
+    if (m) {
+      const kind = MENTION_ALIAS[m[1].toLowerCase()] || MENTION_ALIAS[m[1]];
+      if (kind) {
+        mentionJump.key = null; // 重置循环，从第一处开始
+        jumpToMentionProblem(kind + Number(m[2]));
+      }
+    }
     return;
   }
   const prompt = [
