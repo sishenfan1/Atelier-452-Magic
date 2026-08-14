@@ -41,6 +41,7 @@ const state = {
     refTier: null,                    // 当前参考集所属档（'20' | '25'）
     cuts: [],                         // 分镜头提示词 [{text, dur}]（dur 秒，0.1 精度，0=不限）
     negative: '',                     // 负面提示词
+    mood: '',                         // 全局场面情绪锁
     history: [],                      // {videoUrl, time, duration, model, note}
     current: -1,
     running: false,
@@ -179,6 +180,7 @@ function snapshot() {
       refTier: state.director.refTier,
       cuts: state.director.cuts,
       negative: state.director.negative,
+      mood: state.director.mood,
       context: $('dirPrompt') ? $('dirPrompt').value : '',
       history: state.director.history,
     },
@@ -288,6 +290,8 @@ async function loadProject() {
     state.director.refTier = dr.refTier || null;
     state.director.cuts = Array.isArray(dr.cuts) ? dr.cuts : [];
     state.director.negative = typeof dr.negative === 'string' ? dr.negative : '';
+    state.director.mood = typeof dr.mood === 'string' ? dr.mood : '';
+    if ($('dirMood')) $('dirMood').value = state.director.mood;
     if (typeof dr.context === 'string' && $('dirPrompt')) $('dirPrompt').value = dr.context;
     if ($('dirNegative')) $('dirNegative').value = state.director.negative;
     state.director.history = Array.isArray(dr.history) ? dr.history : [];
@@ -3312,6 +3316,34 @@ const DIR_REF_ROLES = {
   performance: ['表演情绪', '模仿其表情、情绪与表演方式'],
   rhythm: ['节奏韵律', '按其节奏与韵律驱动画面运动'],
 };
+// 场面情绪锁：纯场景 MOOD 提示词（不管角色演技，只锁氛围/节奏/画面能量）。
+// 全局一个 + 每个 CUT 一个；选'无'零注入。文案按 film-prompt-engineer 片型矩阵手写。
+const DIR_MOODS = [
+  ['', '情绪锁：无', ''],
+  ['explosive', '💥 爆裂激烈', '场面情绪锁：爆裂激烈（EXPLOSIVE/URGENT/FAST）——节奏凌厉逼人、动作密集爆发、画面能量拉满，环境元素（尘土、火花、碎片）随动作炸开，紧迫感贯穿每一帧，绝无松弛段落'],
+  ['urgent', '⏱ 紧迫追逐', '场面情绪锁：紧迫追逐——争分夺秒，所有运动都朝目标压进，节奏步步收紧，画面带被追赶的张力，呼吸急促，没有一秒停顿松弛'],
+  ['triumphant', '🔥 热血高燃', '场面情绪锁：热血高燃——向上攀升的能量，动作充满决意与力量感，节奏层层推向高潮，胜利前夜的沸腾气势'],
+  ['epic', '⛰ 史诗恢弘', '场面情绪锁：史诗恢弘——大开大合的气魄，画面有重量与规模感，运动庄严有力、从容不迫，令人屏息的敬畏氛围'],
+  ['chaotic', '🌪 混乱失控', '场面情绪锁：混乱失控——多方向运动互相冲撞，节奏破碎急促，画面处于崩解边缘的动荡，秩序正在瓦解'],
+  ['tension', '🕳 悬疑压抑', '场面情绪锁：悬疑压抑——表面安静底下绷着弦，微小动静被放大，节奏刻意压慢蓄力，空气凝滞，随时要断裂的紧张感'],
+  ['horror', '👁 恐怖阴森', '场面情绪锁：恐怖阴森——阴影主导画面，运动迟缓而不祥，安静得不自然，偶发的突兀动静令人心悸，寒意渗进每个角落'],
+  ['meditative', '🧘 冥想沉静', '场面情绪锁：冥想沉静（meditative/slow/calm）——一切缓慢从容，长呼吸的节奏，画面安定少动，留白与静谧主导，时间仿佛被拉长'],
+  ['serene', '🌤 温柔治愈', '场面情绪锁：温柔治愈——柔和光线包裹画面，动作轻缓圆润，氛围安全而有暖意，微风般的节奏，让人安心'],
+  ['dreamy', '💫 梦幻恍惚', '场面情绪锁：梦幻恍惚——漂浮般的运动质感，边界柔化，时间感模糊，如梦似幻的悬浮氛围，现实感被稀释'],
+  ['romantic', '🌹 浪漫柔情', '场面情绪锁：浪漫柔情——画面被温柔的光晕浸润，动作亲昵舒缓，节奏如慢舞，空气里都是涌动的情绪'],
+  ['melancholy', '🌧 忧郁哀伤', '场面情绪锁：忧郁哀伤——画面情绪下沉，节奏迟缓滞重，运动带着无力感与眷恋，整体低回克制'],
+  ['nostalgic', '📼 怀旧温存', '场面情绪锁：怀旧温存——旧时光的质感，节奏舒缓带追忆感，画面像被岁月轻轻磨过，温热而略带酸楚'],
+  ['cold', '🧊 冷峻疏离', '场面情绪锁：冷峻疏离——克制到近乎无情的画面，运动精准冷静，空间空旷，情绪被冰封在表面之下'],
+  ['whimsical', '🎈 俏皮欢快', '场面情绪锁：俏皮欢快——轻盈跳跃的节奏，动作带弹性与幽默感，画面明快鲜活，处处透着玩心与惊喜'],
+];
+function moodPromptOf(id) {
+  const m = DIR_MOODS.find((x) => x[0] === id);
+  return m ? m[2] : '';
+}
+function moodOptionsHtml(selected) {
+  return DIR_MOODS.map(([id, label]) => `<option value="${id}" ${id === (selected || '') ? 'selected' : ''}>${label}</option>`).join('');
+}
+
 const DIR_KIND_META = {
   image: { icon: '🖼', name: '参考图', accept: 'image/*', defaultRole: 'style' },
   video: { icon: '🎞', name: '参考视频', accept: 'video/*', defaultRole: 'action' },
@@ -3531,8 +3563,10 @@ function assembleDirectorRequest() {
     }
     return null;
   }
+  const globalMood = moodPromptOf(state.director.mood || '');
   const prompt = [
     contextText,
+    globalMood ? '【' + globalMood.replace('场面情绪锁：', '场面情绪 · 全局】') : '',
     cutsBlock.text,
     refNotes.length ? '参考素材使用说明：\n' + refNotes.join('\n') : '',
     acting,
@@ -3541,8 +3575,9 @@ function assembleDirectorRequest() {
   // 点击瞬间快照（注入前的原文 + 当时的全部参考）：生成期间用户改框也不影响历史记录
   const genSnapshot = {
     context: $('dirPrompt').value,
-    cuts: state.director.cuts.map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold, comp: c.comp ? { on: !!c.comp.on, p60: c.comp.p60 || '', p30: c.comp.p30 || '', p10: c.comp.p10 || '' } : undefined })),
+    cuts: state.director.cuts.map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold, mood: c.mood || '', comp: c.comp ? { on: !!c.comp.on, p60: c.comp.p60 || '', p30: c.comp.p30 || '', p10: c.comp.p10 || '' } : undefined })),
     negative: $('dirNegative').value,
+    mood: state.director.mood || '',
     animMode: $('dirAnimMode').value,
     refs: state.director.refs.map((r) => ({
       name: r.name || '', url: r.url, kind: r.kind || 'image',
@@ -3664,7 +3699,9 @@ function renderDirector() {
         if (item.inputs) {
           // 完整重现：情境 + 分镜 + 负面 + 帧率 + 当时的全部参考素材（含 role/说明词）
           ta.value = item.inputs.context || '';
-          state.director.cuts = (item.inputs.cuts || []).map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold, comp: c.comp ? { on: !!c.comp.on, p60: c.comp.p60 || '', p30: c.comp.p30 || '', p10: c.comp.p10 || '' } : { on: false, p60: '', p30: '', p10: '' } }));
+          state.director.cuts = (item.inputs.cuts || []).map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold, mood: c.mood || '', comp: c.comp ? { on: !!c.comp.on, p60: c.comp.p60 || '', p30: c.comp.p30 || '', p10: c.comp.p10 || '' } : { on: false, p60: '', p30: '', p10: '' } }));
+          state.director.mood = item.inputs.mood || '';
+          if ($('dirMood')) $('dirMood').value = state.director.mood;
           state.director.negative = item.inputs.negative || '';
           $('dirNegative').value = state.director.negative;
           if (item.inputs.animMode) { $('dirAnimMode').value = item.inputs.animMode; state.director.animMode = item.inputs.animMode; }
@@ -5596,6 +5633,13 @@ function renderDirCuts() {
     const title = document.createElement('span');
     title.textContent = `🎬 CUT ${i + 1}`;
     head.appendChild(title);
+    // 本镜头场面情绪锁
+    const moodSel = document.createElement('select');
+    moodSel.className = 'mood-select';
+    moodSel.title = '本镜头的场面情绪锁 — 只锁氛围/节奏/画面能量';
+    moodSel.innerHTML = moodOptionsHtml(cut.mood || '');
+    moodSel.onchange = () => { cut.mood = moodSel.value; scheduleSave(); };
+    head.appendChild(moodSel);
     // 运镜切换钮：固定机位 / moving hold（互斥）
     const mkToggle = (label, key, otherKey, extraClass, tip) => {
       const b = document.createElement('button');
@@ -5634,7 +5678,7 @@ function renderDirCuts() {
     clr.textContent = '🗑 清零';
     clr.title = '一键清空这个镜头：文字清空 + 时长归 0 + 运镜开关全关';
     clr.onclick = () => {
-      cut.text = ''; cut.dur = 0; cut.fixedCam = false; cut.movingHold = false; cut.comp = { on: false, p60: '', p30: '', p10: '' };
+      cut.text = ''; cut.dur = 0; cut.fixedCam = false; cut.movingHold = false; cut.mood = ''; cut.comp = { on: false, p60: '', p30: '', p10: '' };
       renderDirCuts();
       syncDurationFromCuts();
       renderMentionPreview();
@@ -5733,6 +5777,9 @@ $('dirCtxClear').onclick = () => {
   $('dirPrompt').value = '';
   $('dirPrompt').dispatchEvent(new Event('input', { bubbles: true }));
 };
+// 全局场面情绪锁
+$('dirMood').innerHTML = moodOptionsHtml(state.director.mood || '');
+$('dirMood').onchange = () => { state.director.mood = $('dirMood').value; scheduleSave(); };
 $('dirNegClear').onclick = () => {
   $('dirNegative').value = '';
   $('dirNegative').dispatchEvent(new Event('input', { bubbles: true }));
@@ -5773,6 +5820,7 @@ function buildDirCutsBlock(resolveFn) {
       dur: Math.round((Number(c.dur) || 0) * 10) / 10,
       fixedCam: !!c.fixedCam,
       movingHold: !!c.movingHold,
+      mood: c.mood || '',
       comp: c.comp && c.comp.on ? { p60: String(c.comp.p60 || '').trim(), p30: String(c.comp.p30 || '').trim(), p10: String(c.comp.p10 || '').trim() } : null,
     }))
     .filter((c) => c.text);
@@ -5789,7 +5837,9 @@ function buildDirCutsBlock(resolveFn) {
       if (c.comp.p10) parts.push(`10% 为「${resolveFn(c.comp.p10)}」点睛强调——强调项即视觉焦点`);
       compEmbed = `（构图章程 60/30/10：画面${parts.join('，')}；该占比在整个镜头内严格保持，不许漂移）`;
     }
+    const moodEmbed = c.mood ? `（${moodPromptOf(c.mood)}）` : '';
     const body = resolveFn(c.text)
+      + moodEmbed
       + compEmbed
       + (c.fixedCam ? CUT_FIXED_CAM_EMBED : '')
       + (c.movingHold ? CUT_MOVING_HOLD_EMBED : '');
