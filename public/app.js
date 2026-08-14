@@ -3554,7 +3554,7 @@ async function directorGenerate() {
   setDirStatus('创建任务中…');
   let job = null;
   try {
-    job = addJob(`🎬 导演生成 ${duration}s${model ? ' · 2.5' : ''}`, 60 + duration * 25);
+    job = addJob(`🎬 导演生成 ${duration}s${model ? (dirEffectiveIs25() ? ' · 2.5' : ' · 2.0') : ''}`, 60 + duration * 25);
     const res = await fetch('/api/director', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -5469,7 +5469,7 @@ function updateDirGoModel() {
     const meta = ARTCRAFT_MODEL_META[key];
     label = (meta ? meta.label.split('·')[0].trim() : key) + ' · Artcraft';
   } else if (val) {
-    label = 'Seedance 2.5 · 方舟直连';
+    label = `Seedance ${/2-5/.test(val) ? '2.5' : '2.0'} · 方舟直连`;
   } else {
     label = `Seedance ${modelIs25() ? '2.5' : '2.0'} · ${serverProvider === 'artcraft' ? 'Artcraft' : '方舟'}`;
   }
