@@ -3467,10 +3467,11 @@ function updateDirRunPill() {
   pill.hidden = dirRunning <= 0;
   pill.textContent = `⏳ ${dirRunning} 个生成进行中`;
 }
-async function directorGenerate() {
+/** 组装一次生成的完整请求（真实生成与 Simulate GEN 共用同一条管线）；被拦时返回 null */
+function assembleDirectorRequest() {
   if (!state.director.refs.length) {
     setDirStatus('至少需要一份参考素材（图/视频/音频）');
-    return;
+    return null;
   }
   // @引用解析：@image1 → 「参考图1」；找不到的编号直接拦下，避免模型收到悬空引用
   const unknownAll = [];
@@ -3528,7 +3529,7 @@ async function directorGenerate() {
         jumpToMentionProblem(kind + Number(m[2]));
       }
     }
-    return;
+    return null;
   }
   const prompt = [
     contextText,
@@ -3549,6 +3550,33 @@ async function directorGenerate() {
       weight: r.weight, fidelity: r.fidelity,
     })),
   };
+  // 参考文件的编号命名（与提示词编号一一对应）+ 打包清单元数据
+  const metaCounters = { image: 0, video: 0, audio: 0 };
+  const refsMeta = state.director.refs.map((r) => {
+    const kind = r.kind || 'image';
+    metaCounters[kind] += 1;
+    const roleDef = DIR_REF_ROLES[r.role || DIR_KIND_META[kind].defaultRole];
+    return {
+      file: kind + metaCounters[kind],
+      roleLabel: roleDef ? roleDef[0] : '',
+      note: (r.note || '').trim(),
+      weight: r.weight, fidelity: r.fidelity,
+    };
+  });
+  return {
+    prompt, duration, model, genSnapshot, refsMeta,
+    animMode: $('dirAnimMode').value,
+    generateAudio: !$('dirAudioWrap').hidden ? $('dirAudio').checked : undefined,
+    refImages: dirRefsOf('image').map((r) => r.url),
+    refVideos: dirRefsOf('video').map((r) => r.url),
+    refAudios: dirRefsOf('audio').map((r) => r.url),
+  };
+}
+
+async function directorGenerate() {
+  const reqData = assembleDirectorRequest();
+  if (!reqData) return;
+  const { prompt, duration, model, genSnapshot } = reqData;
   dirRunning += 1;
   updateDirRunPill();
   setDirStatus('创建任务中…');
@@ -3561,12 +3589,12 @@ async function directorGenerate() {
       body: JSON.stringify({
         firstFrame: null, // 首帧/尾帧已移除 — 纯参考驱动
         lastFrame: null,
-        refImages: dirRefsOf('image').map((r) => r.url),
-        refVideos: dirRefsOf('video').map((r) => r.url),
-        refAudios: dirRefsOf('audio').map((r) => r.url),
+        refImages: reqData.refImages,
+        refVideos: reqData.refVideos,
+        refAudios: reqData.refAudios,
         prompt, duration, model,
-        animMode: $('dirAnimMode').value,
-        generateAudio: !$('dirAudioWrap').hidden ? $('dirAudio').checked : undefined,
+        animMode: reqData.animMode,
+        generateAudio: reqData.generateAudio,
       }),
     });
     const json = await res.json().catch(() => ({}));
@@ -5778,3 +5806,62 @@ function buildDirCutsBlock(resolveFn) {
 }
 
 renderDirCuts();
+
+// ---------------- Simulate GEN：不花钱拿到出站级最终提示词 + 素材编号打包 ----------------
+let simFolder = '';
+async function simulateGen() {
+  const reqData = assembleDirectorRequest(); // 与真实生成完全同一条组装管线（含悬空引用拦截）
+  if (!reqData) return;
+  setDirStatus('模拟出片中…（组装最终提示词 + 打包素材）');
+  try {
+    const res = await fetch('/api/director/simulate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        refImages: reqData.refImages,
+        refVideos: reqData.refVideos,
+        refAudios: reqData.refAudios,
+        prompt: reqData.prompt,
+        duration: reqData.duration,
+        model: reqData.model,
+        animMode: reqData.animMode,
+        refsMeta: reqData.refsMeta,
+      }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || ('请求失败 ' + res.status));
+    simFolder = json.folder || '';
+    $('simPromptText').value = json.prompt || '';
+    $('simFolderInfo').textContent = `素材包：${json.folder}（${(json.files || []).length} 个文件：参考素材按 image1/video1/audio1 编号命名，与提示词一一对应 + prompt.txt + manifest.txt）`;
+    $('simStatus').textContent = `最终提示词 ${String(json.prompt || '').length} 字符`;
+    $('simDialog').showModal();
+    setDirStatus('模拟出片完成 ✓ 未产生任何生成费用');
+  } catch (e) {
+    setDirStatus('模拟出片失败: ' + errMsg(e));
+  }
+}
+$('btnSimulateGen').onclick = simulateGen;
+$('simClose').onclick = () => $('simDialog').close();
+$('simCopy').onclick = async () => {
+  const text = $('simPromptText').value;
+  try {
+    await navigator.clipboard.writeText(text);
+    $('simStatus').textContent = '已复制到剪贴板 ✓ 直接去其它平台粘贴';
+  } catch {
+    // 剪贴板 API 被拒时退回选中复制
+    $('simPromptText').focus();
+    $('simPromptText').select();
+    document.execCommand('copy');
+    $('simStatus').textContent = '已复制（选中方式）✓';
+  }
+};
+$('simOpenFolder').onclick = async () => {
+  if (!simFolder) return;
+  try {
+    const res = await fetch('/api/fs/open-folder', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: simFolder }),
+    });
+    if (!res.ok) throw new Error('打开失败 ' + res.status);
+  } catch (e) { $('simStatus').textContent = '打开文件夹失败: ' + errMsg(e); }
+};

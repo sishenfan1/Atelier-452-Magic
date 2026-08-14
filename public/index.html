@@ -581,6 +581,8 @@
   <aside class="col-right">
     <section class="panel dir-go-panel" id="panelDirGo">
       <button id="btnDirectorGen" class="btn primary dir-gen-mega">🎬<br>导 演 生 成</button>
+      <button id="btnSimulateGen" class="btn dir-sim-mega" type="button"
+        title="不调用生成 API：产出与真实生成完全一致的最终提示词（含全部注入）+ 把参考素材按编号打包进文件夹，直接搬去其它平台">📋 SIMULATE GEN · 模拟出片</button>
       <div class="dir-go-meta">
         <div id="dirGoModel" class="dir-go-model">当前模型：—</div>
         <div id="dirGoStatus" class="dir-go-status"></div>
@@ -864,6 +866,19 @@
     <button id="cfgClose" class="btn ghost">关闭</button>
   </div>
   <div id="cfgStatus" class="hint accent"></div>
+</dialog>
+
+<!-- Simulate GEN 结果：出站级最终提示词 + 素材包路径 -->
+<dialog id="simDialog" class="sim-dialog">
+  <h3>📋 Simulate GEN <span class="hint">— 这就是真实生成会发出去的最终提示词（含全部注入）</span></h3>
+  <textarea id="simPromptText" readonly rows="16" style="width:100%"></textarea>
+  <div class="hint" id="simFolderInfo"></div>
+  <div class="dialog-actions">
+    <button id="simCopy" class="btn primary">📋 复制提示词</button>
+    <button id="simOpenFolder" class="btn">📂 打开素材文件夹</button>
+    <button id="simClose" class="btn ghost">关闭</button>
+  </div>
+  <div id="simStatus" class="hint accent"></div>
 </dialog>
 
 <!-- @引用自动补全菜单（提示词里输入 @ 弹出，列出全部参考素材） -->

@@ -2047,6 +2047,62 @@ app.post('/api/whole/preview', (req, res) => {
   res.json({ text: trimPromptToCap(text) }); // 预览只做 9999 硬顶（不花 LLM 翻译费）
 });
 
+// Simulate GEN：不调生成 API——产出与真实生成完全一致的出站提示词（含服务端全部注入），
+// 并把参考素材按提示词编号（image1/video1/audio1…）打包进独立文件夹，供搬去其它平台
+app.post('/api/director/simulate', async (req, res) => {
+  try {
+    const { refImages = [], refVideos = [], refAudios = [], prompt: userPrompt, duration, model, animMode, refsMeta = [] } = req.body || {};
+    const cfg = loadConfig();
+    // 与 /api/director 完全同一条出站管线：帧率注入 + 常青锚点 + 中文化开关 + 9999 硬顶
+    const fullPrompt = await finalizePrompt(cfg,
+      [animModePrompt(animMode === undefined ? '12fps' : animMode), evergreenJoin(cfg, userPrompt)]
+        .filter(Boolean).join('\n'));
+    const stamp = new Date();
+    const id = 'sim_' + stamp.toISOString().replace(/[:.]/g, '-').slice(0, 19) + '_' + newId().slice(0, 4);
+    const dir = path.join(BASE, 'simulations', id);
+    fs.mkdirSync(dir, { recursive: true });
+    const copied = [];
+    const copyList = (urls, prefix) => {
+      (Array.isArray(urls) ? urls : []).forEach((u, i) => {
+        const f = localFileOf(u);
+        if (!f || !fs.existsSync(f)) return;
+        const name = prefix + (i + 1) + (path.extname(f).toLowerCase() || '');
+        fs.copyFileSync(f, path.join(dir, name));
+        copied.push(name);
+      });
+    };
+    copyList(refImages, 'image');
+    copyList(refVideos, 'video');
+    copyList(refAudios, 'audio');
+    fs.writeFileSync(path.join(dir, 'prompt.txt'), fullPrompt, 'utf8');
+    const manifest = [
+      `Simulate GEN — ${stamp.toLocaleString('zh-CN', { hour12: false })}`,
+      `模型: ${model || '(跟随全局档位)'} · 时长: ${duration}s · 帧率: ${animMode || '12fps'}`,
+      `提示词字符数: ${fullPrompt.length}`,
+      '',
+      '参考素材清单（文件名 = 提示词里的编号）:',
+      ...(Array.isArray(refsMeta) ? refsMeta : []).map((m) => `  ${m.file} — ${m.roleLabel || ''}${m.weight !== undefined && Number(m.weight) !== 50 ? ` · 影响力 ${m.weight}` : ''}${m.fidelity !== undefined && Number(m.fidelity) !== 50 ? ` · 忠实度 ${m.fidelity}` : ''}${m.note ? ` · 说明: ${m.note}` : ''}`),
+    ];
+    fs.writeFileSync(path.join(dir, 'manifest.txt'), manifest.join('\n'), 'utf8');
+    res.json({ prompt: fullPrompt, folder: dir, files: copied.concat(['prompt.txt', 'manifest.txt']) });
+  } catch (e) {
+    res.status(500).json({ error: '模拟出片失败: ' + String(e && e.message || e).slice(0, 200) });
+  }
+});
+
+// 在资源管理器中打开模拟输出目录（仅限 simulations 下，防任意路径）
+app.post('/api/fs/open-folder', (req, res) => {
+  try {
+    const p = path.resolve(String(req.body && req.body.path || ''));
+    const simRoot = path.resolve(path.join(BASE, 'simulations'));
+    if (!p.startsWith(simRoot) || !fs.existsSync(p)) return res.status(400).json({ error: '只允许打开模拟输出目录' });
+    spawn('explorer', [p], { detached: true, stdio: 'ignore' }).unref();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e && e.message || e).slice(0, 160) });
+  }
+});
+
 // 一体生成：全部关键帧一次生成一段连续动画
 app.post('/api/director', async (req, res) => {
   const { firstFrame, lastFrame, refVideoUrl, refImages = [], refVideos = [], refAudios = [], prompt: userPrompt, duration, model, animMode } = req.body || {};
