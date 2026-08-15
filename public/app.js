@@ -723,9 +723,9 @@ function switchMode(mode) {
     drawMotionChart(); // 隐藏时 canvas 宽度为 0
   }
   if (mode === 'director') {
-    // 自愈：任何历史异常都不能把生成按钮锁死（并发模式下按钮永远可点）
+    // 自愈：任何历史异常都不能把生成按钮锁死（并发模式下按钮永远可点）。
+    // 只碰 disabled，不覆写文案 —— 覆写会破坏两行排版与多语翻译
     $('btnDirectorGen').disabled = false;
-    $('btnDirectorGen').textContent = '🎬 导演生成';
   }
 }
 
