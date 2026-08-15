@@ -1107,12 +1107,9 @@ function thumbRelease() {
 const THUMB_ORIGINAL_MAX = 40 * 1024 * 1024; // 兜底直传原图的大小上限
 let ffmpegBroken = false; // 熔断：spawn 层面失败（ENOENT/EACCES 等）后不再反复尝试
 
-app.get('/api/fs/thumb', async (req, res) => {
+async function serveThumbFile(res, file, kind) {
   let held = false;
   try {
-    const file = String(req.query.path || '');
-    const kind = mediaKindOf(file);
-    if (!path.isAbsolute(file) || !kind || kind === 'audio' || !fs.existsSync(file)) return res.status(404).end();
     const st = fs.statSync(file);
     const key = crypto.createHash('sha1').update(file + '|' + st.mtimeMs + '|' + st.size).digest('hex');
     const cached = path.join(THUMB_DIR, key + '.jpg');
@@ -1162,6 +1159,31 @@ app.get('/api/fs/thumb', async (req, res) => {
     if (held) thumbRelease();
     res.status(404).end();
   }
+}
+
+app.get('/api/fs/thumb', async (req, res) => {
+  const file = String(req.query.path || '');
+  const kind = mediaKindOf(file);
+  if (!path.isAbsolute(file) || !kind || kind === 'audio' || !fs.existsSync(file)) return res.status(404).end();
+  serveThumbFile(res, file, kind);
+});
+
+// 生成结果 / 参考素材的缩略图：把已挂载的 /videos /assets URL 反解回本地文件，
+// 复用同一套 ffmpeg 抽帧 + 磁盘缓存。前端历史卡从此只加载一张 JPEG，
+// 不再为每张卡常驻一个 <video> 解码器（那是页面卡顿的根源）。
+app.get('/api/media/thumb', (req, res) => {
+  try {
+    const src = String(req.query.src || '').split('?')[0];
+    let file = null;
+    if (src.startsWith('/videos/')) file = path.join(VIDEO_DIR, decodeURIComponent(src.slice('/videos/'.length)));
+    else if (src.startsWith('/assets/')) file = path.join(ASSET_DIR, decodeURIComponent(src.slice('/assets/'.length)));
+    if (!file) return res.status(404).end();
+    file = path.normalize(file);
+    if (!(file.startsWith(VIDEO_DIR + path.sep) || file.startsWith(ASSET_DIR + path.sep))) return res.status(404).end();
+    const kind = mediaKindOf(file);
+    if (!kind || kind === 'audio' || !fs.existsSync(file)) return res.status(404).end();
+    serveThumbFile(res, file, kind);
+  } catch { res.status(404).end(); }
 });
 
 // 诊断：打包环境里 ffmpeg 到底能不能 spawn（排查缩略图问题用）

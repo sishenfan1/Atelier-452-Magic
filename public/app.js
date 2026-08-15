@@ -1569,7 +1569,7 @@ function renderWhole() {
     card.className = 'gen-card' + (h.dl ? '' : ' undownloaded') + (h.videoUrl === genPlayerUrl ? ' playing' : '');
     card.dataset.url = h.videoUrl;
     card.innerHTML = `
-      <video src="${h.videoUrl}" muted loop controls preload="metadata"></video>
+      <div class="gen-thumb-wrap" data-hover-video="${escapeHtml(h.videoUrl)}"><img class="gen-thumb-img" src="/api/media/thumb?src=${encodeURIComponent(h.videoUrl)}" loading="lazy" onerror="this.style.visibility='hidden'"></div>
       <div class="gen-meta">
         <b>v${ver}</b>
         ${h.acting ? `<span class="chip shibai-chip">芝居 ${h.acting} · ${escapeHtml(h.actingTier || '')}</span>` : ''}
@@ -2458,7 +2458,7 @@ function renderV2V() {
     card.className = 'hist-card' + (idx === v.current ? ' active' : '');
     const note = h.note ? '<br>' + escapeHtml(h.note) : '';
     card.innerHTML = `
-      <video src="${h.videoUrl}" muted preload="metadata"></video>
+      <div class="hist-card-thumb" data-hover-video="${escapeHtml(h.videoUrl)}"><img src="/api/media/thumb?src=${encodeURIComponent(h.videoUrl)}" loading="lazy" onerror="this.style.visibility='hidden'"></div>
       <div class="meta"><b>版本 ${v.history.length - idx}</b>
         ${escapeHtml(h.time || '')} · ${h.duration || 0}s · ${h.refs || 0} 张参考图${note}</div>
       <button class="btn dl">⬇</button>
@@ -2621,7 +2621,7 @@ function renderTimeline() {
         <span class="seg-status ${seg.status}">${STATUS_TEXT[seg.status]}</span></div>
       <div class="pair"><img src="${a.url}"><span class="arrow">→</span><img src="${b.url}"></div>
       ${ver
-        ? `<video src="${ver.videoUrl}" controls muted loop preload="metadata"></video>`
+        ? `<video src="${ver.videoUrl}" controls muted loop preload="none" poster="/api/media/thumb?src=${encodeURIComponent(ver.videoUrl)}"></video>`
         : `<div class="empty-video ${seg.status === 'running' ? 'spin' : ''}">${seg.status === 'running' ? '' : '未生成'}</div>`}
       <div class="version-strip" aria-label="生成历史">${versionButtons}</div>
       <div class="foot">
@@ -3397,17 +3397,20 @@ function renderDirRefs() {
     const row = document.createElement('div');
     row.className = 'dir-ref-row';
     row.dataset.refId = r.id; // 供问题引用定位器按 id 找到说明词框
+    // 视频参考：只放一张服务端抽帧的 JPEG 缩略图（不常驻 <video> 解码器，否则几十个参考就把页面拖死），
+    // 悬停回放由全局 [data-hover-video] 委托按需创建、移开即销毁。
     const thumb = (r.kind || 'image') === 'image'
       ? `<img src="${r.url}" alt="${escapeHtml(r.name)}" title="${escapeHtml(r.name)}">`
       : (r.kind === 'video'
-        ? `<video class="hover-play" src="${r.url}" muted loop playsinline preload="metadata" title="${escapeHtml(r.name)}"></video>`
+        ? `<img src="/api/media/thumb?src=${encodeURIComponent(r.url)}" alt="${escapeHtml(r.name)}" title="${escapeHtml(r.name)}" loading="lazy" onerror="this.style.visibility='hidden'">`
         : `<span class="dir-ref-icon" title="${escapeHtml(r.name)}">${DIR_KIND_META[r.kind].icon}</span>`);
+    const hoverAttr = r.kind === 'video' ? ` data-hover-video="${escapeHtml(r.url)}"` : '';
     const roleOpts = Object.entries(DIR_REF_ROLES)
       .map(([k, [label]]) => `<option value="${k}" ${(r.role || meta.defaultRole) === k ? 'selected' : ''}>${label}</option>`)
       .join('');
     const otherLabel = (state.director.refTier === '25') ? '2.0' : '2.5';
     row.innerHTML = `
-      <div class="ref-cell">${thumb}<button type="button" aria-label="移除">✕</button></div>
+      <div class="ref-cell"${hoverAttr}>${thumb}<button type="button" aria-label="移除">✕</button></div>
       <div class="dir-ref-meta">
         <div class="dir-ref-head">
           <span class="dir-ref-drag" title="按住拖拽调整顺序 — @编号随位置自动重算">⠿</span>
@@ -3687,7 +3690,7 @@ function renderDirector() {
     const card = document.createElement('div');
     card.className = 'gen-card' + (i === state.director.current ? ' playing' : '');
     const reusable = fullPromptFor(item);
-    card.innerHTML = `${item.videoUrl ? `<video class="dir-hist-thumb hover-play" src="${item.videoUrl}" muted loop playsinline preload="metadata"></video>` : ''}
+    card.innerHTML = `${item.videoUrl ? `<div class="hist-thumb-wrap" data-hover-video="${escapeHtml(item.videoUrl)}"><img class="dir-hist-thumb" src="/api/media/thumb?src=${encodeURIComponent(item.videoUrl)}" loading="lazy" onerror="this.style.visibility='hidden'"></div>` : ''}
       <div class="head"><b>${item.model === 'doubao-seedance-2-5-260628' ? '2.5' : '2.0'} · ${item.duration}s</b><span class="hint">${item.time}</span></div>
       <div class="hint">${escapeHtml(item.note || '')}</div>`;
     if (String(reusable).trim()) {
@@ -5921,30 +5924,52 @@ $('simOpenFolder').onclick = async () => {
 };
 
 // ---------------- 悬停即播：所有历史卡与视频参考的迷你回放 ----------------
-// 委托到 document：悬停任何带 .hover-play 的 <video>（或历史卡里的 video）就静音循环播放，
-// 移开即暂停。中割/转绘等旧历史卡的 <video> 也一并纳入。
-function hoverVideoOf(target) {
-  if (!(target instanceof Element)) return null;
-  const direct = target.closest('video.hover-play');
-  if (direct) return direct;
-  const card = target.closest('.gen-card, .hist-card');
-  if (card) return card.querySelector('video');
-  return null;
+// 性能铁律：页面上任何时刻最多存在一个悬停回放 <video>。
+// 缩略图一律是服务端抽帧的 JPEG（/api/media/thumb），悬停时才在 [data-hover-video]
+// 容器里创建覆盖层视频，移开立即卸载 src 并销毁 —— 常驻几十个视频解码器正是之前卡顿的根源。
+let hoverLive = null; // 当前唯一的悬停回放视频
+function killHoverLive() {
+  if (!hoverLive) return;
+  try { hoverLive.pause(); } catch {}
+  try { hoverLive.removeAttribute('src'); hoverLive.load(); } catch {} // 释放解码器与网络
+  hoverLive.remove();
+  hoverLive = null;
 }
 document.addEventListener('mouseover', (e) => {
-  const v = hoverVideoOf(e.target);
-  if (v && v.paused) {
-    v.muted = true;
-    v.loop = true;
-    v.play().catch(() => {});
-  }
+  if (!(e.target instanceof Element)) return;
+  const host = e.target.closest('[data-hover-video]');
+  if (!host) return;
+  if (hoverLive && hoverLive.parentElement === host) return; // 同一容器内移动
+  killHoverLive();
+  const v = document.createElement('video');
+  v.className = 'hover-video-live';
+  v.src = host.dataset.hoverVideo;
+  v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
+  host.appendChild(v);
+  hoverLive = v;
+  v.play().catch(() => {});
 });
 document.addEventListener('mouseout', (e) => {
-  const v = hoverVideoOf(e.target);
-  if (!v) return;
-  // 仍悬停在同一视频（子元素间移动）时不暂停
-  const to = e.relatedTarget instanceof Element ? hoverVideoOf(e.relatedTarget) : null;
-  if (to !== v && !v.paused) v.pause();
+  if (!(e.target instanceof Element)) return;
+  const host = e.target.closest('[data-hover-video]');
+  if (!host) return;
+  if (e.relatedTarget instanceof Element && host.contains(e.relatedTarget)) return;
+  if (hoverLive && hoverLive.parentElement === host) killHoverLive();
+});
+// 中割分镜卡自带播放器（preload=none + poster，静息零解码）：悬停播放、移开暂停
+document.addEventListener('mouseover', (e) => {
+  if (!(e.target instanceof Element)) return;
+  const card = e.target.closest('.seg-card');
+  const v = card && card.querySelector('video[src]');
+  if (v && v.paused) { v.muted = true; v.loop = true; v.play().catch(() => {}); }
+});
+document.addEventListener('mouseout', (e) => {
+  if (!(e.target instanceof Element)) return;
+  const card = e.target.closest('.seg-card');
+  if (!card) return;
+  if (e.relatedTarget instanceof Element && card.contains(e.relatedTarget)) return;
+  const v = card.querySelector('video[src]');
+  if (v && !v.paused) v.pause();
 });
 
 // 应用内选择器：视频格子悬停 → 流式小回放（/api/fs/file 直读本地文件）
