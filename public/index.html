@@ -127,20 +127,43 @@
         </div>
       </div>
       <div class="field">
-        <label>动作描述（所有分段共用）<button class="btn plib" data-target="globalPrompt">📚</button></label>
+        <label>动作描述（所有分段共用）<button class="btn plib" data-target="globalPrompt">📚</button>
+          <button id="globalPromptClear" class="box-clear" type="button" title="清空动作描述">🗑 清空</button></label>
         <textarea id="globalPrompt" rows="2" placeholder="例：挥舞武士刀，动作流畅"></textarea>
       </div>
       <div class="field">
-        <label>风格锁定 <span class="hint">自动附加，保持画风与首尾帧一致</span><button class="btn plib" data-target="stylePrompt">📚</button></label>
+        <label>风格锁定 <span class="hint">自动附加，保持画风与首尾帧一致</span><button class="btn plib" data-target="stylePrompt">📚</button>
+          <button id="stylePromptClear" class="box-clear" type="button" title="清空风格锁定">🗑 清空</button></label>
         <textarea id="stylePrompt" rows="3"></textarea>
       </div>
       <div class="field">
-        <label>中割运动锁定 <span class="hint">自动附加，强制关键帧之间持续运动</span><button class="btn plib" data-target="inbetweenPrompt">📚</button></label>
+        <label>中割运动锁定 <span class="hint">自动附加，强制关键帧之间持续运动</span><button class="btn plib" data-target="inbetweenPrompt">📚</button>
+          <button id="inbetweenPromptClear" class="box-clear" type="button" title="清空中割运动锁定">🗑 清空</button></label>
         <textarea id="inbetweenPrompt" rows="3"></textarea>
       </div>
       <button id="btnWhole" class="btn primary wide big-action">🎬 一体生成（全部关键帧 → 一段连续动画）</button>
       <div id="wholeStatus" class="hint accent" style="margin:6px 0"></div>
+      <button id="btnWholeSimulate" class="btn wide" type="button"
+        title="不发送生成请求：组装注入后的最终提示词 + 把关键帧与全部参考素材按编号打包成文件夹，可直接拿去其它平台出片">🧪 SIMULATE GEN（零消耗 · 出提示词+素材包）</button>
       <button id="btnBatch" class="btn wide" hidden>▶ 分段生成（两两补间，旧模式）</button>
+    </section>
+
+    <section class="panel highlight" id="ibRefPanel">
+      <h2>📚 参考素材 <span class="hint" id="ibRefCaps">— 图 ≤9 · 视频 ≤3 · 音频 ≤3</span></h2>
+      <div class="hint" id="ibRefTierLine">当前档位：<b id="ibRefTierLabel">Seedance 2.0</b> · 两档参考互相独立记忆，⚙ 里换模型自动切换</div>
+      <div class="dir-ref-tabs" id="ibRefTabs">
+        <button data-kind="image" class="active">🖼 图 <b id="ibCntImage">0/9</b></button>
+        <button data-kind="video">🎞 视频 <b id="ibCntVideo">0/3</b></button>
+        <button data-kind="audio">🎵 音频 <b id="ibCntAudio">0/3</b></button>
+      </div>
+      <div id="ibRefList" class="image-list-mini"></div>
+      <div class="row">
+        <button id="ibRefAdd" class="btn wide primary" style="flex:1">＋ 添加参考</button>
+        <button id="ibRefAddNative" class="btn ghost" title="使用系统文件对话框">📂</button>
+        <button id="ibRefCopyAll" class="btn ghost" title="把当前档全部参考（含 role 与说明词）复制到另一档">⇄</button>
+      </div>
+      <div class="hint">关键帧之外的风格/角色/道具参考 — 影响力与忠实度滑杆直接注入提示词；视频/音频参考走 Artcraft 通道（方舟自动忽略并提示）。可直接从文件夹拖文件到此面板。</div>
+      <input type="file" id="ibRefFiles" accept="image/*" multiple hidden>
     </section>
   </aside>
 
@@ -219,6 +242,7 @@
     <section class="panel highlight side-generate-panel">
       <button id="btnWholeTop" class="btn primary wide side-generate">🎬 一体生成</button>
       <div class="hint side-generate-sub">全部关键帧 → 一段连续动画</div>
+      <div id="wholeStatusSide" class="dir-go-status"></div>
     </section>
     <section class="panel dna-dock-panel" id="dnaDockPanel">
       <h2>🧬 风格 DNA <span class="hint">— 拖入任意提示词框</span></h2>

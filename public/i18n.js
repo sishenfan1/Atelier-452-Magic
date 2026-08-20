@@ -544,11 +544,31 @@ const I18N = {
   '已配置（留空保持不变）': ['Configured (blank = keep)', '設定済み（空欄＝変更なし）'],
   'app.getartcraft.com → Settings → API Keys · 留空保持不变': ['app.getartcraft.com → Settings → API Keys · blank = keep', 'app.getartcraft.com → Settings → API Keys · 空欄＝変更なし'],
   '例：赛璐璐动画质感，干净利落的线条与均匀色块；柔和自然的光影层次；画面稳定无闪烁无抖动；角色比例与画风全片恒定；禁 3D 渲染质感、禁真实照片质感。': ['e.g. cel-animation texture, clean crisp lines and flat color blocks; soft natural lighting; stable image with no flicker or shake; constant character proportions and style; no 3D-render look, no photoreal look.', '例：セル画質感、クリーンな線とフラットな色面。柔らかい自然光。ちらつき・ブレのない安定した画面。キャラ比率と画風は全編固定。3DCG 質感・実写質感は禁止。'],
+  '当前档位：': ['Active tier: ', '現在のティア：'],
+  ' · 两档参考互相独立记忆，⚙ 里换模型自动切换': [' · the two tiers keep separate ref sets; switching models in ⚙ swaps them automatically', ' · 2 つのティアは参照セットを別々に記憶。⚙ でモデルを替えると自動で切替'],
+  '关键帧之外的风格/角色/道具参考 — 影响力与忠实度滑杆直接注入提示词；视频/音频参考走 Artcraft 通道（方舟自动忽略并提示）。可直接从文件夹拖文件到此面板。': ['Style/character/prop refs beyond the keyframes — the influence & fidelity sliders inject straight into the prompt; video/audio refs go through the Artcraft channel (Ark ignores them with a notice). You can drag files from a folder onto this panel.', 'キーフレーム以外のスタイル／キャラ／小道具参照 — 影響力・忠実度スライダーはプロンプトへ直接注入。動画／音声参照は Artcraft チャンネル経由（方舟は自動で無視して通知）。フォルダからこのパネルへドラッグ可。'],
+  '🧪 SIMULATE GEN（零消耗 · 出提示词+素材包）': ['🧪 SIMULATE GEN (zero cost · final prompt + asset pack)', '🧪 SIMULATE GEN（消費ゼロ · 最終プロンプト＋素材パック）'],
+  '不发送生成请求：组装注入后的最终提示词 + 把关键帧与全部参考素材按编号打包成文件夹，可直接拿去其它平台出片': ['No generation request is sent: assembles the fully-injected final prompt and packs keyframes + all refs into a numbered folder you can take to any other platform', '生成リクエストは送りません：注入済みの最終プロンプトを組み立て、キーフレーム＋全参照素材を番号付きフォルダにパック。他プラットフォームでそのまま使えます'],
+  '清空动作描述': ['Clear action description', '動作説明をクリア'],
+  '清空风格锁定': ['Clear style lock', 'スタイルロックをクリア'],
+  '清空中割运动锁定': ['Clear in-between motion lock', '中割りモーションロックをクリア'],
+  '📁 添加参考素材（中割）': ['📁 Add reference material (in-betweens)', '📁 参照素材を追加（中割り）'],
+  '当前档各类型参考位都已满': ['All reference slots in this tier are full', 'このティアの参照枠はすべて満杯です'],
+  '当前档没有参考可复制': ['No refs in this tier to copy', 'このティアにコピーできる参照がありません'],
+  '模拟出片中…（组装最终提示词 + 打包关键帧与参考素材）': ['Simulating… (assembling the final prompt + packing keyframes and refs)', 'シミュレート中…（最終プロンプト組立＋キーフレームと参照素材のパック）'],
+  '模拟出片完成 ✓ 未产生任何生成费用': ['Simulate GEN done ✓ no generation cost incurred', 'シミュレート完了 ✓ 生成コストはかかっていません'],
+  '此参考还没有被 @ 引用': ['This ref has no @ mentions yet', 'この参照はまだ @ 参照されていません'],
+  '还没有提示词引用这份参考 — 在任意提示词框输入 @ 即可引用': ['No prompt mentions this ref yet — type @ in any prompt box to reference it', 'まだどのプロンプトもこの参照を使っていません — 任意の欄で @ を入力して参照できます'],
   '在 Director 仪表盘新建与管理项目':['Create & manage projects in the Director dashboard', 'プロジェクトの作成・管理は Director ダッシュボードで'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]
 const I18N_RULES = [
+  [/^参考素材已切到 Seedance (2\.0|2\.5) 档（(\d+) 份）— 两档独立记忆，切回即恢复$/, 'Refs switched to the Seedance $1 set ($2 items) — tiers are remembered separately; switch back to restore', '参照素材を Seedance $1 セットへ切替（$2 件）— ティア別に記憶。戻せば復元'],
+  [/^已复制到 Seedance (2\.0|2\.5) 档 ✓（⚙ 里换到对应模型即可看到）$/, 'Copied to the Seedance $1 set ✓ (switch models in ⚙ to see it)', 'Seedance $1 セットへコピー ✓（⚙ でモデルを替えると表示）'],
+  [/^@(image|video|audio)(\d+) · (\d+)处$/, '@$1$2 · $3 uses', '@$1$2 · $3 箇所'],
+  [/^这份参考被 (\d+) 处提示词引用 — 点击跳到出现位置，连续点循环跳遍每一处$/, 'Mentioned in $1 places — click to jump there; keep clicking to cycle through all of them', '$1 箇所で参照されています — クリックでジャンプ。連続クリックで全箇所を巡回'],
+  [/^@(image|video|audio)(\d+) 还没有被任何提示词引用 — 在任意提示词框输入 @ 即可引用它$/, '@$1$2 is not mentioned in any prompt yet — type @ in any prompt box to use it', '@$1$2 はまだどのプロンプトにも登場しません — 任意の欄で @ を入力して参照'],
   [/^（中割 \/ 一体 \/ 转绘 \/ 精修 \/ REFERENCES TOOL）[\s\S]*常青锚点[\s\S]*$/, '(In-betweens / Single-gen / Repaint / Refine / REFERENCES TOOL) — appended to the end of every generation prompt as the Evergreen Anchor. Good for: quality bars, medium texture, lighting principles, color charter, anti-AI-look clauses.', '（中割り／一括／転描／クリンナップ／REFERENCES TOOL）— 毎回の生成プロンプト末尾に「エバーグリーン錨」として追加。画質要件・質感・ライティング原則・カラールール・AI感防止に最適。'],
   [/^已用 \$([\d.]+) \/ \$(\d+)$/, 'Spent \$1 / \$2', '使用済み \$1 / \$2'],
   [/^当前模型：(.+) · 方舟直连$/, 'Model: $1 · Ark direct', 'モデル：$1 · 方舟直結'],
@@ -629,11 +649,16 @@ function translateNodeText(node) {
 }
 
 const SKIP_TAGS = new Set(['TEXTAREA', 'INPUT', 'SCRIPT', 'STYLE', 'SELECT']);
+// .i18n-skip 及其整棵子树不翻译 —— 用于镜像用户输入的浮层（如 @气泡层）：必须与输入框逐字符一致
+function i18nSkipped(el) {
+  return !!(el && el.closest && el.closest('.i18n-skip'));
+}
 
 function translateTree(root) {
   if (LANG === 'zh' || !root) return;
+  if (root.nodeType === 1 && i18nSkipped(root)) return;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => (n.parentElement && SKIP_TAGS.has(n.parentElement.tagName))
+    acceptNode: (n) => (n.parentElement && (SKIP_TAGS.has(n.parentElement.tagName) || i18nSkipped(n.parentElement)))
       ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
   });
   const nodes = [];
@@ -664,11 +689,12 @@ const i18nObserver = new MutationObserver((muts) => {
   if (LANG === 'zh') return;
   for (const m of muts) {
     for (const node of m.addedNodes) {
-      if (node.nodeType === 3) translateNodeText(node);
-      else if (node.nodeType === 1 && !SKIP_TAGS.has(node.tagName)) translateTree(node);
+      if (node.nodeType === 3) { if (!i18nSkipped(node.parentElement)) translateNodeText(node); }
+      else if (node.nodeType === 1 && !SKIP_TAGS.has(node.tagName) && !i18nSkipped(node)) translateTree(node);
     }
     if (m.type === 'characterData' && m.target.nodeType === 3 &&
-        m.target.parentElement && !SKIP_TAGS.has(m.target.parentElement.tagName)) {
+        m.target.parentElement && !SKIP_TAGS.has(m.target.parentElement.tagName) &&
+        !i18nSkipped(m.target.parentElement)) {
       translateNodeText(m.target);
     }
     // 动态设置的 title/placeholder 也要翻（JS 里 el.title = ... 属于属性变更）

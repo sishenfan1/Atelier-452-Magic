@@ -847,10 +847,11 @@ function wholePromptFor(n, gaps) {
   return text;
 }
 
-async function arkCreateWhole(cfg, imageDataUrls, text, duration) {
+async function arkCreateWhole(cfg, imageDataUrls, text, duration, refDataUrls = []) {
   const safeText = sanitizeForArk(text);
   const content = [{ type: 'text', text: safeText }];
-  for (const img of imageDataUrls) {
+  // 关键帧在前、附加参考图在后 —— 与提示词里的「图片N+K」编号约定一致
+  for (const img of imageDataUrls.concat(refDataUrls)) {
     content.push({ type: 'image_url', image_url: { url: img }, role: 'reference_image' });
   }
   const body = {
@@ -2112,6 +2113,58 @@ app.post('/api/director/simulate', async (req, res) => {
   }
 });
 
+// 中割一体生成的 SIMULATE GEN：走与 /api/whole 完全同一条提示词组装管线，
+// 打包 关键帧（keyframe01…）+ 附加参考（image1/video1/audio1…）+ prompt.txt + manifest.txt，零 API 消耗
+app.post('/api/whole/simulate', async (req, res) => {
+  try {
+    const { images = [], refImages = [], refVideos = [], refAudios = [], prompt: userPrompt, stylePrompt, actingPrompt, inbetweenPrompt, duration, gaps, refsMeta = [] } = req.body || {};
+    if (!Array.isArray(images) || images.length < 2) return res.status(400).json({ error: '至少需要 2 张关键帧' });
+    const cfg = loadConfig();
+    const gapList = Array.isArray(gaps) ? gaps : null;
+    const wholeText = buildWholeText(cfg, {
+      images, gapList, stylePrompt, actingPrompt, inbetweenPrompt, userPrompt,
+      refCounts: {
+        image: (refImages || []).length,
+        video: (refVideos || []).length,
+        audio: (refAudios || []).length,
+      },
+    });
+    const fullPrompt = await finalizePrompt(cfg, wholeText);
+    const stamp = new Date();
+    const id = 'sim_' + stamp.toISOString().replace(/[:.]/g, '-').slice(0, 19) + '_' + newId().slice(0, 4);
+    const dir = path.join(BASE, 'simulations', id);
+    fs.mkdirSync(dir, { recursive: true });
+    const copied = [];
+    const copyList = (urls, prefix, pad) => {
+      (Array.isArray(urls) ? urls : []).forEach((u, i) => {
+        const f = localFileOf(u);
+        if (!f || !fs.existsSync(f)) return;
+        const num = pad ? String(i + 1).padStart(2, '0') : String(i + 1);
+        const name = prefix + num + (path.extname(f).toLowerCase() || '');
+        fs.copyFileSync(f, path.join(dir, name));
+        copied.push(name);
+      });
+    };
+    copyList(images, 'keyframe', true);
+    copyList(refImages, 'image');
+    copyList(refVideos, 'video');
+    copyList(refAudios, 'audio');
+    fs.writeFileSync(path.join(dir, 'prompt.txt'), fullPrompt, 'utf8');
+    const manifest = [
+      `Simulate GEN（中割一体生成）— ${stamp.toLocaleString('zh-CN', { hour12: false })}`,
+      `关键帧: ${images.length} 张（keyframe01…按动画顺序）· 时长: ${duration}s`,
+      `提示词字符数: ${fullPrompt.length}`,
+      '',
+      '附加参考素材清单（文件名 = 提示词里的编号）:',
+      ...(Array.isArray(refsMeta) ? refsMeta : []).map((m) => `  ${m.file} — ${m.roleLabel || ''}${m.weight !== undefined && Number(m.weight) !== 50 ? ` · 影响力 ${m.weight}` : ''}${m.fidelity !== undefined && Number(m.fidelity) !== 50 ? ` · 忠实度 ${m.fidelity}` : ''}${m.note ? ` · 说明: ${m.note}` : ''}`),
+    ];
+    fs.writeFileSync(path.join(dir, 'manifest.txt'), manifest.join('\n'), 'utf8');
+    res.json({ prompt: fullPrompt, folder: dir, files: copied.concat(['prompt.txt', 'manifest.txt']) });
+  } catch (e) {
+    res.status(500).json({ error: '模拟出片失败: ' + String(e && e.message || e).slice(0, 200) });
+  }
+});
+
 // 在资源管理器中打开模拟输出目录（仅限 simulations 下，防任意路径）
 app.post('/api/fs/open-folder', (req, res) => {
   try {
@@ -2299,11 +2352,41 @@ app.post('/api/director', async (req, res) => {
   res.json({ id, mode: tasks[id].mode, status: 'running' });
 });
 
+// 一体生成的提示词组装（真实生成与 SIMULATE GEN 共用同一条管线）
+// refCount>0 时插入「附加参考图」编号桥接段：关键帧是图片1—N，附加参考是图片N+1—N+M，
+// 并声明下文「参考图K」即指第 K 张附加参考 —— 客户端注入的使用说明按这个约定写。
+function buildWholeText(cfg, { images, gapList, stylePrompt, actingPrompt, inbetweenPrompt, userPrompt, refCounts }) {
+  const n = images.length;
+  const rc = refCounts || {};
+  const bridge = [];
+  if (rc.image) {
+    bridge.push(`除上述 ${n} 张关键帧外，另附 ${rc.image} 张额外参考图，按顺序排在关键帧之后（即图片${n + 1}—图片${n + rc.image}）。` +
+      `下文「参考图K」即指其中第 K 张附加参考图（参考图1=图片${n + 1}，依此类推）。` +
+      `附加参考图不是关键帧：绝不作为动画序列中的姿势节点，只按下文使用说明作风格/角色/道具等参考。`);
+  }
+  if (rc.video) bridge.push(`另附 ${rc.video} 段参考视频，下文「参考视频K」按附带顺序对应。`);
+  if (rc.audio) bridge.push(`另附 ${rc.audio} 段参考音频，下文「参考音频K」按附带顺序对应。`);
+  return [
+    (stylePrompt !== undefined ? stylePrompt : cfg.stylePrompt) || '',
+    wholePromptFor(n, gapList),
+    bridge.join('\n'),
+    // 中割运动指令：永远注入
+    (inbetweenPrompt !== undefined && inbetweenPrompt !== ''
+      ? inbetweenPrompt
+      : (cfg.inbetweenPrompt || DEFAULT_INBETWEEN_PROMPT)),
+    (actingPrompt || '').trim(),
+    evergreenJoin(cfg, userPrompt),
+  ].map((s) => s.trim()).filter(Boolean).join('\n');
+}
+
 app.post('/api/whole', async (req, res) => {
-  const { images = [], prompt: userPrompt, stylePrompt, actingPrompt, inbetweenPrompt, duration, timings, gaps } = req.body || {};
+  const { images = [], refImages = [], refVideos = [], refAudios = [], prompt: userPrompt, stylePrompt, actingPrompt, inbetweenPrompt, duration, timings, gaps } = req.body || {};
   const gapList = Array.isArray(gaps) ? gaps : (Array.isArray(timings) ? timings.map((s) => ({ seconds: s })) : null);
   if (!Array.isArray(images) || images.length < 2) return res.status(400).json({ error: '至少需要 2 张关键帧' });
   if (images.length > 100) return res.status(400).json({ error: '最多 100 张关键帧' });
+  const refImgs = Array.isArray(refImages) ? refImages : [];
+  const refVids = Array.isArray(refVideos) ? refVideos : [];
+  const refAuds = Array.isArray(refAudios) ? refAudios : [];
   const cfg = loadConfig();
   const id = newId();
   let bill = null;
@@ -2313,16 +2396,24 @@ app.post('/api/whole', async (req, res) => {
   }
   logUsedPrompt(cfg, 'whole', userPrompt);
   if (Array.isArray(gaps)) for (const g of gaps) logUsedPrompt(cfg, 'gap', g && g.prompt);
-  const wholeText = [
-    (stylePrompt !== undefined ? stylePrompt : cfg.stylePrompt) || '',
-    wholePromptFor(images.length, gapList),
-    // 中割运动指令：永远注入
-    (inbetweenPrompt !== undefined && inbetweenPrompt !== ''
-      ? inbetweenPrompt
-      : (cfg.inbetweenPrompt || DEFAULT_INBETWEEN_PROMPT)),
-    (actingPrompt || '').trim(),
-    evergreenJoin(cfg, userPrompt),
-  ].map((s) => s.trim()).filter(Boolean).join('\n');
+  // 参考视频总时长预检（与导演生成同一条规则：2.5 ≤30s、2.0 ≤15s，超限先拦）
+  if (refVids.length && FFPROBE) {
+    let total = 0;
+    for (const u of refVids) {
+      const f = localFileOf(u);
+      if (f && fs.existsSync(f)) { const d = probeDurationSec(f); if (d) total += d; }
+    }
+    const is25 = useArtcraftFirst(cfg) ? /2p5/.test(artcraftModelOf(cfg)) : isSeedance25(cfg.model);
+    const capSec = is25 ? 30 : 15;
+    if (total > capSec + 0.5) {
+      if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
+      return res.status(400).json({ error: `参考视频总时长 ${total.toFixed(1)} 秒超过当前档上限 ${capSec} 秒 — 请剪短或减少参考视频后重试` });
+    }
+  }
+  const wholeText = buildWholeText(cfg, {
+    images, gapList, stylePrompt, actingPrompt, inbetweenPrompt, userPrompt,
+    refCounts: { image: refImgs.length, video: refVids.length, audio: refAuds.length },
+  });
   const wholeFinal = await finalizePrompt(cfg, wholeText);
   // Provider 优先级：Artcraft → 失败自动回退方舟
   let fellBack = '';
@@ -2330,11 +2421,32 @@ app.post('/api/whole', async (req, res) => {
     try {
       const refTokens = [];
       for (const u of images.slice(0, 30)) refTokens.push(await artcraftUploadImage(cfg, u));
-      const acJobToken = await artcraftOmniGenerate(cfg, {
-        model: artcraftModelOf(cfg), prompt: wholeFinal, refTokens, duration,
-      });
-      tasks[id] = { mode: 'artcraft', status: 'running', acJobToken, cost: bill && bill.cost, uid: bill && bill.uid };
-      return res.json({ id, mode: 'artcraft', status: 'running' });
+      // 附加参考图排在关键帧之后，同一个 30 张图片总池（关键帧优先）
+      const refRoom = Math.max(0, 30 - Math.min(images.length, 30));
+      for (const u of refImgs.slice(0, refRoom)) refTokens.push(await artcraftUploadImage(cfg, u));
+      const refVideoTokens = [];
+      for (const u of refVids.slice(0, 10)) refVideoTokens.push(await artcraftUploadVideo(cfg, u));
+      const refAudioTokens = [];
+      for (const u of refAuds.slice(0, 10)) refAudioTokens.push(await artcraftUploadAudio(cfg, u));
+      const genOpts = { model: artcraftModelOf(cfg), prompt: wholeFinal, refTokens, refVideoTokens, refAudioTokens, duration };
+      let acJobToken;
+      let degraded = '';
+      try {
+        acJobToken = await artcraftOmniGenerate(cfg, genOpts);
+      } catch (e) {
+        // 与导演生成同款降级：5xx + 带视频/音频参考 → 只用图片参考重试
+        const is5xx = /\(5\d\d\)/.test(String(e.message || e));
+        if (is5xx && (refVideoTokens.length || refAudioTokens.length)) {
+          acJobToken = await artcraftOmniGenerate(cfg, { ...genOpts, refVideoTokens: [], refAudioTokens: [] });
+          degraded = '⚠ Artcraft 后端拒绝了本次的视频/音频参考（500），已仅用关键帧+图片参考完成生成。';
+        } else {
+          throw e;
+        }
+      }
+      const trimmed = refImgs.length > refRoom ? `⚠ 图片总池 30 张已满：${refImgs.length - refRoom} 张附加参考图被跳过（关键帧优先）。` : '';
+      const acNotice = [degraded, trimmed].filter(Boolean).join(' ');
+      tasks[id] = { mode: 'artcraft', status: 'running', acJobToken, cost: bill && bill.cost, uid: bill && bill.uid, notice: acNotice || undefined };
+      return res.json({ id, mode: 'artcraft', status: 'running', notice: acNotice || undefined });
     } catch (e) {
       fellBack = String(e.message || e).slice(0, 200);
       console.warn('Artcraft 一体生成失败，回退方舟:', fellBack);
@@ -2343,9 +2455,18 @@ app.post('/api/whole', async (req, res) => {
   if (cfg.apiKey) {
     try {
       const imageDataUrls = images.map(resolveToArkImage);
-      const arkId = await arkCreateWhole(cfg, imageDataUrls, sanitizeForArk(wholeFinal), duration);
+      // 方舟图片总池：2.5=30 张、2.0=9 张；关键帧优先，附加参考图占余位；视频/音频参考方舟一体生成不支持
+      const arkPool = isSeedance25(cfg.model) ? 30 : 9;
+      const arkRefRoom = Math.max(0, arkPool - images.length);
+      const refDataUrls = refImgs.slice(0, arkRefRoom).map(resolveToArkImage);
+      const arkId = await arkCreateWhole(cfg, imageDataUrls, sanitizeForArk(wholeFinal), duration, refDataUrls);
       tasks[id] = { mode: 'ark', status: 'running', arkId, cost: bill && bill.cost, uid: bill && bill.uid };
-      if (fellBack) tasks[id].notice = 'Artcraft 失败已自动回退方舟: ' + fellBack;
+      const arkNotices = [
+        fellBack ? 'Artcraft 失败已自动回退方舟: ' + fellBack : '',
+        refImgs.length > arkRefRoom ? `⚠ 方舟图片总池 ${arkPool} 张已满：${refImgs.length - arkRefRoom} 张附加参考图被跳过（关键帧优先）` : '',
+        (refVids.length || refAuds.length) ? '⚠ 方舟一体生成不支持视频/音频参考，本次已忽略（Artcraft 通道支持）' : '',
+      ].filter(Boolean);
+      if (arkNotices.length) tasks[id].notice = arkNotices.join('；');
     } catch (e) {
       if (pm && bill) pm.refund(bill.uid, bill.cost, 'create-failed');
       return res.status(502).json({ error: (fellBack ? `Artcraft 失败（${fellBack}）且方舟也失败: ` : '') + String(e.message || e) });

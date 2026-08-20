@@ -1490,29 +1490,57 @@ async function resumePendingTask(entry) {
 }
 
 // ---------------- 一体生成：全部关键帧 → 单次连续动画 ----------------
-function setWholeStatus(t) { $('wholeStatus').textContent = t || ''; }
+function setWholeStatus(t) {
+  $('wholeStatus').textContent = t || '';
+  // 镜像到右栏一体生成按钮下方（与导演区 dirGoStatus 同款：在哪个按钮点的都看得到）
+  const side = $('wholeStatusSide');
+  if (side) {
+    side.textContent = t || '';
+    side.classList.toggle('warn', /^⚠|失败|已满|超过/.test(String(t || '')));
+  }
+}
 
-async function wholeGenerate() {
-  if (state.images.length < 2) { alert('请先上传至少 2 张关键帧'); return; }
-  if (state.images.length > 100) { alert('最多 100 张关键帧'); return; }
-  if (state.images.length > 9 &&
-      !confirm(`当前 ${state.images.length} 张关键帧，超过 Seedance 官方参考图上限（9 张），API 可能拒绝。仍要尝试提交吗？`)) return;
-  // 提交时快照当前设置，允许随后立刻改设置再提交下一个任务并行跑
+/** 组装一次一体生成的完整请求（真实生成与 SIMULATE GEN 共用同一条管线）；被拦时返回 null */
+function assembleWholeRequest() {
+  if (state.images.length < 2) { alert('请先上传至少 2 张关键帧'); return null; }
+  if (state.images.length > 100) { alert('最多 100 张关键帧'); return null; }
   const gaps = wholeGaps();
   const totalDur = Math.max(4, Math.min(modelIs25() ? 30 : 15, Math.round(wholeTotalSeconds())));
   const frames = state.images.length;
   const note = $('globalPrompt').value.trim();
-  const actingLevel = Number($('acting').value);
+  const refs = ibRefsAll();
+  // 参考使用说明与导演区同一套注入文案；编号约定（参考图K=图片N+K）由服务端桥接段声明
+  const refNotes = buildRefNotesLines(refs);
+  const prompt = [note, refNotes.length ? '参考素材使用说明：\n' + refNotes.join('\n') : '']
+    .filter(Boolean).join('\n');
+  return {
+    frames, totalDur, note,
+    actingLevel: Number($('acting').value),
+    body: {
+      images: state.images.map((im) => im.url),
+      refImages: refs.filter((r) => (r.kind || 'image') === 'image').map((r) => r.url),
+      refVideos: refs.filter((r) => r.kind === 'video').map((r) => r.url),
+      refAudios: refs.filter((r) => r.kind === 'audio').map((r) => r.url),
+      prompt,
+      stylePrompt: $('stylePrompt').value.trim(),
+      inbetweenPrompt: $('inbetweenPrompt').value.trim(),
+      actingPrompt: buildActingPrompt(),
+      duration: totalDur,
+      gaps,
+    },
+    refsMeta: buildRefsMeta(refs),
+  };
+}
+
+async function wholeGenerate() {
+  const req = assembleWholeRequest();
+  if (!req) return;
+  if (state.images.length > 9 &&
+      !confirm(`当前 ${state.images.length} 张关键帧，超过 Seedance 官方参考图上限（9 张），API 可能拒绝。仍要尝试提交吗？`)) return;
+  // 提交时快照当前设置，允许随后立刻改设置再提交下一个任务并行跑
+  const { frames, totalDur, note, actingLevel } = req;
   const tierName = actingTier(actingLevel).name;
-  const body = JSON.stringify({
-    images: state.images.map((im) => im.url),
-    prompt: note,
-    stylePrompt: $('stylePrompt').value.trim(),
-    inbetweenPrompt: $('inbetweenPrompt').value.trim(),
-    actingPrompt: buildActingPrompt(),
-    duration: totalDur,
-    gaps,
-  });
+  const body = JSON.stringify(req.body);
   const job = addJob(`🎬 一体生成 ${frames}帧 → ${totalDur}s`, 60 + totalDur * 25);
   setWholeStatus('已提交（可继续提交更多任务并行生成，进度见右下角）');
   try {
@@ -2704,6 +2732,7 @@ async function refreshConfig() {
   serverProvider = cfg.preferredProvider || 'ark';
   syncModelSeg();
   if (typeof dirSyncTier === 'function') dirSyncTier(); // 参考区档位/徽标跟随全局模型
+  if (typeof ibSyncTier === 'function') ibSyncTier(); // 中割参考区双档记忆同样跟随
   if ($('dirTranslate')) $('dirTranslate').checked = cfg.translatePrompts === true;
   $('verChip').textContent = cfg.appVersion ? 'v' + cfg.appVersion : '';
   const chip = $('modeChip');
@@ -3416,6 +3445,7 @@ function renderDirRefs() {
           <span class="dir-ref-drag" title="按住拖拽调整顺序 — @编号随位置自动重算">⠿</span>
           <span class="dir-ref-idx">${DIR_KIND_META[r.kind || 'image'].icon} ${i + 1} · ${escapeHtml((r.name || '').slice(0, 18))}</span>
           <select class="dir-ref-role" title="这份参考对模型的作用（注入后台提示词）">${roleOpts}</select>
+          <button type="button" class="dir-ref-usage" data-token="${(r.kind || 'image') + (i + 1)}"></button>
           <button type="button" class="dir-ref-copy" title="把这份参考连同 role 与说明词复制到 Seedance ${otherLabel} 档的参考集">⇄ ${otherLabel}</button>
         </div>
         <textarea class="dir-ref-note" rows="1" data-min-grow="80" maxlength="160"
@@ -3427,6 +3457,16 @@ function renderDirRefs() {
             <span>忠实度</span><input type="range" class="ref-fidelity" min="0" max="100" step="1" value="${r.fidelity === undefined ? 50 : Number(r.fidelity)}"><b>${r.fidelity === undefined ? 50 : Number(r.fidelity)}</b></label>
         </div>
       </div>`;
+    // 被引用指示器：@image1 · N处 —— 点击循环跳遍所有出现这个引用的提示词位置
+    const usageBtn = row.querySelector('.dir-ref-usage');
+    usageBtn.onclick = () => {
+      const token = usageBtn.dataset.token;
+      if (typeof collectMentionOccurrences === 'function' && !collectMentionOccurrences(token).length) {
+        setDirStatus(`@${token} 还没有被任何提示词引用 — 在任意提示词框输入 @ 即可引用它`);
+        return;
+      }
+      jumpToMentionProblem(token);
+    };
     row.querySelector('.ref-cell button').onclick = () => {
       state.director.refs = state.director.refs.filter((x) => x.id !== r.id);
       renderDirRefs();
@@ -3504,6 +3544,49 @@ function updateDirRunPill() {
   pill.hidden = dirRunning <= 0;
   pill.textContent = `⏳ ${dirRunning} 个生成进行中`;
 }
+/** 每份参考的 role + 影响力/忠实度滑杆 + 说明词 → 使用说明行（导演生成与中割一体生成共用同一套注入文案） */
+function buildRefNotesLines(refs, resolveFn) {
+  const kindCounters = { image: 0, video: 0, audio: 0 };
+  const rs = resolveFn || ((t) => String(t || '').trim());
+  return refs.map((r) => {
+    const kind = r.kind || 'image';
+    kindCounters[kind] += 1;
+    const roleDef = DIR_REF_ROLES[r.role || DIR_KIND_META[kind].defaultRole];
+    const roleText = roleDef ? `${roleDef[0]}——${roleDef[1]}` : '';
+    const note = rs((r.note || '').trim()); // 导演区：说明里也可 @引用其它素材（悬空引用同样计入拦截）
+    // 影响力 / 忠实度滑杆 → 档位指令（50 为中性不注入，避免提示词臃肿）
+    const w = r.weight === undefined ? 50 : Number(r.weight);
+    const f = r.fidelity === undefined ? 50 : Number(r.fidelity);
+    const weightText = w >= 85 ? '【最高权重】此参考优先级最高，与其它参考冲突时一律以此为准'
+      : w >= 65 ? '高权重参考，优先遵循'
+      : w <= 15 ? '最低权重，仅作最轻微的参考'
+      : w <= 35 ? '低权重参考，其它参考优先' : '';
+    const fidelityText = f >= 85 ? '必须原封不动地使用这份素材的画面内容与构图，逐细节复刻，禁止任何再创作'
+      : f >= 65 ? '高度贴近原素材，仅允许细微变化'
+      : f <= 15 ? '完全创作自由：任何情况下都不得将其用作构图或画面布局，仅作气质与要素的启发'
+      : f <= 35 ? '大幅再创作：只取其要素与精神，画面构图自由重构' : '';
+    const clauses = [roleText, weightText, fidelityText].filter(Boolean).join('；');
+    if (!clauses && !note) return null;
+    return `${DIR_KIND_META[kind].name}${kindCounters[kind]}（${clauses}）${note ? '：' + note : ''}`;
+  }).filter(Boolean);
+}
+
+/** 参考文件编号命名（image1/video1…与提示词编号一一对应）+ 打包清单元数据（Simulate GEN 用） */
+function buildRefsMeta(refs) {
+  const metaCounters = { image: 0, video: 0, audio: 0 };
+  return refs.map((r) => {
+    const kind = r.kind || 'image';
+    metaCounters[kind] += 1;
+    const roleDef = DIR_REF_ROLES[r.role || DIR_KIND_META[kind].defaultRole];
+    return {
+      file: kind + metaCounters[kind],
+      roleLabel: roleDef ? roleDef[0] : '',
+      note: (r.note || '').trim(),
+      weight: r.weight, fidelity: r.fidelity,
+    };
+  });
+}
+
 /** 组装一次生成的完整请求（真实生成与 Simulate GEN 共用同一条管线）；被拦时返回 null */
 function assembleDirectorRequest() {
   if (!state.director.refs.length) {
@@ -3531,28 +3614,7 @@ function assembleDirectorRequest() {
   }
   const acting = directorActingText();
   // 每份参考的 role + 说明 → @引用式指令块（后台注入，指挥模型如何使用每份素材）
-  const kindCounters = { image: 0, video: 0, audio: 0 };
-  const refNotes = state.director.refs.map((r) => {
-    const kind = r.kind || 'image';
-    kindCounters[kind] += 1;
-    const roleDef = DIR_REF_ROLES[r.role || DIR_KIND_META[kind].defaultRole];
-    const roleText = roleDef ? `${roleDef[0]}——${roleDef[1]}` : '';
-    const note = rs((r.note || '').trim()); // 说明里也可 @引用其它素材（悬空引用同样计入拦截）
-    // 影响力 / 忠实度滑杆 → 档位指令（50 为中性不注入，避免提示词臃肿）
-    const w = r.weight === undefined ? 50 : Number(r.weight);
-    const f = r.fidelity === undefined ? 50 : Number(r.fidelity);
-    const weightText = w >= 85 ? '【最高权重】此参考优先级最高，与其它参考冲突时一律以此为准'
-      : w >= 65 ? '高权重参考，优先遵循'
-      : w <= 15 ? '最低权重，仅作最轻微的参考'
-      : w <= 35 ? '低权重参考，其它参考优先' : '';
-    const fidelityText = f >= 85 ? '必须原封不动地使用这份素材的画面内容与构图，逐细节复刻，禁止任何再创作'
-      : f >= 65 ? '高度贴近原素材，仅允许细微变化'
-      : f <= 15 ? '完全创作自由：任何情况下都不得将其用作构图或画面布局，仅作气质与要素的启发'
-      : f <= 35 ? '大幅再创作：只取其要素与精神，画面构图自由重构' : '';
-    const clauses = [roleText, weightText, fidelityText].filter(Boolean).join('；');
-    if (!clauses && !note) return null;
-    return `${DIR_KIND_META[kind].name}${kindCounters[kind]}（${clauses}）${note ? '：' + note : ''}`;
-  }).filter(Boolean);
+  const refNotes = buildRefNotesLines(state.director.refs, rs);
   // 悬空 @引用统一拦截门：情境 / 分镜（含 60/30/10）/ 负面 / 每份参考的说明词全覆盖
   if (unknownAll.length) {
     setDirStatus('⚠ 找不到引用 ' + Array.from(new Set(unknownAll)).join('、') + ' — 已跳到问题位置，改完再点生成');
@@ -3591,18 +3653,7 @@ function assembleDirectorRequest() {
     })),
   };
   // 参考文件的编号命名（与提示词编号一一对应）+ 打包清单元数据
-  const metaCounters = { image: 0, video: 0, audio: 0 };
-  const refsMeta = state.director.refs.map((r) => {
-    const kind = r.kind || 'image';
-    metaCounters[kind] += 1;
-    const roleDef = DIR_REF_ROLES[r.role || DIR_KIND_META[kind].defaultRole];
-    return {
-      file: kind + metaCounters[kind],
-      roleLabel: roleDef ? roleDef[0] : '',
-      note: (r.note || '').trim(),
-      weight: r.weight, fidelity: r.fidelity,
-    };
-  });
+  const refsMeta = buildRefsMeta(state.director.refs);
   return {
     prompt, duration, model, genSnapshot, refsMeta,
     animMode: $('dirAnimMode').value,
@@ -3955,6 +4006,7 @@ document.querySelectorAll('#modelSeg button').forEach((btn) => {
       serverModelId = id;
       syncModelSeg();
       if (typeof dirSyncTier === 'function') dirSyncTier(); // 参考区上限+双档参考集+徽标同步
+      if (typeof ibSyncTier === 'function') ibSyncTier(); // 中割参考区同步换档
       showSaveToast(/2-5/.test(id)
         ? '已切换 Seedance 2.5 — 参考区已换到 2.5 档参考集（30图/10视频/10音频）'
         : '已切换 Seedance 2.0 — 参考区已换到 2.0 档参考集（9图/3视频/3音频）');
@@ -5129,13 +5181,29 @@ function renderMentionPreview() {
       : `${c.raw} 找不到对应参考 · 点我定位`;
     chip.appendChild(label);
     if (c.hit) {
-      chip.title = `${c.hit.zhLabel}（${c.hit.role ? c.hit.role[0] : ''}）${c.hit.name}`;
+      chip.title = `${c.hit.zhLabel}（${c.hit.role ? c.hit.role[0] : ''}）${c.hit.name} — 点击跳到出现这个引用的位置；连续点循环跳遍每一处`;
+      chip.classList.add('clickable');
     } else {
       chip.title = '点击跳到出现这个引用的位置并高亮选中；再点跳到下一处，直到全部修完';
-      chip.onclick = () => jumpToMentionProblem(c.key);
     }
+    chip.onclick = () => jumpToMentionProblem(c.key); // 好引用同样可点：循环跳转所有出现位置
     box.appendChild(chip);
   }
+  refreshRefUsageChips(); // 参考行上的「被引用 N 处」指示器随每次输入实时刷新
+  if (typeof mbRefreshAll === 'function') mbRefreshAll(); // @气泡有效性同步（参考增删/换档/改名）
+}
+
+/** 每条参考行上的被引用指示器：@image1 · N处 / 未引用 —— 点击循环跳到每一处 */
+function refreshRefUsageChips() {
+  document.querySelectorAll('#dirRefList .dir-ref-usage').forEach((btn) => {
+    const token = btn.dataset.token;
+    const n = collectMentionOccurrences(token).length;
+    btn.textContent = n ? `@${token} · ${n}处` : `@${token}`;
+    btn.classList.toggle('used', n > 0);
+    btn.title = n
+      ? `这份参考被 ${n} 处提示词引用 — 点击跳到出现位置，连续点循环跳遍每一处`
+      : '还没有提示词引用这份参考 — 在任意提示词框输入 @ 即可引用';
+  });
 }
 
 // 问题引用定位器：点 chip / 生成被拦 → 跳到下一处出现位置并高亮选中
@@ -5149,7 +5217,9 @@ function flashAndSelect(el, start, end) {
   el.classList.add('mention-flash');
   setTimeout(() => el.classList.remove('mention-flash'), 1000);
 }
-function jumpToMentionProblem(key) {
+/** 收集某个引用键（如 image1）在全部可去位置的出现列表（好引用与坏引用通吃）：
+ *  CONTEXT / 每个 CUT 正文 / 60/30/10 三框 / 负面 / 每份参考的说明词 */
+function collectMentionOccurrences(key) {
   const normKey = (m) => {
     const kind = MENTION_ALIAS[m[1].toLowerCase()] || MENTION_ALIAS[m[1]];
     return kind ? kind + Number(m[2]) : m[0];
@@ -5188,6 +5258,10 @@ function jumpToMentionProblem(key) {
       });
     }
   }
+  return occ;
+}
+function jumpToMentionProblem(key) {
+  const occ = collectMentionOccurrences(key);
   if (!occ.length) { renderMentionPreview(); return; } // 已全部修完 → chips 自刷新
   if (mentionJump.key !== key) { mentionJump.key = key; mentionJump.idx = 0; }
   else mentionJump.idx = (mentionJump.idx + 1) % occ.length;
@@ -5272,6 +5346,8 @@ function mentionPick(t) {
 function attachMentionAutocomplete(ta) {
   if (!ta || ta.dataset.mentionAc) return;
   ta.dataset.mentionAc = '1';
+  // 同一批输入框自动获得 @气泡浮层（链接成功的引用可视化 + 可拖动换位）
+  if (typeof attachMentionBubbles === 'function') { try { attachMentionBubbles(ta); } catch {} }
   ta.addEventListener('input', () => {
     mentionAc.active = 0;
     mentionMenuShow(ta);
@@ -5295,6 +5371,11 @@ function attachMentionAutocomplete(ta) {
 
 attachMentionAutocomplete($('dirPrompt'));
 $('dirPrompt').addEventListener('input', renderMentionPreview);
+// 负面清单同样在 @引用扫描范围（dirMentionSources）→ 一并给自动补全 + 气泡
+if ($('dirNegative')) {
+  attachMentionAutocomplete($('dirNegative'));
+  $('dirNegative').addEventListener('input', renderMentionPreview);
+}
 
 // ---------------- Electron 原生对话框通道 ----------------
 // 桌面版（window.a452Native 存在）走主进程 dialog.showOpenDialog——有真缩略图；
@@ -5866,6 +5947,14 @@ renderDirCuts();
 
 // ---------------- Simulate GEN：不花钱拿到出站级最终提示词 + 素材编号打包 ----------------
 let simFolder = '';
+/** 模拟出片结果 → 同一个 simDialog（导演生成与中割一体生成共用） */
+function showSimResult(json) {
+  simFolder = json.folder || '';
+  $('simPromptText').value = json.prompt || '';
+  $('simFolderInfo').textContent = `素材包：${json.folder}（${(json.files || []).length} 个文件：参考素材按 image1/video1/audio1 编号命名，与提示词一一对应 + prompt.txt + manifest.txt）`;
+  $('simStatus').textContent = `最终提示词 ${String(json.prompt || '').length} 字符`;
+  $('simDialog').showModal();
+}
 async function simulateGen() {
   const reqData = assembleDirectorRequest(); // 与真实生成完全同一条组装管线（含悬空引用拦截）
   if (!reqData) return;
@@ -5887,11 +5976,7 @@ async function simulateGen() {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json.error || ('请求失败 ' + res.status));
-    simFolder = json.folder || '';
-    $('simPromptText').value = json.prompt || '';
-    $('simFolderInfo').textContent = `素材包：${json.folder}（${(json.files || []).length} 个文件：参考素材按 image1/video1/audio1 编号命名，与提示词一一对应 + prompt.txt + manifest.txt）`;
-    $('simStatus').textContent = `最终提示词 ${String(json.prompt || '').length} 字符`;
-    $('simDialog').showModal();
+    showSimResult(json);
     setDirStatus('模拟出片完成 ✓ 未产生任何生成费用');
   } catch (e) {
     setDirStatus('模拟出片失败: ' + errMsg(e));
@@ -5992,4 +6077,586 @@ document.addEventListener('mouseout', (e) => {
   if (e.relatedTarget instanceof Element && cell.contains(e.relatedTarget)) return;
   const v = cell.querySelector('.fs-hover-video');
   if (v) v.remove();
+});
+
+// ---------------- 中割一体生成：参考素材体系（REFERENCES TOOL 核心能力移植） ----------------
+// 与导演区同一套：图/视频/音频三类 tab、role+说明词、影响力/忠实度滑杆（同一套注入文案）、
+// 2.0/2.5 双档独立记忆 + ⇄ 互拷、拖拽重排、悬停回放缩略图。档位跟随 ⚙ 全局模型。
+function ibEnsure() {
+  if (!state.whole || typeof state.whole !== 'object') state.whole = { history: [], current: -1 };
+  const w = state.whole;
+  if (!Array.isArray(w.refs)) w.refs = [];
+  if (!w.refsStash || typeof w.refsStash !== 'object') w.refsStash = { t20: [], t25: [] };
+  return w;
+}
+let ibRefKind = 'image';
+function ibRefsAll() { return ibEnsure().refs; }
+function ibRefsOf(kind) { return ibRefsAll().filter((r) => (r.kind || 'image') === kind); }
+function ibEffectiveIs25() { return modelIs25(); } // 跟随 ⚙ 全局模型（与导演区「跟随全局档位」同一判定）
+function ibTier() { return ibEffectiveIs25() ? '25' : '20'; }
+function ibOtherTier() { return (ibEnsure().refTier === '25') ? '20' : '25'; }
+function ibRefCaps() { return dirTierCaps(ibEnsure().refTier || ibTier()); }
+
+function ibSyncTier() {
+  const w = ibEnsure();
+  const tier = ibTier();
+  if (!w.refTier) {
+    w.refTier = tier; // 首次：现有参考归入当前档
+  } else if (w.refTier !== tier) {
+    w.refsStash['t' + w.refTier] = w.refs;
+    const incoming = w.refsStash['t' + tier];
+    w.refs = Array.isArray(incoming) ? incoming : [];
+    w.refTier = tier;
+    setWholeStatus(`参考素材已切到 Seedance ${tier === '25' ? '2.5' : '2.0'} 档（${w.refs.length} 份）— 两档独立记忆，切回即恢复`);
+    scheduleSave();
+  }
+  renderIbRefs();
+}
+
+/** 复制单份参考到另一档；返回 'added' | 'updated' | 'full' */
+function ibCopyRefToOtherTier(r, verbose) {
+  const w = ibEnsure();
+  const target = ibOtherTier();
+  const key = 't' + target;
+  const list = w.refsStash[key] = Array.isArray(w.refsStash[key]) ? w.refsStash[key] : [];
+  const kind = r.kind || 'image';
+  const label = `Seedance ${target === '25' ? '2.5' : '2.0'}`;
+  const dup = list.find((x) => x.url === r.url);
+  if (dup) {
+    dup.name = r.name; dup.role = r.role; dup.note = r.note; dup.kind = kind; dup.weight = r.weight; dup.fidelity = r.fidelity;
+    scheduleSave();
+    if (verbose) setWholeStatus(`该素材已在 ${label} 档 — 已同步其 role 与说明词 ✓`);
+    return 'updated';
+  }
+  const caps = dirTierCaps(target);
+  if (list.filter((x) => (x.kind || 'image') === kind).length >= caps[kind]) {
+    if (verbose) setWholeStatus(`${label} 档的${DIR_KIND_META[kind].name}位已满（上限 ${caps[kind]}）`);
+    return 'full';
+  }
+  list.push({ id: nextRefId++, name: r.name, url: r.url, kind, role: r.role, note: r.note, weight: r.weight, fidelity: r.fidelity });
+  scheduleSave();
+  if (verbose) setWholeStatus(`已复制到 ${label} 档 ✓（⚙ 里换到对应模型即可看到）`);
+  return 'added';
+}
+
+// 拖拽重排（同类内），与导演区同款
+let ibDragRefId = null;
+function ibReorderRef(srcId, targetId, before) {
+  const w = ibEnsure();
+  const kindItems = ibRefsOf(ibRefKind);
+  const src = kindItems.find((x) => x.id === srcId);
+  if (!src || srcId === targetId) return;
+  const order = kindItems.filter((x) => x.id !== srcId);
+  const ti = order.findIndex((x) => x.id === targetId);
+  if (ti < 0) return;
+  order.splice(before ? ti : ti + 1, 0, src);
+  const slots = [];
+  w.refs.forEach((x, i) => { if ((x.kind || 'image') === ibRefKind) slots.push(i); });
+  slots.forEach((slot, k) => { w.refs[slot] = order[k]; });
+  renderIbRefs();
+  scheduleSave();
+}
+
+function renderIbRefs() {
+  if (!$('ibRefList')) return;
+  const w = ibEnsure();
+  const caps = ibRefCaps();
+  for (const k of ['image', 'video', 'audio']) {
+    const el = $('ibCnt' + k[0].toUpperCase() + k.slice(1));
+    if (el) el.textContent = `${ibRefsOf(k).length}/${caps[k]}`;
+  }
+  $('ibRefCaps').textContent = `— 图 ≤${caps.image} · 视频 ≤${caps.video} · 音频 ≤${caps.audio}`;
+  const tierLabel = $('ibRefTierLabel');
+  if (tierLabel) tierLabel.textContent = `Seedance ${(w.refTier || ibTier()) === '25' ? '2.5' : '2.0'}`;
+  const copyAll = $('ibRefCopyAll');
+  if (copyAll) copyAll.title = `把当前档全部参考（含 role 与说明词）复制到 Seedance ${ibOtherTier() === '25' ? '2.5' : '2.0'} 档`;
+  document.querySelectorAll('#ibRefTabs button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.kind === ibRefKind);
+  });
+  const meta = DIR_KIND_META[ibRefKind];
+  $('ibRefFiles').accept = meta.accept;
+  $('ibRefAdd').disabled = ibRefsOf(ibRefKind).length >= caps[ibRefKind];
+
+  const list = $('ibRefList');
+  list.innerHTML = '';
+  ibRefsOf(ibRefKind).forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'dir-ref-row';
+    row.dataset.refId = r.id;
+    const thumb = (r.kind || 'image') === 'image'
+      ? `<img src="${r.url}" alt="${escapeHtml(r.name)}" title="${escapeHtml(r.name)}">`
+      : (r.kind === 'video'
+        ? `<img src="/api/media/thumb?src=${encodeURIComponent(r.url)}" alt="${escapeHtml(r.name)}" title="${escapeHtml(r.name)}" loading="lazy" onerror="this.style.visibility='hidden'">`
+        : `<span class="dir-ref-icon" title="${escapeHtml(r.name)}">${DIR_KIND_META[r.kind].icon}</span>`);
+    const hoverAttr = r.kind === 'video' ? ` data-hover-video="${escapeHtml(r.url)}"` : '';
+    const roleOpts = Object.entries(DIR_REF_ROLES)
+      .map(([k, [label]]) => `<option value="${k}" ${(r.role || meta.defaultRole) === k ? 'selected' : ''}>${label}</option>`)
+      .join('');
+    const otherLabel = ibOtherTier() === '25' ? '2.5' : '2.0';
+    row.innerHTML = `
+      <div class="ref-cell"${hoverAttr}>${thumb}<button type="button" aria-label="移除">✕</button></div>
+      <div class="dir-ref-meta">
+        <div class="dir-ref-head">
+          <span class="dir-ref-drag" title="按住拖拽调整顺序 — 编号随位置自动重算">⠿</span>
+          <span class="dir-ref-idx">${DIR_KIND_META[r.kind || 'image'].icon} ${i + 1} · ${escapeHtml((r.name || '').slice(0, 18))}</span>
+          <select class="dir-ref-role" title="这份参考对模型的作用（注入后台提示词）">${roleOpts}</select>
+          <button type="button" class="dir-ref-copy" title="把这份参考连同 role 与说明词复制到 Seedance ${otherLabel} 档的参考集">⇄ ${otherLabel}</button>
+        </div>
+        <textarea class="dir-ref-note" rows="1" data-min-grow="80" maxlength="160"
+          placeholder="补充说明：这份素材是什么 / 想让模型学到什么">${escapeHtml(r.note || '')}</textarea>
+        <div class="ref-sliders">
+          <label title="这份参考对整体生成的影响力权重：100=最高优先级（与其它参考冲突时以此为准），0=仅作最轻微参考。50=中性不注入">
+            <span>影响力</span><input type="range" class="ref-weight" min="0" max="100" step="1" value="${r.weight === undefined ? 50 : Number(r.weight)}"><b>${r.weight === undefined ? 50 : Number(r.weight)}</b></label>
+          <label title="忠实度：100=必须原封不动逐细节复刻这份素材；0=完全创作自由，绝不把它当构图用。50=中性不注入">
+            <span>忠实度</span><input type="range" class="ref-fidelity" min="0" max="100" step="1" value="${r.fidelity === undefined ? 50 : Number(r.fidelity)}"><b>${r.fidelity === undefined ? 50 : Number(r.fidelity)}</b></label>
+        </div>
+      </div>`;
+    row.querySelector('.ref-cell button').onclick = () => {
+      const w2 = ibEnsure();
+      w2.refs = w2.refs.filter((x) => x.id !== r.id);
+      renderIbRefs();
+      scheduleSave();
+    };
+    row.querySelector('.dir-ref-role').onchange = (e) => { r.role = e.target.value; scheduleSave(); };
+    row.querySelector('.dir-ref-note').onchange = (e) => { r.note = e.target.value; scheduleSave(); };
+    for (const [cls, key] of [['ref-weight', 'weight'], ['ref-fidelity', 'fidelity']]) {
+      const s = row.querySelector('.' + cls);
+      s.oninput = () => { r[key] = Number(s.value); s.nextElementSibling.textContent = s.value; scheduleSave(); };
+    }
+    row.querySelector('.dir-ref-copy').onclick = () => ibCopyRefToOtherTier(r, true);
+    const handle = row.querySelector('.dir-ref-drag');
+    handle.onmousedown = () => { row.draggable = true; };
+    row.addEventListener('dragstart', (e) => {
+      ibDragRefId = r.id;
+      row.classList.add('dragging');
+      try { e.dataTransfer.setData('text/plain', String(r.id)); } catch {}
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    row.addEventListener('dragend', () => { row.classList.remove('dragging'); row.draggable = false; ibDragRefId = null; });
+    row.addEventListener('dragover', (e) => {
+      if (ibDragRefId === null || ibDragRefId === r.id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      row.classList.toggle('drop-above', e.offsetY < row.offsetHeight / 2);
+      row.classList.toggle('drop-below', e.offsetY >= row.offsetHeight / 2);
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drop-above', 'drop-below'));
+    row.addEventListener('drop', (e) => {
+      row.classList.remove('drop-above', 'drop-below');
+      if (ibDragRefId === null || ibDragRefId === r.id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      ibReorderRef(ibDragRefId, r.id, e.offsetY < row.offsetHeight / 2);
+    });
+    list.appendChild(row);
+  });
+}
+
+if ($('ibRefTabs')) {
+  document.querySelectorAll('#ibRefTabs button').forEach((b) => {
+    b.onclick = () => { ibRefKind = b.dataset.kind; renderIbRefs(); };
+  });
+  // 应用内媒体选择器（三类全开，与导演区同款；配额按当前档计算）
+  $('ibRefAdd').onclick = () => {
+    const caps = ibRefCaps();
+    const rooms = {
+      image: Math.max(0, caps.image - ibRefsOf('image').length),
+      video: Math.max(0, caps.video - ibRefsOf('video').length),
+      audio: Math.max(0, caps.audio - ibRefsOf('audio').length),
+    };
+    const totalRoom = rooms.image + rooms.video + rooms.audio;
+    if (totalRoom <= 0) { setWholeStatus('当前档各类型参考位都已满'); return; }
+    openMediaPicker({
+      kinds: ['image', 'video', 'audio'],
+      limit: totalRoom, nativeInput: $('ibRefFiles'),
+      title: '📁 添加参考素材（中割）',
+      onDone: (items) => {
+        let added = 0, skipped = 0;
+        for (const it of items) {
+          const kind = it.kind || 'image';
+          if (rooms[kind] <= 0) { skipped += 1; continue; }
+          rooms[kind] -= 1;
+          ibEnsure().refs.push({
+            id: nextRefId++, name: it.name, url: it.url,
+            kind, role: DIR_KIND_META[kind].defaultRole, note: '',
+          });
+          added += 1;
+        }
+        renderIbRefs();
+        scheduleSave();
+        setWholeStatus(added ? `已添加 ${added} 份参考${skipped ? `（${skipped} 份因该类型已满被跳过）` : ''}` : (skipped ? '对应类型的参考位已满' : ''));
+      },
+    });
+  };
+  $('ibRefAddNative').onclick = () => $('ibRefFiles').click();
+  $('ibRefFiles').onchange = async (e) => {
+    const caps = ibRefCaps();
+    const room = caps[ibRefKind] - ibRefsOf(ibRefKind).length;
+    const files = Array.from(e.target.files || []).slice(0, Math.max(0, room));
+    e.target.value = '';
+    for (const f of files) {
+      try {
+        setWholeStatus(`${DIR_KIND_META[ibRefKind].name}上传中… ${f.name}`);
+        const url = await uploadAsset(f);
+        ibEnsure().refs.push({
+          id: nextRefId++, name: f.name, url,
+          kind: ibRefKind, role: DIR_KIND_META[ibRefKind].defaultRole, note: '',
+        });
+        setWholeStatus('');
+      } catch (err) { setWholeStatus(`${DIR_KIND_META[ibRefKind].name}上传失败: ` + errMsg(err)); }
+    }
+    renderIbRefs();
+    scheduleSave();
+  };
+  $('ibRefCopyAll').onclick = () => {
+    const refs = ibRefsAll();
+    if (!refs.length) { setWholeStatus('当前档没有参考可复制'); return; }
+    let added = 0, updated = 0, full = 0;
+    for (const r of refs) {
+      const res = ibCopyRefToOtherTier(r, false);
+      if (res === 'added') added += 1;
+      else if (res === 'updated') updated += 1;
+      else full += 1;
+    }
+    const label = `Seedance ${ibOtherTier() === '25' ? '2.5' : '2.0'}`;
+    setWholeStatus(`已带到 ${label} 档：新增 ${added} 份${updated ? `、同步更新 ${updated} 份` : ''}${full ? `、${full} 份因对方档位已满被跳过` : ''} ✓`);
+  };
+  // 从资源管理器拖文件 → 中割参考（按 MIME 自动分类，与导演区同款）
+  (() => {
+    const panel = $('ibRefPanel');
+    if (!panel) return;
+    panel.addEventListener('dragover', (e) => {
+      if (Array.from(e.dataTransfer.types || []).includes('Files')) {
+        e.preventDefault();
+        panel.classList.add('file-drop-hot');
+      }
+    });
+    panel.addEventListener('dragleave', () => panel.classList.remove('file-drop-hot'));
+    panel.addEventListener('drop', async (e) => {
+      panel.classList.remove('file-drop-hot');
+      if (!e.dataTransfer.files || !e.dataTransfer.files.length) return;
+      e.preventDefault();
+      const caps = ibRefCaps();
+      const rooms = {
+        image: Math.max(0, caps.image - ibRefsOf('image').length),
+        video: Math.max(0, caps.video - ibRefsOf('video').length),
+        audio: Math.max(0, caps.audio - ibRefsOf('audio').length),
+      };
+      let added = 0, skipped = 0;
+      for (const f of Array.from(e.dataTransfer.files)) {
+        const kind = f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type.startsWith('image/') ? 'image' : null;
+        if (!kind || rooms[kind] <= 0) { skipped += 1; continue; }
+        try {
+          setWholeStatus(`${DIR_KIND_META[kind].name}上传中… ${f.name}`);
+          const url = await uploadAsset(f);
+          rooms[kind] -= 1;
+          ibEnsure().refs.push({ id: nextRefId++, name: f.name, url, kind, role: DIR_KIND_META[kind].defaultRole, note: '' });
+          added += 1;
+        } catch (err) { setWholeStatus('上传失败: ' + errMsg(err)); }
+      }
+      renderIbRefs();
+      scheduleSave();
+      setWholeStatus(added ? `已添加 ${added} 份参考${skipped ? `（${skipped} 份被跳过：类型不支持或已满）` : ''}` : '');
+    });
+  })();
+}
+
+// SIMULATE GEN（中割）：不发生成请求 —— 最终提示词 + 关键帧与参考素材编号打包
+async function ibSimulateGen() {
+  const req = assembleWholeRequest();
+  if (!req) return;
+  setWholeStatus('模拟出片中…（组装最终提示词 + 打包关键帧与参考素材）');
+  try {
+    const res = await fetch('/api/whole/simulate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...req.body, refsMeta: req.refsMeta }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || ('请求失败 ' + res.status));
+    showSimResult(json);
+    setWholeStatus('模拟出片完成 ✓ 未产生任何生成费用');
+  } catch (e) {
+    setWholeStatus('⚠ 模拟出片失败: ' + errMsg(e));
+  }
+}
+if ($('btnWholeSimulate')) $('btnWholeSimulate').onclick = ibSimulateGen;
+
+// QoL：三个提示词框的一键清空
+for (const [btnId, taId] of [['globalPromptClear', 'globalPrompt'], ['stylePromptClear', 'stylePrompt'], ['inbetweenPromptClear', 'inbetweenPrompt']]) {
+  const btn = $(btnId);
+  if (btn) btn.onclick = () => {
+    const ta = $(taId);
+    ta.value = '';
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    ta.dispatchEvent(new Event('change', { bubbles: true }));
+    ta.focus();
+  };
+}
+
+// ---------------- @ 气泡：链接成功的引用变成可拖动的可视气泡 ----------------
+// 原理：每个可 @ 的输入框上盖一层与其字体/内边距/换行逐像素一致的镜像浮层（.i18n-skip 绝不被翻译）。
+// 浮层文字整体透明，只有解析成功的 @token 渲染成彩色气泡（不占额外排版空间——只有背景与圆角，
+// 字形与底下输入框完全重叠）。气泡可按住拖动：拖到本框任意位置、甚至另一个提示词框里放下，
+// 文本随之搬家；单击气泡 = 在输入框里选中该 token。输入框仍是唯一事实来源，无任何富文本改造。
+// 惰性初始化：attachMentionBubbles 在脚本更早处就会被 init 调用，普通 const 会踩 TDZ
+function mbReg() { if (!window.__mbRegistry) window.__mbRegistry = new Set(); return window.__mbRegistry; } // { el, overlay, inner }
+
+function mbTokenSet() {
+  const set = new Set();
+  try { for (const t of dirMentionTokens()) set.add(t.token); } catch {}
+  return set;
+}
+
+function mbRender(entry) {
+  const { el, inner } = entry;
+  const valid = mbTokenSet();
+  const text = String(el.value || '');
+  let html = '';
+  let last = 0;
+  let m;
+  MENTION_RE.lastIndex = 0;
+  while ((m = MENTION_RE.exec(text))) {
+    const kind = MENTION_ALIAS[m[1].toLowerCase()] || MENTION_ALIAS[m[1]];
+    const key = kind ? kind + Number(m[2]) : null;
+    html += escapeHtml(text.slice(last, m.index));
+    if (key && valid.has(key)) {
+      html += `<span class="mention-bubble mb-${kind}" data-token="${key}" data-start="${m.index}" data-end="${m.index + m[0].length}" title="@${key} — 按住拖动换位置（可拖进其它提示词框）· 单击选中">${escapeHtml(m[0])}</span>`;
+    } else {
+      html += escapeHtml(m[0]); // 悬空引用不成泡：红 chip 定位器负责它
+    }
+    last = m.index + m[0].length;
+  }
+  html += escapeHtml(text.slice(last));
+  inner.innerHTML = html || '';
+  entry.overlay.scrollTop = el.scrollTop;
+  entry.overlay.scrollLeft = el.scrollLeft;
+}
+
+function mbSyncGeometry(entry) {
+  const { el, overlay, inner } = entry;
+  if (!el.isConnected) return;
+  const cs = getComputedStyle(el);
+  overlay.style.top = el.offsetTop + 'px';
+  overlay.style.left = el.offsetLeft + 'px';
+  overlay.style.width = el.offsetWidth + 'px';
+  overlay.style.height = el.offsetHeight + 'px';
+  for (const p of ['font', 'lineHeight', 'letterSpacing', 'textAlign', 'textIndent']) inner.style[p] = cs[p];
+  inner.style.padding = cs.padding;
+  inner.style.borderWidth = cs.borderWidth;
+  inner.style.borderStyle = 'solid';
+  inner.style.borderColor = 'transparent';
+  if (el.tagName === 'TEXTAREA') {
+    inner.style.whiteSpace = 'pre-wrap';
+    inner.style.wordBreak = cs.wordBreak;
+    inner.style.overflowWrap = cs.overflowWrap === 'normal' ? 'break-word' : cs.overflowWrap;
+  } else {
+    inner.style.whiteSpace = 'pre';
+  }
+}
+
+function mbEntryOf(el) {
+  for (const entry of mbReg()) if (entry.el === el) return entry;
+  return null;
+}
+function attachMentionBubbles(el) {
+  if (!el) return;
+  // data-mb 标记不可靠：渲染期元素可能短暂离档、浮层被剪 —— 以注册表为准判定是否已挂
+  const existing = mbEntryOf(el);
+  if (existing) return;
+  if (el.dataset.mb) {
+    // 半途状态（标记在、浮层没了）：清掉可能残留的孤儿浮层后重挂
+    const sib = el.parentElement && el.parentElement.querySelector('.mb-overlay');
+    if (sib && sib.__mbEl === el) sib.remove();
+  }
+  el.dataset.mb = '1';
+  const parent = el.parentElement;
+  if (!parent) { delete el.dataset.mb; return; }
+  const pcs = getComputedStyle(parent);
+  if (pcs.position === 'static') parent.style.position = 'relative';
+  const overlay = document.createElement('div');
+  overlay.className = 'mb-overlay i18n-skip';
+  overlay.__mbEl = el;
+  const inner = document.createElement('div');
+  inner.className = 'mb-inner';
+  overlay.appendChild(inner);
+  parent.insertBefore(overlay, el.nextSibling);
+  const entry = { el, overlay, inner };
+  mbReg().add(entry);
+  const sync = () => { try { mbSyncGeometry(entry); mbRender(entry); } catch {} };
+  el.addEventListener('input', sync);
+  el.addEventListener('change', sync);
+  el.addEventListener('scroll', () => { overlay.scrollTop = el.scrollTop; overlay.scrollLeft = el.scrollLeft; });
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => { mbSyncGeometry(entry); });
+    ro.observe(el);
+  }
+  sync();
+}
+
+/** 参考增删改名/换档后：token 有效性变了 → 所有浮层重渲染。
+ *  同时自愈两类状态：①元素已被换掉 → 剪掉孤儿浮层；②元素还在但浮层丢了（渲染期误剪）→ 重挂 */
+function mbRefreshAll() {
+  for (const entry of Array.from(mbReg())) {
+    if (!entry.el.isConnected) { entry.overlay.remove(); mbReg().delete(entry); continue; }
+    if (!entry.overlay.isConnected) { mbReg().delete(entry); delete entry.el.dataset.mb; attachMentionBubbles(entry.el); continue; }
+    mbSyncGeometry(entry);
+    mbRender(entry);
+  }
+  // 自愈兜底：所有带 @自动补全 的输入框都应有浮层。renderDirCuts 在元素入 DOM 前就调用
+  // attachMentionAutocomplete（当时还没有 parent，浮层挂不上）——等它们入档后在这里补挂。
+  document.querySelectorAll('[data-mention-ac]').forEach((el) => {
+    if (!mbEntryOf(el)) { delete el.dataset.mb; attachMentionBubbles(el); }
+  });
+}
+
+// ---- 拖拽引擎：单击=选中 token；拖动=文本搬家（支持拖进其它提示词框） ----
+const mbDrag = { active: false, moved: false, srcEntry: null, token: '', start: 0, end: 0, ghost: null, caretEl: null, target: null };
+
+function mbEntryOfNode(node) {
+  for (const entry of mbReg()) if (entry.inner.contains(node)) return entry;
+  return null;
+}
+
+function mbOffsetFromPoint(x, y) {
+  let node = null, offset = 0;
+  if (document.caretRangeFromPoint) {
+    const r = document.caretRangeFromPoint(x, y);
+    if (r) { node = r.startContainer; offset = r.startOffset; }
+  } else if (document.caretPositionFromPoint) {
+    const p = document.caretPositionFromPoint(x, y);
+    if (p) { node = p.offsetNode; offset = p.offset; }
+  }
+  if (!node) return null;
+  const entry = mbEntryOfNode(node);
+  if (!entry) return null;
+  // 把 (node, offset) 折算成 inner 全文里的字符位
+  let pos = 0;
+  const walk = (parent) => {
+    for (const child of parent.childNodes) {
+      if (child === node) { pos += (child.nodeType === 3 ? offset : 0); return true; }
+      if (child.nodeType === 1) {
+        if (child.contains(node)) { const done = walk(child); return done; }
+        pos += (child.textContent || '').length;
+      } else {
+        pos += child.nodeValue.length;
+      }
+    }
+    return false;
+  };
+  if (node === entry.inner) {
+    let k = 0;
+    for (const child of entry.inner.childNodes) {
+      if (k >= offset) break;
+      pos += (child.textContent || child.nodeValue || '').length;
+      k += 1;
+    }
+  } else if (!walk(entry.inner)) return null;
+  return { entry, pos };
+}
+
+function mbShowCaret(entry, pos) {
+  if (!mbDrag.caretEl) {
+    mbDrag.caretEl = document.createElement('div');
+    mbDrag.caretEl.className = 'mb-drop-caret i18n-skip';
+    document.body.appendChild(mbDrag.caretEl);
+  }
+  // 用 Range 找该字符位的屏幕坐标
+  let count = 0, rect = null;
+  for (const child of entry.inner.childNodes) {
+    const len = (child.textContent || child.nodeValue || '').length;
+    if (pos <= count + len) {
+      const textNode = child.nodeType === 3 ? child : child.firstChild;
+      const innerOff = Math.max(0, Math.min(pos - count, textNode ? textNode.nodeValue.length : 0));
+      const r = document.createRange();
+      try {
+        if (textNode) { r.setStart(textNode, innerOff); r.setEnd(textNode, innerOff); rect = r.getBoundingClientRect(); }
+      } catch {}
+      break;
+    }
+    count += len;
+  }
+  if (!rect || (!rect.height && !rect.top)) { // 末尾/空框兜底：贴框
+    const er = entry.el.getBoundingClientRect();
+    rect = { left: er.left + 8, top: er.top + 6, height: 16 };
+  }
+  mbDrag.caretEl.style.left = (rect.left - 1) + 'px';
+  mbDrag.caretEl.style.top = rect.top + 'px';
+  mbDrag.caretEl.style.height = Math.max(14, rect.height) + 'px';
+  mbDrag.caretEl.hidden = false;
+}
+
+document.addEventListener('pointerdown', (e) => {
+  const bub = e.target instanceof Element ? e.target.closest('.mention-bubble') : null;
+  if (!bub) return;
+  const entry = mbEntryOfNode(bub);
+  if (!entry) return;
+  e.preventDefault(); // 不把焦点交给浮层
+  mbDrag.active = true;
+  mbDrag.moved = false;
+  mbDrag.srcEntry = entry;
+  mbDrag.token = bub.textContent;
+  mbDrag.start = Number(bub.dataset.start);
+  mbDrag.end = Number(bub.dataset.end);
+  mbDrag.x0 = e.clientX; mbDrag.y0 = e.clientY;
+  mbDrag.target = null;
+});
+document.addEventListener('pointermove', (e) => {
+  if (!mbDrag.active) return;
+  if (!mbDrag.moved) {
+    if (Math.abs(e.clientX - mbDrag.x0) + Math.abs(e.clientY - mbDrag.y0) < 5) return;
+    mbDrag.moved = true;
+    // 拖拽期间浮层可命中（caretRangeFromPoint 需要）+ 幽灵气泡跟手
+    for (const en of mbReg()) en.overlay.classList.add('mb-hittable');
+    if (!mbDrag.ghost) {
+      mbDrag.ghost = document.createElement('div');
+      mbDrag.ghost.className = 'mention-bubble mb-ghost i18n-skip';
+      mbDrag.ghost.textContent = mbDrag.token;
+      document.body.appendChild(mbDrag.ghost);
+    }
+  }
+  mbDrag.ghost.style.left = (e.clientX + 10) + 'px';
+  mbDrag.ghost.style.top = (e.clientY - 24) + 'px';
+  const hit = mbOffsetFromPoint(e.clientX, e.clientY);
+  mbDrag.target = hit;
+  if (hit) mbShowCaret(hit.entry, hit.pos);
+  else if (mbDrag.caretEl) mbDrag.caretEl.hidden = true;
+});
+document.addEventListener('pointerup', (e) => {
+  if (!mbDrag.active) return;
+  const { srcEntry, token, start, end, moved, target } = mbDrag;
+  mbDrag.active = false;
+  for (const en of mbReg()) en.overlay.classList.remove('mb-hittable');
+  if (mbDrag.ghost) { mbDrag.ghost.remove(); mbDrag.ghost = null; }
+  if (mbDrag.caretEl) mbDrag.caretEl.hidden = true;
+  if (!moved) {
+    // 单击：在真正的输入框里选中这个 token（好改好删）
+    flashAndSelect(srcEntry.el, start, end);
+    return;
+  }
+  if (!target) return; // 没落在任何提示词框上 → 原地不动
+  const srcEl = srcEntry.el;
+  const dstEl = target.entry.el;
+  let insertAt = Math.max(0, Math.min(target.pos, String(dstEl.value || '').length));
+  if (dstEl === srcEl) {
+    if (insertAt >= start && insertAt <= end) return; // 落回自己身上
+    let v = srcEl.value;
+    v = v.slice(0, start) + v.slice(end);
+    if (insertAt > start) insertAt -= (end - start);
+    srcEl.value = v.slice(0, insertAt) + token + v.slice(insertAt);
+    srcEl.dispatchEvent(new Event('input', { bubbles: true }));
+    srcEl.dispatchEvent(new Event('change', { bubbles: true }));
+    flashAndSelect(srcEl, insertAt, insertAt + token.length);
+  } else {
+    // 跨框搬家：源框删除，目标框插入
+    const sv = srcEl.value;
+    srcEl.value = sv.slice(0, start) + sv.slice(end);
+    srcEl.dispatchEvent(new Event('input', { bubbles: true }));
+    srcEl.dispatchEvent(new Event('change', { bubbles: true }));
+    const dv = dstEl.value;
+    dstEl.value = dv.slice(0, insertAt) + token + dv.slice(insertAt);
+    dstEl.dispatchEvent(new Event('input', { bubbles: true }));
+    dstEl.dispatchEvent(new Event('change', { bubbles: true }));
+    flashAndSelect(dstEl, insertAt, insertAt + token.length);
+  }
 });
