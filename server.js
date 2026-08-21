@@ -1112,7 +1112,8 @@ async function serveThumbFile(res, file, kind) {
   let held = false;
   try {
     const st = fs.statSync(file);
-    const key = crypto.createHash('sha1').update(file + '|' + st.mtimeMs + '|' + st.size).digest('hex');
+    // |tv2：视频抽帧算法升级（代表帧替代 -ss 1，黑场淡入不再出全黑缩略图）→ 旧缓存自动失效重抽
+    const key = crypto.createHash('sha1').update(file + '|' + st.mtimeMs + '|' + st.size + (kind === 'video' ? '|tv2' : '')).digest('hex');
     const cached = path.join(THUMB_DIR, key + '.jpg');
     const sendOriginalImage = () => {
       // 图片兜底：原图直传（跳过 ffmpeg），Content-Type 按扩展名
@@ -1131,13 +1132,14 @@ async function serveThumbFile(res, file, kind) {
       await thumbSlot();
       held = true;
       const scale = "scale='min(360,iw)':-2";
+      // 视频：thumbnail 滤镜在前 90 帧里选「最有代表性」的一帧 —— 从黑场淡入的素材不再抽出全黑图
       const args = kind === 'video'
-        ? ['-y', '-ss', '1', '-i', file, '-frames:v', '1', '-vf', scale, '-q:v', '5', cached]
+        ? ['-y', '-i', file, '-vf', `thumbnail=90,${scale}`, '-frames:v', '1', '-q:v', '5', cached]
         : ['-y', '-i', file, '-frames:v', '1', '-vf', scale, '-q:v', '5', cached];
       try {
         await runFfmpeg(args);
       } catch (e) {
-        // 视频不足 1 秒时 -ss 1 会抽不到帧 → 退回首帧
+        // thumbnail 滤镜失败（极短/异常封装）→ 退回纯首帧
         try {
           if (kind === 'video') await runFfmpeg(['-y', '-i', file, '-frames:v', '1', '-vf', scale, '-q:v', '5', cached]);
           else throw e;

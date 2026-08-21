@@ -5165,6 +5165,7 @@ function renderMentionPreview() {
   for (const c of chips) {
     const chip = document.createElement('span');
     chip.className = 'mention-chip' + (c.hit ? '' : ' bad');
+    if (c.hit) { chip.dataset.pvKind = c.hit.kind; chip.dataset.pvUrl = c.hit.url; } // 悬停大预览
     if (c.hit && c.hit.kind === 'image') {
       const img = document.createElement('img');
       img.src = c.hit.url;
@@ -5277,6 +5278,7 @@ function mentionMenuHide() {
   $('mentionMenu').hidden = true;
   mentionAc.ta = null;
   mentionAc.items = [];
+  if (typeof pvKill === 'function') pvKill(); // 补全菜单收起时同时收掉悬停大预览
 }
 
 function mentionMenuShow(ta) {
@@ -5299,6 +5301,8 @@ function mentionMenuShow(ta) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'm-item' + (i === mentionAc.active ? ' active' : '');
+    btn.dataset.pvKind = t.kind; // 悬停大预览
+    btn.dataset.pvUrl = t.url;
     if (t.kind === 'image') {
       const img = document.createElement('img');
       img.className = 'm-thumb';
@@ -6029,6 +6033,7 @@ document.addEventListener('mouseover', (e) => {
   const v = document.createElement('video');
   v.className = 'hover-video-live';
   v.src = host.dataset.hoverVideo;
+  v.poster = '/api/media/thumb?src=' + encodeURIComponent(host.dataset.hoverVideo); // 起播前不闪黑
   v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
   host.appendChild(v);
   hoverLive = v;
@@ -6669,6 +6674,7 @@ function mbSwapClose() {
   if (mbSwapMenuEl._keyer) document.removeEventListener('keydown', mbSwapMenuEl._keyer, true);
   mbSwapMenuEl.remove();
   mbSwapMenuEl = null;
+  if (typeof pvKill === 'function') pvKill(); // 关菜单同时收掉悬停大预览
 }
 function mbShowSwapMenu(entry, token, start, end, evt) {
   mbSwapClose();
@@ -6693,6 +6699,8 @@ function mbShowSwapMenu(entry, token, start, end, evt) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'm-item mbs-item' + (t.token === curCanon ? ' current' : '');
+    btn.dataset.pvKind = t.kind; // 悬停大预览
+    btn.dataset.pvUrl = t.url;
     if (t.kind === 'image') {
       const img = document.createElement('img');
       img.className = 'm-thumb';
@@ -6762,3 +6770,57 @@ function mbShowSwapMenu(entry, token, start, end, evt) {
     document.addEventListener('keydown', keyer, true);
   }, 0);
 }
+
+// ---------------- 悬停大预览：换绑菜单 / @补全菜单 / 对照 chip → 浮动大图（视频直接播放） ----------------
+// 任何带 data-pv-url 的条目：悬停在旁边弹一块大预览（图 = 原图放大；视频 = 静音循环播放，
+// poster 用服务端代表帧，起播前不闪黑）。同一时刻只有一块，移开/点击/菜单关闭即销毁。
+let pvPopEl = null;
+function pvKill() {
+  if (!pvPopEl) return;
+  const v = pvPopEl.querySelector('video');
+  if (v) { try { v.pause(); } catch {} try { v.removeAttribute('src'); v.load(); } catch {} }
+  pvPopEl.remove();
+  pvPopEl = null;
+}
+document.addEventListener('mouseover', (e) => {
+  if (!(e.target instanceof Element)) return;
+  const host = e.target.closest('[data-pv-url]');
+  if (!host) { return; }
+  if (pvPopEl && pvPopEl._host === host) return;
+  pvKill();
+  const kind = host.dataset.pvKind || 'image';
+  if (kind === 'audio') return; // 音频没有画面
+  const pop = document.createElement('div');
+  pop.className = 'mb-preview-pop i18n-skip';
+  if (kind === 'video') {
+    const v = document.createElement('video');
+    v.poster = '/api/media/thumb?src=' + encodeURIComponent(host.dataset.pvUrl);
+    v.src = host.dataset.pvUrl;
+    v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
+    pop.appendChild(v);
+    v.play().catch(() => {});
+  } else {
+    const img = document.createElement('img');
+    img.src = host.dataset.pvUrl;
+    pop.appendChild(img);
+  }
+  pop._host = host;
+  document.body.appendChild(pop);
+  const r = host.getBoundingClientRect();
+  const vw = window.innerWidth || 1280, vh = window.innerHeight || 800;
+  const pw = 356, ph = 280; // 预估占位（CSS max-width/height 会实际约束）
+  let x = r.right + 12;
+  if (x + pw > vw - 8) x = Math.max(8, r.left - pw - 12);
+  const y = Math.max(8, Math.min(r.top - 40, vh - ph - 8));
+  pop.style.left = x + 'px';
+  pop.style.top = y + 'px';
+  pvPopEl = pop;
+});
+document.addEventListener('mouseout', (e) => {
+  if (!(e.target instanceof Element) || !pvPopEl) return;
+  const host = e.target.closest('[data-pv-url]');
+  if (!host || pvPopEl._host !== host) return;
+  if (e.relatedTarget instanceof Element && host.contains(e.relatedTarget)) return;
+  pvKill();
+});
+document.addEventListener('pointerdown', () => { pvKill(); }); // 任意点击（选中/外点/关菜单）即收
