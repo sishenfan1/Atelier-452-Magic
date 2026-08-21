@@ -559,11 +559,14 @@ const I18N = {
   '模拟出片完成 ✓ 未产生任何生成费用': ['Simulate GEN done ✓ no generation cost incurred', 'シミュレート完了 ✓ 生成コストはかかっていません'],
   '此参考还没有被 @ 引用': ['This ref has no @ mentions yet', 'この参照はまだ @ 参照されていません'],
   '还没有提示词引用这份参考 — 在任意提示词框输入 @ 即可引用': ['No prompt mentions this ref yet — type @ in any prompt box to reference it', 'まだどのプロンプトもこの参照を使っていません — 任意の欄で @ を入力して参照できます'],
+  '当前': ['current', '現在'],
   '在 Director 仪表盘新建与管理项目':['Create & manage projects in the Director dashboard', 'プロジェクトの作成・管理は Director ダッシュボードで'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]
 const I18N_RULES = [
+  [/^把 (@\S+) 换成：$/, 'Swap $1 for:', '$1 を差し替え：'],
+  [/^已把 (@\S+) 换成 (@\S+) ✓$/, 'Swapped $1 → $2 ✓', '$1 → $2 に差し替え ✓'],
   [/^参考素材已切到 Seedance (2\.0|2\.5) 档（(\d+) 份）— 两档独立记忆，切回即恢复$/, 'Refs switched to the Seedance $1 set ($2 items) — tiers are remembered separately; switch back to restore', '参照素材を Seedance $1 セットへ切替（$2 件）— ティア別に記憶。戻せば復元'],
   [/^已复制到 Seedance (2\.0|2\.5) 档 ✓（⚙ 里换到对应模型即可看到）$/, 'Copied to the Seedance $1 set ✓ (switch models in ⚙ to see it)', 'Seedance $1 セットへコピー ✓（⚙ でモデルを替えると表示）'],
   [/^@(image|video|audio)(\d+) · (\d+)处$/, '@$1$2 · $3 uses', '@$1$2 · $3 箇所'],

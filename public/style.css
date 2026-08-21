@@ -1147,6 +1147,18 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .dir-ref-usage:hover { border-color: var(--accent); color: var(--text); }
 .mention-chip.clickable { cursor: pointer; }
 .mention-chip.clickable:hover { border-color: var(--accent); }
+/* 气泡换绑菜单（复用 .mention-menu 的容器与条目样式） */
+.mb-swap-menu { z-index: 520; max-height: 300px; }
+.mb-swap-menu .mbs-head {
+  padding: 4px 8px 6px; font-size: 11px; color: var(--dim);
+  border-bottom: 1px solid var(--line); margin-bottom: 4px;
+  position: sticky; top: -4px; background: var(--panel, #0c1022); z-index: 1;
+}
+.mb-swap-menu .m-item.current { background: rgba(142, 162, 255, .10); }
+.mb-swap-menu .mbs-cur {
+  flex: none; margin-left: auto; font-size: 10px; color: var(--accent2, #7fd0ff);
+  border: 1px solid rgba(110, 160, 255, .5); border-radius: 999px; padding: 0 6px;
+}
 
 .gen-thumb-wrap { width: 100%; aspect-ratio: 16/9; border-radius: 4px; overflow: hidden; background: #000; }
 .gen-thumb-wrap img, .hist-card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }

@@ -6421,7 +6421,7 @@ function mbRender(entry) {
     const key = kind ? kind + Number(m[2]) : null;
     html += escapeHtml(text.slice(last, m.index));
     if (key && valid.has(key)) {
-      html += `<span class="mention-bubble mb-${kind}" data-token="${key}" data-start="${m.index}" data-end="${m.index + m[0].length}" title="@${key} — 按住拖动换位置（可拖进其它提示词框）· 单击选中">${escapeHtml(m[0])}</span>`;
+      html += `<span class="mention-bubble mb-${kind}" data-token="${key}" data-start="${m.index}" data-end="${m.index + m[0].length}" title="@${key} — 单击弹出全部参考清单当场换绑 · 按住拖动换位置（可拖进其它提示词框）">${escapeHtml(m[0])}</span>`;
     } else {
       html += escapeHtml(m[0]); // 悬空引用不成泡：红 chip 定位器负责它
     }
@@ -6630,8 +6630,8 @@ document.addEventListener('pointerup', (e) => {
   if (mbDrag.ghost) { mbDrag.ghost.remove(); mbDrag.ghost = null; }
   if (mbDrag.caretEl) mbDrag.caretEl.hidden = true;
   if (!moved) {
-    // 单击：在真正的输入框里选中这个 token（好改好删）
-    flashAndSelect(srcEntry.el, start, end);
+    // 单击：弹出可滚动的全部参考清单，当场把这个引用换绑到别的素材
+    mbShowSwapMenu(srcEntry, token, start, end, e);
     return;
   }
   if (!target) return; // 没落在任何提示词框上 → 原地不动
@@ -6660,3 +6660,105 @@ document.addEventListener('pointerup', (e) => {
     flashAndSelect(dstEl, insertAt, insertAt + token.length);
   }
 });
+
+// ---------------- 气泡换绑菜单：单击气泡 → 全部参考的可滚动清单，点选当场换绑 ----------------
+let mbSwapMenuEl = null;
+function mbSwapClose() {
+  if (!mbSwapMenuEl) return;
+  if (mbSwapMenuEl._closer) document.removeEventListener('pointerdown', mbSwapMenuEl._closer, true);
+  if (mbSwapMenuEl._keyer) document.removeEventListener('keydown', mbSwapMenuEl._keyer, true);
+  mbSwapMenuEl.remove();
+  mbSwapMenuEl = null;
+}
+function mbShowSwapMenu(entry, token, start, end, evt) {
+  mbSwapClose();
+  const el = entry.el;
+  // 原 token 可能是别名写法（@图1/@img2）→ 折算成规范键，用来标出「当前」项
+  const pm = /^@(image|img|图|圖|video|vid|视频|audio|aud|音频)(\d+)$/i.exec(token);
+  const curCanon = pm ? ((MENTION_ALIAS[pm[1].toLowerCase()] || MENTION_ALIAS[pm[1]]) + Number(pm[2])) : null;
+  const items = dirMentionTokens();
+  const menu = document.createElement('div');
+  menu.className = 'mention-menu mb-swap-menu';
+  const head = document.createElement('div');
+  head.className = 'mbs-head';
+  head.textContent = `把 ${token} 换成：`;
+  menu.appendChild(head);
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'm-empty';
+    empty.textContent = '参考区还没有素材 — 先在左侧添加';
+    menu.appendChild(empty);
+  }
+  items.forEach((t) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'm-item mbs-item' + (t.token === curCanon ? ' current' : '');
+    if (t.kind === 'image') {
+      const img = document.createElement('img');
+      img.className = 'm-thumb';
+      img.src = t.url;
+      btn.appendChild(img);
+    } else if (t.kind === 'video') {
+      const img = document.createElement('img');
+      img.className = 'm-thumb';
+      img.loading = 'lazy';
+      img.src = '/api/media/thumb?src=' + encodeURIComponent(t.url);
+      img.onerror = () => { img.style.visibility = 'hidden'; };
+      btn.appendChild(img);
+    } else {
+      const ic = document.createElement('span');
+      ic.className = 'm-icon';
+      ic.textContent = DIR_KIND_META[t.kind].icon;
+      btn.appendChild(ic);
+    }
+    const tok = document.createElement('span');
+    tok.className = 'm-token';
+    tok.textContent = '@' + t.token;
+    const name = document.createElement('span');
+    name.className = 'm-name';
+    name.textContent = (t.role ? t.role[0] + ' · ' : '') + (t.name || t.zhLabel);
+    btn.appendChild(tok);
+    btn.appendChild(name);
+    if (t.token === curCanon) {
+      const cur = document.createElement('span');
+      cur.className = 'mbs-cur';
+      cur.textContent = '当前';
+      btn.appendChild(cur);
+    }
+    btn.onmousedown = (ev) => ev.preventDefault(); // 不抢输入框焦点
+    btn.onclick = () => {
+      mbSwapClose();
+      const newTok = '@' + t.token;
+      if (t.token === curCanon) { flashAndSelect(el, start, end); return; } // 点当前项 = 只定位不改
+      const v = el.value;
+      el.value = v.slice(0, start) + newTok + v.slice(end);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      flashAndSelect(el, start, start + newTok.length);
+      setDirStatus(`已把 ${token} 换成 ${newTok} ✓`);
+    };
+    menu.appendChild(btn);
+  });
+  document.body.appendChild(menu);
+  // 定位：优先贴气泡下沿，退回鼠标点；视口裁剪（隐藏窗格 innerWidth=0 时也不出负值）
+  let ax = evt && evt.clientX || 0, ay = (evt && evt.clientY || 0) + 12;
+  const bub = entry.overlay.querySelector(`.mention-bubble[data-start="${start}"]`);
+  if (bub) {
+    const r = bub.getBoundingClientRect();
+    if (r.width || r.height) { ax = r.left; ay = r.bottom + 4; }
+  }
+  const vw = window.innerWidth || 1280, vh = window.innerHeight || 800;
+  menu.style.left = Math.max(8, Math.min(ax, vw - (menu.offsetWidth || 300) - 8)) + 'px';
+  menu.style.top = Math.max(8, Math.min(ay, vh - (menu.offsetHeight || 220) - 8)) + 'px';
+  mbSwapMenuEl = menu;
+  // 外点 / Esc 关闭（推迟到下一轮事件，免得本次点击立刻把菜单关掉）
+  const closer = (ev2) => { if (!menu.contains(ev2.target)) mbSwapClose(); };
+  const keyer = (ev2) => { if (ev2.key === 'Escape') mbSwapClose(); };
+  menu._closer = closer;
+  menu._keyer = keyer;
+  setTimeout(() => {
+    if (mbSwapMenuEl !== menu) return;
+    document.addEventListener('pointerdown', closer, true);
+    document.addEventListener('keydown', keyer, true);
+  }, 0);
+}
