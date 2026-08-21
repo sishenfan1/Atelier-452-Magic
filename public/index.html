@@ -532,8 +532,9 @@
   </aside>
 
   <div class="col-center">
-    <section class="panel highlight">
-      <h2>✍ 提示词 <span class="hint">— 情境 + 分镜头 CUT + 负面 · 输入 @ 引用参考素材 · 点入框内自动放大，无字数限制</span></h2>
+    <section class="panel highlight" id="dirPromptPanel">
+      <h2>✍ 提示词 <span class="hint">— 情境 + 分镜头 CUT + 负面 · 输入 @ 引用参考素材 · 点入框内自动放大，无字数限制</span>
+        <button id="dirPromptCollapse" class="panel-collapse" type="button" title="收起整个提示词区，露出下方的历史生成">▲</button></h2>
       <label class="check" style="font-size:12px" title="开启后：出站提示词里的大段英文会被 LLM 全文译成中文（可能损失原文措辞精度）。默认关闭 = 原文一字不动直接出站">
         <input type="checkbox" id="dirTranslate"> 出站中文化翻译（默认关 — 原文直发不改一字）
       </label>
@@ -593,12 +594,14 @@
     </section>
     <section class="panel">
       <h2>🎥 生成结果</h2>
-      <video id="dirResult" class="v2v-result" controls loop hidden></video>
-      <div class="row" id="dirFrameGrabRow" hidden style="margin-top:6px">
-        <button id="btnDirGrabFrame" class="btn" title="把播放器当前暂停的画面存为一张参考图">📸 当前帧 → 参考图</button>
-        <span class="hint">暂停到想要的画面再点</span>
+      <div class="dir-player-sticky" id="dirPlayerSticky">
+        <video id="dirResult" class="v2v-result" controls loop hidden></video>
+        <div class="row" id="dirFrameGrabRow" hidden style="margin-top:6px">
+          <button id="btnDirGrabFrame" class="btn" title="把播放器当前暂停的画面存为一张参考图">📸 当前帧 → 参考图</button>
+          <span class="hint">暂停到想要的画面再点</span>
+        </div>
+        <div id="dirResultEmpty" class="empty-note">还没有结果 — 添加参考图（写好每张图的说明）后点「🎬 导演生成」</div>
       </div>
-      <div id="dirResultEmpty" class="empty-note">还没有结果 — 添加参考图（写好每张图的说明）后点「🎬 导演生成」</div>
       <div id="dirHistory" class="history-list" style="margin-top:10px"></div>
     </section>
   </div>

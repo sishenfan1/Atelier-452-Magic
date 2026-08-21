@@ -1179,3 +1179,28 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
   object-fit: cover; z-index: 2; border-radius: 8px 8px 0 0; background: #000;
   pointer-events: none;
 }
+
+/* ---------------- 提示词区折叠 + 生成预览贴墙悬停 ---------------- */
+/* 折叠箭头：收起 ✍ 提示词整节（CONTEXT + CUT + 负面），露出下方历史；输入内容原样保留 */
+.panel-collapse {
+  float: right; flex: none;
+  width: 26px; height: 22px; line-height: 1;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--card2); color: var(--dim);
+  font-size: 11px; cursor: pointer;
+  transition: transform .18s, color .1s, border-color .1s;
+}
+.panel-collapse:hover { color: var(--text); border-color: var(--accent); }
+#dirPromptPanel.collapsed > :not(h2) { display: none; }
+#dirPromptPanel.collapsed .panel-collapse { transform: rotate(180deg); }
+#dirPromptPanel.collapsed h2 { margin-bottom: 0; }
+
+/* 大预览贴墙：滚动到顶后播放器钉在顶部，历史列表继续从其下方滚过 */
+.dir-player-sticky {
+  position: sticky; top: 58px; z-index: 6;
+  background: var(--panel);
+  margin: -6px -6px 0; padding: 6px 6px 8px;
+  border-radius: 0 0 12px 12px;
+  box-shadow: 0 10px 22px rgba(3, 1, 14, .45);
+}
+.dir-player-sticky:has(> video[hidden]):has(> #dirResultEmpty:not([hidden])) { box-shadow: none; }

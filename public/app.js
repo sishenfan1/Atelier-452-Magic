@@ -6824,3 +6824,37 @@ document.addEventListener('mouseout', (e) => {
   pvKill();
 });
 document.addEventListener('pointerdown', () => { pvKill(); }); // 任意点击（选中/外点/关菜单）即收
+
+// ---------------- ✍ 提示词区折叠：一键收起露出历史；跳转定位时自动展开 ----------------
+(() => {
+  const btn = $('dirPromptCollapse');
+  const panel = $('dirPromptPanel');
+  if (!btn || !panel) return;
+  const KEY = 'a452DirPromptCollapsed';
+  const apply = (collapsed) => {
+    panel.classList.toggle('collapsed', collapsed);
+    btn.title = collapsed ? '展开提示词区' : '收起整个提示词区，露出下方的历史生成';
+  };
+  apply(localStorage.getItem(KEY) === '1');
+  // h2 是面板拖拽把手 —— 箭头点击不能触发拖拽
+  btn.addEventListener('mousedown', (e) => e.stopPropagation());
+  btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const collapsed = !panel.classList.contains('collapsed');
+    apply(collapsed);
+    try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch {}
+  };
+})();
+// 问题引用/气泡定位跳进被收起的提示词区时先自动展开（flashAndSelect 是所有定位的必经之路）
+if (typeof flashAndSelect === 'function') {
+  const _flash = flashAndSelect;
+  flashAndSelect = function (el, start, end) {
+    const collapsed = el && el.closest && el.closest('#dirPromptPanel.collapsed');
+    if (collapsed) {
+      collapsed.classList.remove('collapsed');
+      try { localStorage.setItem('a452DirPromptCollapsed', '0'); } catch {}
+    }
+    return _flash(el, start, end);
+  };
+}

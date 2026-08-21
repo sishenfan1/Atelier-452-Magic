@@ -560,6 +560,8 @@ const I18N = {
   '此参考还没有被 @ 引用': ['This ref has no @ mentions yet', 'この参照はまだ @ 参照されていません'],
   '还没有提示词引用这份参考 — 在任意提示词框输入 @ 即可引用': ['No prompt mentions this ref yet — type @ in any prompt box to reference it', 'まだどのプロンプトもこの参照を使っていません — 任意の欄で @ を入力して参照できます'],
   '当前': ['current', '現在'],
+  '收起整个提示词区，露出下方的历史生成': ['Collapse the whole prompt section to reveal past generations below', 'プロンプト欄をたたんで下の生成履歴を表示'],
+  '展开提示词区': ['Expand the prompt section', 'プロンプト欄を展開'],
   '在 Director 仪表盘新建与管理项目':['Create & manage projects in the Director dashboard', 'プロジェクトの作成・管理は Director ダッシュボードで'],
 };
 
