@@ -6858,3 +6858,20 @@ if (typeof flashAndSelect === 'function') {
     return _flash(el, start, end);
   };
 }
+
+// ---------------- 历史滚动盒：高度实时钉在「预览屏下沿 → 视口底」之间 ----------------
+(() => {
+  const sticky = $('dirPlayerSticky');
+  const hist = $('dirHistory');
+  if (!sticky || !hist) return;
+  const sync = () => {
+    // 预览钉在 top:58px；历史盒最大高度 = 视口 - 预览底部 - 面板内衬余量
+    const max = Math.max(180, (window.innerHeight || 800) - 58 - sticky.offsetHeight - 34);
+    hist.style.maxHeight = max + 'px';
+  };
+  if (window.ResizeObserver) new ResizeObserver(sync).observe(sticky);
+  window.addEventListener('resize', sync);
+  const v = $('dirResult');
+  if (v) v.addEventListener('loadedmetadata', sync); // 视频换源改变播放器高度时同步
+  sync();
+})();
