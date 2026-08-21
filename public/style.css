@@ -1205,25 +1205,9 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 }
 .dir-player-sticky:has(> video[hidden]):has(> #dirResultEmpty:not([hidden])) { box-shadow: none; }
 
-/* 历史卡绝不越过预览屏上沿：
-   ① 天空墙 —— 播放器上方立一面与页面背景逐像素一致的墙（fixed 渐变+星野），
-      任何滚出上沿的历史卡都被它盖住；
-   ② 历史列表是内部滚动盒（高度由 JS 按视口实时计算），滚动被封在预览屏下方。 */
-.dir-player-sticky::before {
-  content: "";
-  position: absolute;
-  left: -14px; right: -14px; bottom: 100%;
-  height: 100vh;
-  pointer-events: none;
-  background:
-    radial-gradient(1.2px 1.2px at 12% 18%, rgba(255,255,255,.85) 50%, transparent 51%),
-    radial-gradient(1px 1px at 34% 7%, rgba(255,255,255,.7) 50%, transparent 51%),
-    radial-gradient(1.4px 1.4px at 58% 23%, rgba(255,236,190,.8) 50%, transparent 51%),
-    radial-gradient(1px 1px at 73% 12%, rgba(255,255,255,.6) 50%, transparent 51%),
-    linear-gradient(180deg, #171040 0%, #1a1348 42%, #2c1f5e 68%, #4b3378 84%, #6d4a86 94%, #7d5580 100%);
-  background-attachment: fixed, fixed, fixed, fixed, fixed;
-  background-size: 520px 520px, 640px 640px, 780px 780px, 560px 560px, auto;
-}
+/* 历史卡绝不越过预览屏上沿：历史列表是内部滚动盒（高度由 JS 按视口实时计算），
+   滚动被封在预览屏下方；钉住的播放器自带不透明底+更高 z-index，任何轻微越界都被它盖住。
+   （此前的「天空墙」伪元素会把播放器上方的整个中栏糊住 —— 已移除。） */
 #dirHistory {
   overflow-y: auto;
   overscroll-behavior: contain;
