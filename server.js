@@ -2167,6 +2167,24 @@ app.post('/api/whole/simulate', async (req, res) => {
   }
 });
 
+// ---------------- 直连出片（免 API）：给外部平台窗口喂素材的只读通道 ----------------
+// 外部平台页面（Runway 等）跨源 fetch 本地素材 → 构造 File 注入其上传区。
+// 仅限 simulations 目录 + 每次启动随机 token，双重锁死任意读取。
+const EXTGEN_TOKEN = crypto.randomBytes(16).toString('hex');
+app.get('/api/extgen/token', (req, res) => res.json({ token: EXTGEN_TOKEN }));
+app.get('/api/extgen/file', (req, res) => {
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (String(req.query.t || '') !== EXTGEN_TOKEN) return res.status(403).end();
+    const p = path.resolve(String(req.query.path || ''));
+    const simRoot = path.resolve(path.join(BASE, 'simulations'));
+    if (!p.startsWith(simRoot + path.sep) || !fs.existsSync(p)) return res.status(404).end();
+    const ext = path.extname(p).slice(1).toLowerCase();
+    res.setHeader('Content-Type', MIME[ext] || 'application/octet-stream');
+    fs.createReadStream(p).on('error', () => res.status(404).end()).pipe(res);
+  } catch { res.status(404).end(); }
+});
+
 // 在资源管理器中打开模拟输出目录（仅限 simulations 下，防任意路径）
 app.post('/api/fs/open-folder', (req, res) => {
   try {

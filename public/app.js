@@ -6875,3 +6875,47 @@ if (typeof flashAndSelect === 'function') {
   if (v) v.addEventListener('loadedmetadata', sync); // 视频换源改变播放器高度时同步
   sync();
 })();
+
+// ---------------- 直连出片（免 API）：把最终提示词 + 素材包自动填进外部平台 ----------------
+let simFilesList = [];
+(() => {
+  const row = $('simExtRow');
+  const btn = $('simSendExt');
+  if (!row || !btn) return;
+  // 仅桌面版可用（需要主进程开平台窗口）；浏览器里保持隐藏
+  const showRow = () => { row.hidden = !(window.a452Native && window.a452Native.extGenOpen); };
+  showRow();
+  // showSimResult 打开对话框时刷新一次可用性 + 记录素材清单
+  const _show = showSimResult;
+  showSimResult = function (json) {
+    simFilesList = (json && json.files || []).filter((f) => !/\.txt$/i.test(f));
+    showRow();
+    return _show(json);
+  };
+  btn.onclick = async () => {
+    if (!(window.a452Native && window.a452Native.extGenOpen)) return;
+    if (!simFolder) { $('simStatus').textContent = '⚠ 先完成一次 SIMULATE GEN 再直连'; return; }
+    btn.disabled = true;
+    $('simStatus').textContent = '正在打开平台窗口并准备素材…';
+    try {
+      const tk = await fetch('/api/extgen/token').then((r) => r.json());
+      const files = simFilesList.map((name) => ({
+        name,
+        url: location.origin + '/api/extgen/file?path=' + encodeURIComponent(simFolder + '\\' + name) + '&t=' + tk.token,
+      }));
+      const res = await window.a452Native.extGenOpen({
+        platform: $('simExtPlatform').value,
+        prompt: $('simPromptText').value,
+        files,
+        folder: simFolder,
+      });
+      $('simStatus').textContent = res && res.ok
+        ? `已打开 ${res.name} 窗口：自动填充中（只填不点生成）。首次使用请先在窗口里登录 — 登录态会记住。提示词同时已进剪贴板、素材包文件夹已打开作兜底。`
+        : '⚠ 直连失败: ' + ((res && res.error) || '未知错误');
+    } catch (e) {
+      $('simStatus').textContent = '⚠ 直连失败: ' + errMsg(e);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+})();

@@ -562,11 +562,21 @@ const I18N = {
   '当前': ['current', '現在'],
   '收起整个提示词区，露出下方的历史生成': ['Collapse the whole prompt section to reveal past generations below', 'プロンプト欄をたたんで下の生成履歴を表示'],
   '展开提示词区': ['Expand the prompt section', 'プロンプト欄を展開'],
+  '🚀 直连填充到平台（免 API · 只填不点生成）': ['🚀 Direct-fill the platform (no API · fills only, never clicks Generate)', '🚀 プラットフォームへ直接入力（API 不要 · 入力のみ、生成は押さない）'],
+  '直连出片（免 API）：打开平台窗口自动填提示词 + 注入参考素材；绝不代点生成': ['Direct fill (no API): opens the platform window, auto-fills the prompt and injects refs; never clicks Generate for you', '直結出力（API 不要）：プラットフォームを開いてプロンプト自動入力＋素材注入。生成ボタンは絶対に押しません'],
+  '打开所选平台的登录窗口（登录态会记住），自动把上面的最终提示词填进它的提示词框、把编号素材注入它的上传区。只填充 — 生成按钮永远由你亲自点': ['Opens the selected platform (login remembered), auto-fills the final prompt above into its prompt box and injects the numbered assets into its upload area. Fill only — YOU click Generate', '選択したプラットフォームを開き（ログインは記憶）、上の最終プロンプトを入力欄へ、番号付き素材をアップロード欄へ自動注入。入力のみ — 生成はあなたが押します'],
+  '正在打开平台窗口并准备素材…': ['Opening the platform window and preparing assets…', 'プラットフォームを開いて素材を準備中…'],
+  '⚠ 先完成一次 SIMULATE GEN 再直连': ['⚠ Run SIMULATE GEN once before direct-filling', '⚠ 先に SIMULATE GEN を実行してください'],
+  '可灵 Kling': ['Kling', 'Kling（可灵）'],
+  '海螺 Hailuo': ['Hailuo', 'Hailuo（海螺）'],
+  '即梦 Dreamina': ['Dreamina', 'Dreamina（即夢）'],
   '在 Director 仪表盘新建与管理项目':['Create & manage projects in the Director dashboard', 'プロジェクトの作成・管理は Director ダッシュボードで'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]
 const I18N_RULES = [
+  [/^已打开 (.+) 窗口：自动填充中（只填不点生成）。首次使用请先在窗口里登录 — 登录态会记住。提示词同时已进剪贴板、素材包文件夹已打开作兜底。$/, 'Opened $1: auto-filling now (fill only — never clicks Generate). First time: log in inside that window (session remembered). The prompt is also on your clipboard and the asset folder is open as fallback.', '$1 を開きました：自動入力中（入力のみ、生成は押しません）。初回はそのウィンドウでログインを（セッション記憶）。プロンプトはクリップボードにも、素材フォルダも開いています。'],
+  [/^⚠ 直连失败: (.*)$/, '⚠ Direct-fill failed: $1', '⚠ 直結失敗: $1'],
   [/^把 (@\S+) 换成：$/, 'Swap $1 for:', '$1 を差し替え：'],
   [/^已把 (@\S+) 换成 (@\S+) ✓$/, 'Swapped $1 → $2 ✓', '$1 → $2 に差し替え ✓'],
   [/^参考素材已切到 Seedance (2\.0|2\.5) 档（(\d+) 份）— 两档独立记忆，切回即恢复$/, 'Refs switched to the Seedance $1 set ($2 items) — tiers are remembered separately; switch back to restore', '参照素材を Seedance $1 セットへ切替（$2 件）— ティア別に記憶。戻せば復元'],

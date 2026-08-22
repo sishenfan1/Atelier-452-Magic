@@ -906,6 +906,17 @@
     <button id="simOpenFolder" class="btn">📂 打开素材文件夹</button>
     <button id="simClose" class="btn ghost">关闭</button>
   </div>
+  <div class="dialog-actions" id="simExtRow" hidden>
+    <select id="simExtPlatform" class="btn" title="直连出片（免 API）：打开平台窗口自动填提示词 + 注入参考素材；绝不代点生成">
+      <option value="runway">Runway</option>
+      <option value="pika">Pika</option>
+      <option value="kling">可灵 Kling</option>
+      <option value="hailuo">海螺 Hailuo</option>
+      <option value="dreamina">即梦 Dreamina</option>
+    </select>
+    <button id="simSendExt" class="btn primary" style="flex:1"
+      title="打开所选平台的登录窗口（登录态会记住），自动把上面的最终提示词填进它的提示词框、把编号素材注入它的上传区。只填充 — 生成按钮永远由你亲自点">🚀 直连填充到平台（免 API · 只填不点生成）</button>
+  </div>
   <div id="simStatus" class="hint accent"></div>
 </dialog>
 
