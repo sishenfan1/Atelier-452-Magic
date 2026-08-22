@@ -6882,27 +6882,103 @@ let simFilesList = [];
   const row = $('simExtRow');
   const btn = $('simSendExt');
   if (!row || !btn) return;
-  // 仅桌面版可用（需要主进程开平台窗口）；浏览器里保持隐藏
+  // 仅桌面版可用；浏览器里保持隐藏
   const showRow = () => { row.hidden = !(window.a452Native && window.a452Native.extGenOpen); };
   showRow();
-  // showSimResult 打开对话框时刷新一次可用性 + 记录素材清单
   const _show = showSimResult;
   showSimResult = function (json) {
     simFilesList = (json && json.files || []).filter((f) => !/\.txt$/i.test(f));
     showRow();
     return _show(json);
   };
+  const PLATFORM_URLS = {
+    runway: 'https://app.runwayml.com/',
+    pika: 'https://pika.art/',
+    kling: 'https://app.klingai.com/',
+    hailuo: 'https://hailuoai.video/',
+    dreamina: 'https://jimeng.jianying.com/',
+  };
+  const buildFiles = async () => {
+    const tk = await fetch('/api/extgen/token').then((r) => r.json());
+    // 顺序 = simFilesList 顺序 = keyframe01… → image1… → video1… → audio1…（编号即导入顺序）
+    return simFilesList.map((name) => ({
+      name,
+      url: location.origin + '/api/extgen/file?path=' + encodeURIComponent(simFolder + '\\' + name) + '&t=' + tk.token,
+    }));
+  };
+  let statusPoll = null;
+  const PHASE_TEXT = {
+    queued: '任务已排队 — 去 Chrome 的平台标签页（已自动打开），扩展会在 2 秒内认领',
+    claimed: '✓ Chrome 扩展已认领任务，正在找提示词输入框…',
+    'prompt-filled': '✓ 提示词已填入，开始按顺序导入素材…',
+    importing: '正在按顺序导入素材',
+    done: '✓ 全部完成 — 提示词已填入、素材按序导入。生成按钮由你亲自点',
+    error: '⚠ 扩展报告问题',
+  };
+  const watchStatus = (id) => {
+    if (statusPoll) clearInterval(statusPoll);
+    let quiet = 0;
+    statusPoll = setInterval(async () => {
+      try {
+        const s = await fetch('/api/extgen/status?id=' + id).then((r) => r.json());
+        const base = PHASE_TEXT[s.phase] || s.phase;
+        $('simStatus').textContent = base + (s.detail ? `：${s.detail}` : '');
+        if (s.phase === 'done' || s.phase === 'error') { clearInterval(statusPoll); statusPoll = null; }
+        if (s.phase === 'queued' && ++quiet > 20) { // 40 秒没人认领 → 提示装扩展
+          $('simStatus').textContent = '⚠ 任务无人认领 — Chrome 里可能还没装扩展（点 🧩 装扩展），或平台标签页没开。提示词已在剪贴板、素材包文件夹已打开作兜底。';
+          clearInterval(statusPoll); statusPoll = null;
+        }
+      } catch {}
+    }, 2000);
+  };
+  // 主通道：真实 Chrome + 扩展（登录态现成；素材严格按编号顺序逐个导入）
   btn.onclick = async () => {
-    if (!(window.a452Native && window.a452Native.extGenOpen)) return;
     if (!simFolder) { $('simStatus').textContent = '⚠ 先完成一次 SIMULATE GEN 再直连'; return; }
     btn.disabled = true;
-    $('simStatus').textContent = '正在打开平台窗口并准备素材…';
+    $('simStatus').textContent = '排队直连任务…';
     try {
-      const tk = await fetch('/api/extgen/token').then((r) => r.json());
-      const files = simFilesList.map((name) => ({
-        name,
-        url: location.origin + '/api/extgen/file?path=' + encodeURIComponent(simFolder + '\\' + name) + '&t=' + tk.token,
-      }));
+      const platform = $('simExtPlatform').value;
+      const prof = (window.a452Native && window.a452Native.extGenProfile)
+        ? await window.a452Native.extGenProfile(platform) : null;
+      const files = await buildFiles();
+      const q = await fetch('/api/extgen/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform,
+          prompt: $('simPromptText').value,
+          files,
+          promptSelectors: (prof && prof.promptSelectors) || [],
+          fileSelectors: (prof && prof.fileSelectors) || [],
+        }),
+      }).then((r) => r.json());
+      // 兜底照旧：剪贴板 + 素材文件夹（走备用窗口通道的主进程会做；这里直接复制）
+      try { await navigator.clipboard.writeText($('simPromptText').value); } catch {}
+      // 在用户默认浏览器（Chrome）里打开平台 —— 主窗口的外链策略会转交系统浏览器
+      window.open((prof && prof.url) || PLATFORM_URLS[platform] || PLATFORM_URLS.runway, '_blank');
+      watchStatus(q.id);
+      $('simStatus').textContent = PHASE_TEXT.queued;
+    } catch (e) {
+      $('simStatus').textContent = '⚠ 直连失败: ' + errMsg(e);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  // 一次性安装扩展
+  const installBtn = $('simExtInstall');
+  if (installBtn) installBtn.onclick = async () => {
+    if (!(window.a452Native && window.a452Native.extGenExtDir)) return;
+    const dir = await window.a452Native.extGenExtDir();
+    $('simStatus').textContent = `扩展文件夹已打开：${dir}\n安装：Chrome 地址栏输入 chrome://extensions → 右上角打开「开发者模式」→「加载已解压的扩展程序」→ 选这个文件夹。装一次永久生效。`;
+  };
+  // 备用通道：应用内置窗口（不装扩展也能用，需单独登录一次）
+  const winBtn = $('simSendExtWin');
+  if (winBtn) winBtn.onclick = async () => {
+    if (!(window.a452Native && window.a452Native.extGenOpen)) return;
+    if (!simFolder) { $('simStatus').textContent = '⚠ 先完成一次 SIMULATE GEN 再直连'; return; }
+    winBtn.disabled = true;
+    try {
+      const files = await buildFiles();
       const res = await window.a452Native.extGenOpen({
         platform: $('simExtPlatform').value,
         prompt: $('simPromptText').value,
@@ -6910,12 +6986,12 @@ let simFilesList = [];
         folder: simFolder,
       });
       $('simStatus').textContent = res && res.ok
-        ? `已打开 ${res.name} 窗口：自动填充中（只填不点生成）。首次使用请先在窗口里登录 — 登录态会记住。提示词同时已进剪贴板、素材包文件夹已打开作兜底。`
+        ? `已打开 ${res.name} 备用窗口：自动填充中（只填不点生成）。首次使用请先在该窗口登录 — 登录态会记住。`
         : '⚠ 直连失败: ' + ((res && res.error) || '未知错误');
     } catch (e) {
       $('simStatus').textContent = '⚠ 直连失败: ' + errMsg(e);
     } finally {
-      btn.disabled = false;
+      winBtn.disabled = false;
     }
   };
 })();

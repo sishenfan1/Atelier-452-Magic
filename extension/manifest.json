@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Atelier452 直连填充",
+  "version": "1.0.0",
+  "description": "把 Atelier452 的最终提示词与参考素材按编号顺序自动填进当前平台（只填充，绝不点击生成）",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://app.runwayml.com/*",
+        "https://pika.art/*",
+        "https://app.klingai.com/*",
+        "https://klingai.com/*",
+        "https://hailuoai.video/*",
+        "https://jimeng.jianying.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": ["http://localhost:5893/*"]
+}

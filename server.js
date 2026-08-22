@@ -2185,6 +2185,43 @@ app.get('/api/extgen/file', (req, res) => {
   } catch { res.status(404).end(); }
 });
 
+// ---- Chrome 扩展直连：任务队列（应用排单 → 真实 Chrome 里的内容脚本认领执行）----
+// 每平台一个待办位；扩展轮询认领后应用可轮询进度。CORS 全开（内容脚本从平台域发请求）。
+const extgenJobs = {}; // platform -> job（未认领）
+const extgenStatus = {}; // id -> {phase, detail, at}
+function extgenCors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
+app.options(['/api/extgen/job', '/api/extgen/status'], (req, res) => { extgenCors(res); res.sendStatus(204); });
+app.post('/api/extgen/queue', (req, res) => {
+  const { platform, prompt, files = [], promptSelectors = [], fileSelectors = [] } = req.body || {};
+  if (!platform) return res.status(400).json({ error: '缺 platform' });
+  const id = newId();
+  extgenJobs[platform] = { id, platform, prompt: String(prompt || ''), files, promptSelectors, fileSelectors };
+  extgenStatus[id] = { phase: 'queued', detail: '', at: Date.now() };
+  res.json({ id });
+});
+app.get('/api/extgen/job', (req, res) => {
+  extgenCors(res);
+  const platform = String(req.query.platform || '');
+  const job = extgenJobs[platform];
+  if (!job) return res.json({ job: null });
+  delete extgenJobs[platform]; // 认领即出队，多个标签页不会重复填
+  res.json({ job });
+});
+app.post('/api/extgen/status', (req, res) => {
+  extgenCors(res);
+  const { id, phase, detail } = req.body || {};
+  if (id) extgenStatus[id] = { phase: String(phase || ''), detail: String(detail || '').slice(0, 300), at: Date.now() };
+  res.json({ ok: true });
+});
+app.get('/api/extgen/status', (req, res) => {
+  extgenCors(res);
+  res.json(extgenStatus[String(req.query.id || '')] || { phase: 'unknown' });
+});
+
 // 在资源管理器中打开模拟输出目录（仅限 simulations 下，防任意路径）
 app.post('/api/fs/open-folder', (req, res) => {
   try {

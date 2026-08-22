@@ -570,11 +570,27 @@ const I18N = {
   '可灵 Kling': ['Kling', 'Kling（可灵）'],
   '海螺 Hailuo': ['Hailuo', 'Hailuo（海螺）'],
   '即梦 Dreamina': ['Dreamina', 'Dreamina（即夢）'],
+  '🚀 直连填充（用我的 Chrome · 按序导入素材）': ['🚀 Direct-fill (my Chrome · assets imported in order)', '🚀 直接入力（自分の Chrome · 素材を順番に取り込み）'],
+  '🧩 装扩展': ['🧩 Install extension', '🧩 拡張を入れる'],
+  '🪟 备用窗口': ['🪟 Fallback window', '🪟 予備ウィンドウ'],
+  '在你已登录的真实 Chrome 里打开平台，由 Atelier452 扩展自动填入最终提示词，并把编号素材严格按顺序逐个导入上传区。只填充 — 生成按钮永远由你亲自点': ['Opens the platform in YOUR logged-in Chrome; the Atelier452 extension fills the final prompt and imports the numbered assets one by one, strictly in order. Fill only — YOU click Generate', 'ログイン済みのあなたの Chrome でプラットフォームを開き、拡張が最終プロンプトを入力、番号付き素材を厳密に順番どおり 1 つずつ取り込みます。入力のみ — 生成はあなたが押します'],
+  '首次使用需要一次性安装：打开扩展文件夹 → Chrome 地址栏进 chrome://extensions → 打开「开发者模式」→「加载已解压的扩展程序」选这个文件夹': ['One-time install: open the extension folder → go to chrome://extensions → enable Developer mode → Load unpacked → pick this folder', '初回のみ：拡張フォルダを開く → chrome://extensions → デベロッパーモード ON → 「パッケージ化されていない拡張機能を読み込む」でこのフォルダを選択'],
+  '备用通道：不装扩展时用应用内置窗口填充（需在该窗口单独登录一次）': ['Fallback: fill via the built-in app window (log in once inside that window)', '予備：アプリ内蔵ウィンドウで入力（そのウィンドウで一度ログインが必要）'],
+  '排队直连任务…': ['Queueing the direct-fill job…', '直結ジョブを送信中…'],
+  '任务已排队 — 去 Chrome 的平台标签页（已自动打开），扩展会在 2 秒内认领': ['Job queued — switch to the platform tab in Chrome (opened automatically); the extension claims it within ~2s', 'ジョブ送信済み — Chrome のプラットフォームタブへ（自動で開きます）。拡張が約 2 秒で受領します'],
+  '✓ Chrome 扩展已认领任务，正在找提示词输入框…': ['✓ Extension claimed the job; locating the prompt box…', '✓ 拡張がジョブを受領。プロンプト欄を探しています…'],
+  '✓ 提示词已填入，开始按顺序导入素材…': ['✓ Prompt filled; importing assets in order…', '✓ プロンプト入力済み。素材を順番に取り込み中…'],
+  '正在按顺序导入素材': ['Importing assets in order', '素材を順番に取り込み中'],
+  '✓ 全部完成 — 提示词已填入、素材按序导入。生成按钮由你亲自点': ['✓ All done — prompt filled, assets imported in order. YOU click Generate', '✓ 完了 — プロンプト入力・素材順次取り込み済み。生成はあなたが押します'],
+  '⚠ 扩展报告问题': ['⚠ Extension reported a problem', '⚠ 拡張がエラーを報告'],
+  '⚠ 任务无人认领 — Chrome 里可能还没装扩展（点 🧩 装扩展），或平台标签页没开。提示词已在剪贴板、素材包文件夹已打开作兜底。': ['⚠ Nobody claimed the job — the extension may not be installed (click 🧩) or the platform tab is not open. The prompt is on your clipboard and the asset folder is open as fallback.', '⚠ ジョブが受領されません — 拡張未インストール（🧩 を押す）かタブ未オープンの可能性。プロンプトはクリップボードに、素材フォルダも開いています。'],
   '在 Director 仪表盘新建与管理项目':['Create & manage projects in the Director dashboard', 'プロジェクトの作成・管理は Director ダッシュボードで'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]
 const I18N_RULES = [
+  [/^扩展文件夹已打开：([\s\S]+)$/, 'Extension folder opened: $1', '拡張フォルダを開きました：$1'],
+  [/^已打开 (.+) 备用窗口：自动填充中（只填不点生成）。首次使用请先在该窗口登录 — 登录态会记住。$/, 'Opened the $1 fallback window: auto-filling (fill only). First time: log in inside it — session remembered.', '$1 の予備ウィンドウを開きました：自動入力中（入力のみ）。初回はログインを — セッション記憶。'],
   [/^已打开 (.+) 窗口：自动填充中（只填不点生成）。首次使用请先在窗口里登录 — 登录态会记住。提示词同时已进剪贴板、素材包文件夹已打开作兜底。$/, 'Opened $1: auto-filling now (fill only — never clicks Generate). First time: log in inside that window (session remembered). The prompt is also on your clipboard and the asset folder is open as fallback.', '$1 を開きました：自動入力中（入力のみ、生成は押しません）。初回はそのウィンドウでログインを（セッション記憶）。プロンプトはクリップボードにも、素材フォルダも開いています。'],
   [/^⚠ 直连失败: (.*)$/, '⚠ Direct-fill failed: $1', '⚠ 直結失敗: $1'],
   [/^把 (@\S+) 换成：$/, 'Swap $1 for:', '$1 を差し替え：'],
