@@ -930,8 +930,8 @@
 <dialog id="ingestDialog" class="ingest-dialog">
   <h3>📥 导入提示词 <span class="hint">— 粘贴或拖入一段提示词，自动填进 CONTEXT / 常青铁律 / CUT / 负面</span></h3>
   <div class="hint" style="margin-bottom:6px">
-    认识的模板标题：<b>CONTEXT/情境</b> · <b>RULES/铁律/常青</b> · <b>CUT 1/镜头 1（可带秒数）</b> · <b>NEGATIVE/负面</b>。
-    没有标题也行——「✨ 增强填入」会让 LLM 补足画面要素并自动分镜（原意与语言不变，@引用原样保留）。
+    归属铁律：段落标题含 <b>SHOT / CUT / 镜头 / 分镜</b>（可带编号与秒数，如「CUT 2（3.5秒）」）→ 进对应 <b>CUT 盒</b>；
+    <b>其余一切内容只进 CONTEXT</b>，一个字不丢。没有镜头标题时「✨ 增强填入」会按叙事自动分镜（原意与语言不变，@引用原样保留）。
     当前场景已有内容时自动落到<b>新场景</b>，绝不覆盖。
   </div>
   <textarea id="ingestText" rows="14" style="width:100%" placeholder="把整段提示词粘贴到这里，或直接把 .txt / .md 文件拖进本窗口…"></textarea>

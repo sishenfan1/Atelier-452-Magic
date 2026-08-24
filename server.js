@@ -2379,43 +2379,58 @@ app.get('/api/extgen/status', (req, res) => {
 //（走 llmComplete —— Anthropic 通道受 $20 硬顶护栏，失败自动退回 split，永远有结果）。
 const INGEST_SYS = [
   '你是 Atelier 452 的资深电影提示词工程师。用户给你一段用于 AI 视频生成的提示词草稿（任意语言、任意松散程度），',
-  '你把它增强并结构化为严格 JSON。规则：',
-  '- 只输出一个 JSON 对象，无 markdown 围栏、无解释。',
-  '- 保持草稿的原语言与全部原意；增强 = 补足画面要素（主体/动作/镜头/光线/氛围）、术语规范化、去冗余，',
-  '  绝不发明草稿中不存在的剧情或角色，绝不删掉用户的具体要求。@image1/@video1 等引用原样保留。',
-  '- context：全局情境（世界观/主体/画风基调，整段视频共用）。',
-  '- rules：全片恒定的质量/风格铁律（画质要求、介质质感、光影原则、防AI感条款等"常青"内容）；没有就给空串。',
-  '- negative：负面清单（不想出现的东西，逗号分隔）；没有就给空串。',
-  '- cuts：按叙事拆 2-6 个镜头，每个 {"text": 镜头画面与动作的完整描述, "dur": 秒数或 0}；',
-  '  草稿里若已有 CUT/镜头/SHOT 分段与秒数，忠实沿用其划分与时长。',
-  'JSON schema: {"context": string, "rules": string, "negative": string, "cuts": [{"text": string, "dur": number}]}',
+  '你把它增强并结构化为严格 JSON。归属铁律（最高优先级，不得违反）：',
+  '- 凡是段落标题含 SHOT / CUT / 镜头 / 分镜 / カット / ショット / SC+数字 之类"镜头"含义的段落 → 进 cuts，',
+  '  忠实沿用草稿的镜头划分、顺序与秒数（标题里的 3.5秒 / 2s 等）。',
+  '- 其余一切内容（包括风格规则、负面清单、任何别的标题段落与散文）→ 全部合并进 context，',
+  '  一个字都不许丢、不许挪到别处。cuts 之外没有第三个去处。',
+  '- 草稿完全没有镜头标题时：context 装全文增强稿，另按叙事拆 2-6 个镜头进 cuts。',
+  '增强规则：保持原语言与全部原意；补足画面要素（主体/动作/镜头/光线/氛围）、术语规范化、去冗余；',
+  '绝不发明草稿中不存在的剧情或角色，绝不删掉用户的具体要求；@image1/@video1 等引用原样保留。',
+  '只输出一个 JSON 对象，无 markdown 围栏、无解释。',
+  'JSON schema: {"context": string, "cuts": [{"text": string, "dur": number}]}（dur 没有就 0）',
 ].join('\n');
+
+// 二分铁律：标题是 SHOT/CUT/镜头/分镜类 → CUT；其余一切（含任何别的标题与散文）→ 只进 CONTEXT
+const CUT_HEAD_RE = /^\s*(?:#+\s*|【)?\s*(?:cuts?|shots?|镜头|分镜|カット|ショット|sc)\s*[-—·.]?\s*(\d+)?[^\n]*?(?:】)?\s*[:：]?\s*$/i;
+// 纯 CONTEXT 标签行（仅这些无信息量的标签本身丢弃，正文保留）
+const CONTEXT_LABEL_RE = /^\s*(?:#+\s*|【)?\s*(?:context|scene\s*setup|情境|全局情境|全局|背景)\s*(?:】)?\s*[:：]?\s*$/i;
+// 非镜头的段落标题（负面/铁律/【任意标签】/markdown 标题等）：出现即结束当前 CUT，之后内容回 CONTEXT
+const GENERIC_HEAD_RE = /^\s*(?:【[^\n】]{1,24}】[^\n]{0,30}|#{1,6}\s+\S[^\n]*|(?:rules?|铁律|常青|evergreen|negatives?|负面(?:提示词|清单)?|style|风格|mood|情绪|音乐|music|audio|音频|旁白|字幕|参考|notes?)[^\n]{0,24}[:：][^\n]{0,60})\s*$/i;
 
 function ingestHeuristic(text) {
   const t = String(text || '').replace(/\r\n?/g, '\n');
   const out = { context: '', rules: '', negative: '', cuts: [] };
-  // 标题行：CONTEXT/情境/全局 | RULES/铁律/常青 | NEGATIVE/负面 | CUT n/镜头 n/SHOT n
-  const headRe = /^\s*(?:#+\s*|【)?\s*(context|scene\s*setup|情境|全局情境|全局|背景|rules?|铁律|常青|evergreen|negative|负面(?:提示词|清单)?|(?:cut|shot|镜头)\s*(\d+)[^\n]*?)\s*(?:】)?\s*[:：]?\s*$/gim;
-  const marks = [];
-  let m;
-  while ((m = headRe.exec(t))) marks.push({ idx: m.index, end: m.index + m[0].length, head: m[1].toLowerCase(), n: m[2] ? Number(m[2]) : null });
-  if (!marks.length) { out.context = t.trim(); return out; }
-  // 首个标题前的散文归 context
-  const preamble = t.slice(0, marks[0].idx).trim();
-  if (preamble) out.context = preamble;
-  for (let i = 0; i < marks.length; i++) {
-    const body = t.slice(marks[i].end, i + 1 < marks.length ? marks[i + 1].idx : t.length).trim();
-    const h = marks[i].head;
-    if (/^(cut|shot|镜头)/.test(h)) {
-      // 时长：标题里 或 正文里的「X 秒 / Xs / 严格X.X秒」
+  const ctxParts = [];
+  let curCut = null; // 当前收集中的 CUT（直到下一个镜头标题为止都算它的正文）
+  const flushCut = () => {
+    if (!curCut) return;
+    curCut.text = curCut.lines.join('\n').trim();
+    if (curCut.text) out.cuts.push({ text: curCut.text, dur: curCut.dur });
+    curCut = null;
+  };
+  for (const line of t.split('\n')) {
+    if (CUT_HEAD_RE.test(line)) {
+      flushCut();
       let dur = 0;
-      const dm = (t.slice(marks[i].idx, marks[i].end) + ' ' + body.slice(0, 60)).match(/(\d+(?:\.\d+)?)\s*(?:秒|s\b)/i);
+      const dm = line.match(/(\d+(?:\.\d+)?)\s*(?:秒|s\b)/i);
+      // 标题里的裸编号不当时长（CUT 3 ≠ 3 秒）：只认带单位的
       if (dm) dur = Math.min(30, Number(dm[1]) || 0);
-      out.cuts.push({ text: body, dur });
-    } else if (/rule|铁律|常青|evergreen/.test(h)) out.rules = out.rules ? out.rules + '\n' + body : body;
-    else if (/negative|负面/.test(h)) out.negative = out.negative ? out.negative + '，' + body : body;
-    else out.context = out.context ? out.context + '\n' + body : body;
+      curCut = { lines: [], dur };
+      continue;
+    }
+    if (curCut && GENERIC_HEAD_RE.test(line) && !CONTEXT_LABEL_RE.test(line)) {
+      // CUT 正文里撞到别的段落标题（负面/铁律/任意标签）→ 该段按铁律回 CONTEXT
+      flushCut();
+      ctxParts.push(line);
+      continue;
+    }
+    if (curCut) { curCut.lines.push(line); continue; }
+    if (CONTEXT_LABEL_RE.test(line)) continue; // 纯 CONTEXT 标签丢弃，正文自然落入 context
+    ctxParts.push(line);
   }
+  flushCut();
+  out.context = ctxParts.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   return out;
 }
 

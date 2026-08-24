@@ -7314,12 +7314,16 @@ function applyIngestResult(r) {
   if (dirSceneDirty()) { dirSceneAdd(); openedNew = true; }
   $('dirPrompt').value = r.context || '';
   $('dirPrompt').dispatchEvent(new Event('input', { bubbles: true }));
-  $('dirNegative').value = r.negative || '';
-  $('dirNegative').dispatchEvent(new Event('input', { bubbles: true }));
-  state.director.negative = r.negative || '';
-  // 铁律 → 场景私有常青
-  state.director.evergreen = r.rules || '';
-  if (typeof egPanelApply === 'function') egPanelApply();
+  // 二分铁律：镜头段进 CUT，其余一切只进 CONTEXT —— 负面/常青仅当服务端明确给出时才写
+  if (r.negative) {
+    $('dirNegative').value = r.negative;
+    $('dirNegative').dispatchEvent(new Event('input', { bubbles: true }));
+    state.director.negative = r.negative;
+  }
+  if (r.rules) {
+    state.director.evergreen = r.rules;
+    if (typeof egPanelApply === 'function') egPanelApply();
+  }
   // CUT：覆盖为导入的分镜（不足 4 个由 dirEnsureCuts 补空盒）
   state.director.cuts = (r.cuts || []).map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0 }));
   dirEnsureCuts();

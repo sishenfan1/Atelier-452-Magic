@@ -635,6 +635,8 @@ const I18N = {
   '⚠ 先粘贴或拖入内容': ['⚠ Paste or drop something first', '⚠ 先に内容を貼るかドロップして'],
   '拆分中…': ['Splitting…', '分割中…'],
   '✨ 增强中…（LLM 结构化，失败自动退回拆分）': ['✨ Enhancing… (LLM structuring; falls back to split on failure)', '✨ 強化中…（LLM 構造化。失敗時は分割に自動フォールバック）'],
+  '其余一切内容只进 CONTEXT': ['EVERYTHING else goes into CONTEXT only', 'それ以外はすべて CONTEXT のみへ'],
+  'SHOT / CUT / 镜头 / 分镜': ['SHOT / CUT / 镜头 / 分镜', 'SHOT / CUT / 镜头 / 分镜'],
   '在 Director 仪表盘新建与管理项目':['Create & manage projects in the Director dashboard', 'プロジェクトの作成・管理は Director ダッシュボードで'],
 };
 
