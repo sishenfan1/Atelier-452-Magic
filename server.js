@@ -2228,9 +2228,11 @@ app.post('/api/director/simulate', async (req, res) => {
   try {
     const { refImages = [], refVideos = [], refAudios = [], prompt: userPrompt, duration, model, animMode, refsMeta = [] } = req.body || {};
     const cfg = loadConfig();
+    // 场景私有常青：请求带 evergreen（含空串）时覆盖全局；不带则沿用 🌲 全局
+    const egCfg = (req.body && typeof req.body.evergreen === 'string') ? { ...cfg, evergreen: req.body.evergreen } : cfg;
     // 与 /api/director 完全同一条出站管线：帧率注入 + 常青锚点 + 中文化开关 + 9999 硬顶
     const fullPrompt = await finalizePrompt(cfg,
-      [animModePrompt(animMode === undefined ? '12fps' : animMode), evergreenJoin(cfg, userPrompt)]
+      [animModePrompt(animMode === undefined ? '12fps' : animMode), evergreenJoin(egCfg, userPrompt)]
         .filter(Boolean).join('\n'));
     const stamp = new Date();
     const id = 'sim_' + stamp.toISOString().replace(/[:.]/g, '-').slice(0, 19) + '_' + newId().slice(0, 4);
@@ -2400,10 +2402,12 @@ app.post('/api/director', async (req, res) => {
     if (!bill.ok) return res.status(402).json({ error: bill.error });
   }
   logUsedPrompt(cfg, 'director', userPrompt);
+  // 场景私有常青：请求带 evergreen（含空串）时覆盖全局；不带则沿用 🌲 全局
+  const egCfg = (req.body && typeof req.body.evergreen === 'string') ? { ...cfg, evergreen: req.body.evergreen } : cfg;
   // 动画帧率指令：本工具面向动画生产，默认 12fps 卡帧（隐藏注入，客户端可选 variable/off）
   // 出站终审：中文化解释层 + 9999 字符硬顶
   const fullPrompt = await finalizePrompt(cfg,
-    [animModePrompt(animMode === undefined ? '12fps' : animMode), evergreenJoin(cfg, userPrompt)]
+    [animModePrompt(animMode === undefined ? '12fps' : animMode), evergreenJoin(egCfg, userPrompt)]
       .filter(Boolean).join('\n'));
   // 参考视频总时长预检（Artcraft 能力表：2.5 ≤30s、2.0 ≤15s；超限后端直接 500，先拦下）
   {

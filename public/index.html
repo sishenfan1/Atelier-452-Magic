@@ -485,6 +485,7 @@
 
 <!-- ============ 模式六：导演生成（首尾帧 + 参考视频 + 参考图 · Seedance 2.0/2.5） ============ -->
 <main class="layout" id="viewDirector" hidden>
+  <div id="dirSceneTabs" class="dir-scene-tabs" aria-label="场景标签 — 多个并行的 REFERENCES TOOL 实例"></div>
   <aside class="col-left">
     <section class="panel highlight">
       <h2>📚 参考素材 <span class="hint" id="dirRefCaps">— 图 ≤9 · 视频 ≤3 · 音频 ≤3</span></h2>
@@ -620,11 +621,12 @@
       </div>
     </section>
     <section class="panel">
-      <h2>🌲 常青提示词 <span class="hint">— 全片恒定，注入所有工作区每一次生成</span></h2>
+      <h2>🌲 常青提示词 <span class="hint" id="egPanelScope">— 本场景专属：只注入当前场景的生成</span></h2>
       <textarea id="egPanelText" rows="16" data-min-grow="200"
-        placeholder="写在这里的内容不随镜头变化，自动追加到每一次生成的提示词末尾。适合放：画质要求、介质质感（赛璐璐/胶片）、光影原则、全片色彩章程、防 AI 感条款、角色比例恒定条款。"></textarea>
+        placeholder="写在这里的内容不随镜头变化，自动追加到本场景每一次生成的提示词末尾。适合放：画质要求、介质质感（赛璐璐/胶片）、光影原则、场景色彩章程、防 AI 感条款、角色比例恒定条款。新开的空白场景常青也是空白。"></textarea>
       <div class="row" style="margin-top:8px">
-        <button id="egPanelSave" class="btn primary">保存（全局生效）</button>
+        <button id="egPanelSave" class="btn primary">保存（本场景生效）</button>
+        <button id="egPanelUseGlobal" class="btn ghost" title="放弃本场景专属常青，回到沿用 🌲 全局常青（顶栏那份）">↩ 沿用全局</button>
         <span id="egPanelStatus" class="hint accent"></span>
       </div>
     </section>

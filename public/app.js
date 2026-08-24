@@ -168,22 +168,9 @@ function snapshot() {
       energy: state.motion.energy,
       poses: state.motion.poses,
     },
-    director: {
-      first: state.director.first,
-      last: state.director.last,
-      refVideo: state.director.refVideo,
-      refVideoName: state.director.refVideoName,
-      animMode: state.director.animMode,
-      model: $('dirModel') ? $('dirModel').value : '',
-      refs: state.director.refs,
-      refsStash: state.director.refsStash,
-      refTier: state.director.refTier,
-      cuts: state.director.cuts,
-      negative: state.director.negative,
-      mood: state.director.mood,
-      context: $('dirPrompt') ? $('dirPrompt').value : '',
-      history: state.director.history,
-    },
+    director: captureDirectorLive(), // 向后兼容字段（旧版本打开也能读）
+    dirScenes: dirScenesSnapshot(),
+    dirSceneActive: state.dirSceneActive || 0,
     pendingTasks: state.pendingTasks,
   };
 }
@@ -274,28 +261,16 @@ async function loadProject() {
     state.motion.energy = Array.isArray(mo.energy) ? mo.energy : [];
     state.motion.poses = Array.isArray(mo.poses) ? mo.poses : [];
     restoreMotionUI();
-    const dr = p.director || {};
-    state.director.first = dr.first || null;
-    state.director.last = dr.last || null;
-    state.director.refVideo = dr.refVideo || null;
-    state.director.refVideoName = dr.refVideoName || '';
-    state.director.animMode = dr.animMode || '12fps';
-    if (typeof dr.model === 'string' && $('dirModel')) {
-      // 模型选择随工程持久化（否则每次重开都退回"跟随全局"）
-      const opt = Array.from($('dirModel').options).some((o) => o.value === dr.model);
-      if (opt) $('dirModel').value = dr.model;
+    // 多场景：优先恢复场景集；旧工程只有 director 单场 → 自动迁移为「场景 1」
+    if (Array.isArray(p.dirScenes) && p.dirScenes.length) {
+      state.dirScenes = p.dirScenes.filter((s) => s && typeof s === 'object');
+      state.dirSceneActive = Math.max(0, Math.min(Number(p.dirSceneActive) || 0, state.dirScenes.length - 1));
+    } else {
+      state.dirScenes = [{ id: 'sc-legacy', name: '场景 1', data: p.director || {} }];
+      state.dirSceneActive = 0;
     }
-    state.director.refs = Array.isArray(dr.refs) ? dr.refs : [];
-    state.director.refsStash = (dr.refsStash && typeof dr.refsStash === 'object') ? dr.refsStash : { t20: [], t25: [] };
-    state.director.refTier = dr.refTier || null;
-    state.director.cuts = Array.isArray(dr.cuts) ? dr.cuts : [];
-    state.director.negative = typeof dr.negative === 'string' ? dr.negative : '';
-    state.director.mood = typeof dr.mood === 'string' ? dr.mood : '';
-    if ($('dirMood')) $('dirMood').value = state.director.mood;
-    if (typeof dr.context === 'string' && $('dirPrompt')) $('dirPrompt').value = dr.context;
-    if ($('dirNegative')) $('dirNegative').value = state.director.negative;
-    state.director.history = Array.isArray(dr.history) ? dr.history : [];
-    state.director.current = state.director.history.length ? 0 : -1;
+    applyDirectorData((state.dirScenes[state.dirSceneActive] || {}).data || {});
+    if (typeof renderDirSceneTabs === 'function') renderDirSceneTabs();
     restoreDirectorUI();
     renderRefine();
     syncSliderLabels();
@@ -3686,6 +3661,8 @@ async function directorGenerate() {
         prompt, duration, model,
         animMode: reqData.animMode,
         generateAudio: reqData.generateAudio,
+        // 场景私有常青：undefined = 不传该键 → 服务端沿用 🌲 全局
+        ...(state.director.evergreen !== undefined ? { evergreen: state.director.evergreen } : {}),
       }),
     });
     const json = await res.json().catch(() => ({}));
@@ -5562,8 +5539,8 @@ async function egRefreshBadge() {
         ? `常青锚点生效中：${text.slice(0, 90)}${text.length > 90 ? '…' : ''}`
         : '常青锚点：未设置 — 点这里写全片恒定的画质与风格锚（每一次生成都会自动带上）';
     }
-    const panel = $('egPanelText');
-    if (panel && document.activeElement !== panel) panel.value = cfg.evergreen || '';
+    // 右栏面板改为「场景私有常青」编辑器，由 egPanelApply 负责 —— 这里只在场景沿用全局时刷新显示
+    if (typeof egPanelApply === 'function' && state.director && state.director.evergreen === undefined) egPanelApply(cfg.evergreen || '');
     return cfg.evergreen || '';
   } catch { return ''; }
 }
@@ -5587,23 +5564,45 @@ $('egSave').onclick = async () => {
 $('egClear').onclick = () => { $('egText').value = ''; };
 $('egClose').onclick = () => $('egDialog').close();
 
-// 工作区 6 右栏的常青提示词常驻面板（与 🌲 对话框同一份数据）
-async function egPanelLoad() {
+// 工作区 6 右栏：场景私有常青编辑器。
+// 语义：state.director.evergreen === undefined → 本场景沿用 🌲 全局常青；
+//       字符串（含空串）→ 本场景专属（空串 = 本场景不注入任何常青）。
+// 其它工作区（中割/转绘/精修）继续走全局常青，不受影响。
+function egPanelApply(globalText) {
   const panel = $('egPanelText');
-  if (panel && document.activeElement !== panel) panel.value = await egRefreshBadge();
+  if (!panel) return;
+  const own = state.director ? state.director.evergreen : undefined;
+  const scope = $('egPanelScope');
+  if (own === undefined) {
+    if (document.activeElement !== panel) panel.value = globalText !== undefined ? globalText : panel.value;
+    if (scope) scope.textContent = '— 沿用 🌲 全局常青（编辑并保存后转为本场景专属）';
+  } else {
+    if (document.activeElement !== panel) panel.value = own;
+    if (scope) scope.textContent = own.trim()
+      ? '— 本场景专属：只注入当前场景的生成'
+      : '— 本场景专属：空 = 本场景不注入任何常青';
+  }
+}
+async function egPanelLoad() {
+  if (state.director && state.director.evergreen !== undefined) { egPanelApply(); return; }
+  await egRefreshBadge(); // 内部会以全局文本刷新面板
 }
 if ($('egPanelSave')) {
-  $('egPanelSave').onclick = async () => {
-    try {
-      const res = await fetch('/api/config', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ evergreen: $('egPanelText').value }),
-      });
-      if (!res.ok) throw new Error('保存失败 ' + res.status);
-      $('egPanelStatus').textContent = '已保存 ✓ 全部工作区生效';
-      setTimeout(() => { $('egPanelStatus').textContent = ''; }, 4000);
-      egRefreshBadge();
-    } catch (e) { $('egPanelStatus').textContent = '保存失败: ' + errMsg(e); }
+  $('egPanelSave').onclick = () => {
+    state.director.evergreen = $('egPanelText').value; // 从此本场景专属
+    egPanelApply();
+    scheduleSave();
+    $('egPanelStatus').textContent = '已保存 ✓ 仅本场景生效';
+    setTimeout(() => { $('egPanelStatus').textContent = ''; }, 4000);
+  };
+}
+if ($('egPanelUseGlobal')) {
+  $('egPanelUseGlobal').onclick = async () => {
+    state.director.evergreen = undefined; // 回到沿用全局
+    scheduleSave();
+    await egPanelLoad();
+    $('egPanelStatus').textContent = '已切回沿用 🌲 全局常青 ✓';
+    setTimeout(() => { $('egPanelStatus').textContent = ''; }, 4000);
   };
 }
 egPanelLoad();
@@ -5976,6 +5975,7 @@ async function simulateGen() {
         model: reqData.model,
         animMode: reqData.animMode,
         refsMeta: reqData.refsMeta,
+        ...(state.director.evergreen !== undefined ? { evergreen: state.director.evergreen } : {}),
       }),
     });
     const json = await res.json().catch(() => ({}));
@@ -7100,3 +7100,200 @@ if ($('btnKeychain')) {
   $('keyRefresh').onclick = () => renderKeychain();
   $('keyDialog').addEventListener('click', (e) => { if (e.target === $('keyDialog')) $('keyDialog').close(); });
 }
+
+// ---------------- REFERENCES TOOL 多场景：并行工作台，＋ 开新实例，切换零丢失 ----------------
+// 每个场景 = 完整独立的一套导演态（参考素材+双档记忆 / CONTEXT / CUT / 负面 / 情绪锁 /
+// 模型 / 时长 / 帧率 / 演技滑杆 / 生成历史）。切换时先把当前活场景捕获进 state.dirScenes，
+// 再装载目标场景；保存管线（snapshot）每次都同步捕获 → 重启后原样恢复。
+const DIR_ACT_IDS = ['dirActOverall', 'dirActFace', 'dirActBody', 'dirActTempo', 'dirActVelocity', 'dirActFx', 'dirActPhysics'];
+
+function ensureDirScenes() {
+  if (!Array.isArray(state.dirScenes) || !state.dirScenes.length) {
+    state.dirScenes = [{ id: 'sc-' + Date.now().toString(36), name: '场景 1', data: null }];
+    state.dirSceneActive = 0;
+  }
+  if (typeof state.dirSceneActive !== 'number' || state.dirSceneActive < 0 || state.dirSceneActive >= state.dirScenes.length) {
+    state.dirSceneActive = 0;
+  }
+  return state.dirScenes;
+}
+
+/** 当前活着的导演态（DOM + state）→ 可序列化场景数据 */
+function captureDirectorLive() {
+  const acting = {};
+  for (const id of DIR_ACT_IDS) acting[id] = $(id) ? Number($(id).value) : 0;
+  return {
+    first: state.director.first,
+    last: state.director.last,
+    refVideo: state.director.refVideo,
+    refVideoName: state.director.refVideoName,
+    animMode: $('dirAnimMode') ? $('dirAnimMode').value : (state.director.animMode || '12fps'),
+    model: $('dirModel') ? $('dirModel').value : '',
+    refs: state.director.refs,
+    refsStash: state.director.refsStash,
+    refTier: state.director.refTier,
+    cuts: state.director.cuts,
+    negative: $('dirNegative') ? $('dirNegative').value : (state.director.negative || ''),
+    mood: state.director.mood,
+    context: $('dirPrompt') ? $('dirPrompt').value : '',
+    history: state.director.history,
+    current: state.director.current,
+    duration: $('dirDuration') ? Number($('dirDuration').value) : 5,
+    audio: $('dirAudio') ? $('dirAudio').checked : false,
+    acting,
+    evergreen: state.director.evergreen, // undefined = 沿用全局（序列化时自动省键）
+  };
+}
+
+/** 场景数据 → 装回 live（state + DOM + 全部渲染）。loadProject 与场景切换共用 */
+function applyDirectorData(dr) {
+  dr = dr || {};
+  state.director.first = dr.first || null;
+  state.director.last = dr.last || null;
+  state.director.refVideo = dr.refVideo || null;
+  state.director.refVideoName = dr.refVideoName || '';
+  state.director.animMode = dr.animMode || '12fps';
+  if ($('dirAnimMode')) $('dirAnimMode').value = state.director.animMode;
+  if ($('dirModel')) {
+    // 模型选择随场景持久化；空白场景归位「跟随全局档位」
+    const m = typeof dr.model === 'string' ? dr.model : '';
+    const opt = Array.from($('dirModel').options).some((o) => o.value === m);
+    $('dirModel').value = opt ? m : '';
+  }
+  state.director.refs = Array.isArray(dr.refs) ? dr.refs : [];
+  state.director.refsStash = (dr.refsStash && typeof dr.refsStash === 'object') ? dr.refsStash : { t20: [], t25: [] };
+  state.director.refTier = dr.refTier || null;
+  state.director.cuts = Array.isArray(dr.cuts) ? dr.cuts : [];
+  state.director.negative = typeof dr.negative === 'string' ? dr.negative : '';
+  state.director.mood = typeof dr.mood === 'string' ? dr.mood : '';
+  if ($('dirMood')) $('dirMood').value = state.director.mood;
+  if ($('dirPrompt')) $('dirPrompt').value = typeof dr.context === 'string' ? dr.context : '';
+  if ($('dirNegative')) $('dirNegative').value = state.director.negative;
+  state.director.history = Array.isArray(dr.history) ? dr.history : [];
+  state.director.current = (typeof dr.current === 'number' && dr.current >= 0 && dr.current < state.director.history.length)
+    ? dr.current : (state.director.history.length ? 0 : -1);
+  if ($('dirDuration')) {
+    $('dirDuration').value = Number(dr.duration) >= 4 ? Number(dr.duration) : 5;
+    $('dirDuration').dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  if ($('dirAudio')) $('dirAudio').checked = !!dr.audio;
+  const acting = dr.acting || {};
+  for (const id of DIR_ACT_IDS) {
+    const el = $(id);
+    if (!el) continue;
+    el.value = Number(acting[id]) || 0;
+    el.dispatchEvent(new Event('input', { bubbles: true })); // 标签/预览沿用现有 handler
+  }
+  // 场景私有常青：undefined = 沿用 🌲 全局；字符串（含空）= 本场景专属
+  state.director.evergreen = (typeof dr.evergreen === 'string') ? dr.evergreen : undefined;
+  if (typeof egPanelLoad === 'function') { try { egPanelLoad(); } catch {} }
+}
+
+/** 场景切换后的整面重渲染（loadProject 尾部本来就会 renderAll，这里给切换用） */
+function dirSceneRerender() {
+  dirEnsureCuts();
+  renderDirCuts();
+  dirSyncTier(); // 内含 renderDirRefs + updateDirGoModel
+  renderDirector();
+  if (typeof renderMentionPreview === 'function') renderMentionPreview();
+  // 播放器复位：不跨场景残留上一场的画面
+  const v = $('dirResult');
+  if (v) {
+    const cur = state.director.history[state.director.current];
+    if (cur && cur.videoUrl) { v.src = cur.videoUrl; v.hidden = false; }
+    else { v.removeAttribute('src'); v.hidden = true; }
+  }
+  if ($('dirResultEmpty')) $('dirResultEmpty').hidden = !!(state.director.history || []).length;
+  if ($('dirFrameGrabRow')) $('dirFrameGrabRow').hidden = !(state.director.history || []).length;
+  if (typeof restoreDirectorUI === 'function') restoreDirectorUI();
+}
+
+/** 快照钩子：保存前把活场景捕获回场景集（重启后 DOM 字段也原样回来） */
+function dirScenesSnapshot() {
+  ensureDirScenes();
+  const sc = state.dirScenes[state.dirSceneActive];
+  if (sc && $('dirPrompt')) sc.data = captureDirectorLive();
+  return state.dirScenes.map((s) => ({ id: s.id, name: s.name, data: s.data }));
+}
+
+function dirSceneSwitch(idx) {
+  ensureDirScenes();
+  if (idx === state.dirSceneActive || idx < 0 || idx >= state.dirScenes.length) return;
+  state.dirScenes[state.dirSceneActive].data = captureDirectorLive();
+  state.dirSceneActive = idx;
+  applyDirectorData(state.dirScenes[idx].data || {});
+  dirSceneRerender();
+  renderDirSceneTabs();
+  scheduleSave();
+  setDirStatus(`已切到「${state.dirScenes[idx].name}」— 各场景互相独立，随切随回`);
+}
+
+function dirSceneAdd() {
+  ensureDirScenes();
+  state.dirScenes[state.dirSceneActive].data = captureDirectorLive();
+  const n = state.dirScenes.length + 1;
+  state.dirScenes.push({ id: 'sc-' + Date.now().toString(36), name: `场景 ${n}`, data: null });
+  state.dirSceneActive = state.dirScenes.length - 1;
+  applyDirectorData({ evergreen: '' }); // 全新空白实例：常青也清空（本场景不注入，需要就现写或点「沿用全局」）
+  dirSceneRerender();
+  renderDirSceneTabs();
+  scheduleSave();
+  setDirStatus('已开新空白场景 — 原场景完好保存在左边的标签里');
+}
+
+function dirSceneRemove(idx) {
+  ensureDirScenes();
+  if (state.dirScenes.length <= 1) { setDirStatus('至少保留一个场景'); return; }
+  const sc = state.dirScenes[idx];
+  const hasStuff = sc && sc.data && ((sc.data.refs || []).length || (sc.data.history || []).length || (sc.data.context || '').trim());
+  const liveStuff = idx === state.dirSceneActive && (state.director.refs.length || state.director.history.length || ($('dirPrompt') && $('dirPrompt').value.trim()));
+  if ((hasStuff || liveStuff) && !confirm(`删除「${sc.name}」？该场景的提示词、参考素材与生成历史将一并移除（生成的视频文件仍在磁盘）。`)) return;
+  state.dirScenes.splice(idx, 1);
+  if (state.dirSceneActive >= state.dirScenes.length) state.dirSceneActive = state.dirScenes.length - 1;
+  else if (idx < state.dirSceneActive) state.dirSceneActive -= 1;
+  else if (idx === state.dirSceneActive) {
+    applyDirectorData(state.dirScenes[state.dirSceneActive].data || {});
+    dirSceneRerender();
+  }
+  renderDirSceneTabs();
+  scheduleSave();
+}
+
+function renderDirSceneTabs() {
+  const bar = $('dirSceneTabs');
+  if (!bar) return;
+  ensureDirScenes();
+  bar.innerHTML = '';
+  state.dirScenes.forEach((sc, i) => {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = 'dir-scene-tab' + (i === state.dirSceneActive ? ' active' : '');
+    tab.title = '单击切换 · 双击改名';
+    const label = document.createElement('span');
+    label.textContent = sc.name || `场景 ${i + 1}`;
+    tab.appendChild(label);
+    if (state.dirScenes.length > 1) {
+      const x = document.createElement('span');
+      x.className = 'dir-scene-x';
+      x.textContent = '✕';
+      x.title = '删除这个场景';
+      x.onclick = (e) => { e.stopPropagation(); dirSceneRemove(i); };
+      tab.appendChild(x);
+    }
+    tab.onclick = () => dirSceneSwitch(i);
+    tab.ondblclick = (e) => {
+      e.preventDefault();
+      const name = prompt('场景名称：', sc.name || '');
+      if (name && name.trim()) { sc.name = name.trim().slice(0, 24); renderDirSceneTabs(); scheduleSave(); }
+    };
+    bar.appendChild(tab);
+  });
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'dir-scene-add';
+  add.textContent = '＋ 新场景';
+  add.title = '开一个全新空白的 REFERENCES TOOL 实例 — 现有场景原样保留，随时切回';
+  add.onclick = dirSceneAdd;
+  bar.appendChild(add);
+}
+if ($('dirSceneTabs')) renderDirSceneTabs();
