@@ -1214,3 +1214,28 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
   padding-right: 3px;
   scrollbar-width: thin;
 }
+
+/* ---------------- 🔑 API Key 钥匙串 ---------------- */
+.key-dialog { width: min(860px, 94vw); max-height: 84vh; overflow-y: auto; }
+.key-platform { margin-bottom: 14px; padding: 10px 12px; background: rgba(17, 12, 44, .5); border: 1px solid var(--line); border-radius: 12px; }
+.key-pf-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.key-pf-head b { font-size: 13px; color: var(--navy, #d6ccff); letter-spacing: .06em; }
+.key-pf-active { font-size: 11px; color: var(--accent2); }
+.key-rows { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+.key-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border: 1px solid transparent; border-radius: 10px; background: rgba(30, 24, 73, .5);
+}
+.key-row.active { border-color: rgba(246, 198, 109, .5); background: rgba(246, 198, 109, .07); }
+.key-active-dot { color: var(--accent2); width: 14px; text-align: center; flex: none; }
+.key-row:not(.active) .key-active-dot { color: var(--dim); }
+.key-label { flex: 0 0 170px; font-size: 12px; padding: 3px 8px; }
+.key-masked { flex: 1; font-size: 11px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.key-times { flex: none; font-size: 10px; white-space: nowrap; }
+.key-in-use { flex: none; font-size: 10px; color: var(--accent2); border: 1px solid rgba(246,198,109,.5); border-radius: 999px; padding: 1px 8px; }
+.key-use, .key-del { flex: none; padding: 3px 10px; font-size: 11px; }
+.key-add-row { display: flex; align-items: center; gap: 8px; }
+.key-add-label { flex: 0 0 170px; font-size: 12px; }
+.key-add-key { flex: 1; font-size: 12px; }
+.key-add-row .check { flex: none; font-size: 11px; }
+.key-add-btn { flex: none; }

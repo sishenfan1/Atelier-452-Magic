@@ -6995,3 +6995,108 @@ let simFilesList = [];
     }
   };
 })();
+
+// ---------------- 🔑 API Key 钥匙串：多账号管理 / 一键切换 / 随时监控 ----------------
+async function renderKeychain() {
+  const wrap = $('keyList');
+  if (!wrap) return;
+  let data;
+  try {
+    data = await fetch('/api/keychain').then((r) => r.json());
+  } catch (e) {
+    wrap.innerHTML = `<div class="hint">读取失败: ${escapeHtml(errMsg(e))}</div>`;
+    return;
+  }
+  wrap.innerHTML = '';
+  const fmtT = (t) => (t ? new Date(t).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
+  for (const [pf, group] of Object.entries(data.platforms || {})) {
+    const sec = document.createElement('section');
+    sec.className = 'key-platform';
+    const activeEntry = group.entries.find((e) => e.active);
+    sec.innerHTML = `
+      <div class="key-pf-head">
+        <b>${escapeHtml(group.label)}</b>
+        <span class="key-pf-active">${activeEntry
+          ? `当前生效：<b>${escapeHtml(activeEntry.label || '未命名')}</b> · ${escapeHtml(activeEntry.masked)}`
+          : '当前无生效 Key'}</span>
+      </div>`;
+    const list = document.createElement('div');
+    list.className = 'key-rows';
+    if (!group.entries.length) {
+      const empty = document.createElement('div');
+      empty.className = 'hint';
+      empty.textContent = '还没有 Key — 在下面添加';
+      list.appendChild(empty);
+    }
+    for (const en of group.entries) {
+      const row = document.createElement('div');
+      row.className = 'key-row' + (en.active ? ' active' : '');
+      row.innerHTML = `
+        <span class="key-active-dot" title="${en.active ? '当前生效' : '未启用'}">${en.active ? '●' : '○'}</span>
+        <input class="key-label" value="${escapeHtml(en.label || '')}" maxlength="40" placeholder="账号备注" title="点击可改名，回车保存">
+        <code class="key-masked" title="Key 只显示掩码，完整内容永不回传界面">${escapeHtml(en.masked)}</code>
+        <span class="key-times hint" title="添加时间 / 最近启用">${fmtT(en.addedAt)} · ${en.activatedAt ? '启用 ' + fmtT(en.activatedAt) : '未用过'}</span>
+        ${en.active ? '<span class="key-in-use">生效中</span>' : '<button type="button" class="btn key-use">启用</button>'}
+        <button type="button" class="btn ghost key-del" title="删除这把 Key">🗑</button>`;
+      const labelInput = row.querySelector('.key-label');
+      const saveLabel = async () => {
+        await fetch('/api/keychain/label', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform: pf, id: en.id, label: labelInput.value.trim() }) });
+        $('keyStatus').textContent = '备注已保存 ✓';
+      };
+      labelInput.addEventListener('change', saveLabel);
+      labelInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); labelInput.blur(); } });
+      const useBtn = row.querySelector('.key-use');
+      if (useBtn) useBtn.onclick = async () => {
+        const r = await fetch('/api/keychain/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform: pf, id: en.id }) }).then((x) => x.json());
+        $('keyStatus').textContent = r.ok ? `已切换 ${group.label} 当前生效 Key ✓ 立即对所有生成生效` : ('⚠ ' + (r.error || '切换失败'));
+        await renderKeychain();
+        if (typeof refreshConfig === 'function') refreshConfig(); // 顶栏模式徽标/hasKey 状态同步
+      };
+      row.querySelector('.key-del').onclick = async () => {
+        if (!confirm(`删除 ${group.label} 的「${en.label || en.masked}」？\n（仅从钥匙串移除，不影响平台账号本身）`)) return;
+        const r = await fetch('/api/keychain/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform: pf, id: en.id }) }).then((x) => x.json());
+        $('keyStatus').textContent = r.ok ? '已删除 ✓' + (en.active ? '（生效 Key 已自动切到列表首位）' : '') : ('⚠ ' + (r.error || '删除失败'));
+        await renderKeychain();
+        if (typeof refreshConfig === 'function') refreshConfig();
+      };
+      list.appendChild(row);
+    }
+    // 添加行
+    const addRow = document.createElement('div');
+    addRow.className = 'key-add-row';
+    addRow.innerHTML = `
+      <input class="key-add-label" placeholder="账号备注（如：主号 / 小号2）" maxlength="40">
+      <input class="key-add-key" type="password" placeholder="粘贴 ${escapeHtml(group.label)} 的 API Key" autocomplete="off">
+      <label class="check" title="添加后立即设为当前生效"><input type="checkbox" class="key-add-activate" checked> 立即启用</label>
+      <button type="button" class="btn primary key-add-btn">＋ 添加</button>`;
+    addRow.querySelector('.key-add-btn').onclick = async () => {
+      const key = addRow.querySelector('.key-add-key').value.trim();
+      if (!key) { $('keyStatus').textContent = '⚠ 先粘贴 Key'; return; }
+      const r = await fetch('/api/keychain/add', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform: pf,
+          label: addRow.querySelector('.key-add-label').value.trim(),
+          key,
+          activate: addRow.querySelector('.key-add-activate').checked,
+        }),
+      }).then((x) => x.json());
+      $('keyStatus').textContent = r.ok ? '已添加 ✓' : ('⚠ ' + (r.error || '添加失败'));
+      await renderKeychain();
+      if (typeof refreshConfig === 'function') refreshConfig();
+    };
+    sec.appendChild(list);
+    sec.appendChild(addRow);
+    wrap.appendChild(sec);
+  }
+}
+if ($('btnKeychain')) {
+  $('btnKeychain').onclick = async () => {
+    $('keyStatus').textContent = '';
+    $('keyDialog').showModal();
+    await renderKeychain();
+  };
+  $('keyClose').onclick = () => $('keyDialog').close();
+  $('keyRefresh').onclick = () => renderKeychain();
+  $('keyDialog').addEventListener('click', (e) => { if (e.target === $('keyDialog')) $('keyDialog').close(); });
+}

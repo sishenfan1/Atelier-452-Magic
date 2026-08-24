@@ -135,6 +135,58 @@ function atomicWriteFileSync(file, data) {
 let configCorrupt = false;
 let corruptEvidenceSaved = false;
 
+// ---------------- API Key 钥匙串：多账号按平台组织，选中的那把即当前生效 ----------------
+// cfg.keychain = { artcraft: [{id,label,key,addedAt,activatedAt}], ark/anthropic/openai 同构 }
+// cfg.keychainActive = { artcraft: id, ... }
+// 生效方式：loadConfig 时把 active 的 key 物化回历史字段（artcraftKey/apiKey/...），
+// 全部现有调用路径零改动；钥匙串是唯一真理源。
+const KEYCHAIN_FIELD = { artcraft: 'artcraftKey', ark: 'apiKey', anthropic: 'anthropicKey', openai: 'openaiKey' };
+const KEYCHAIN_LABEL = { artcraft: 'Artcraft', ark: '方舟 Ark', anthropic: 'Anthropic Claude', openai: 'OpenAI 兼容' };
+function resolveKeychain(cfg) {
+  if (!cfg.keychain || typeof cfg.keychain !== 'object') return cfg;
+  for (const [pf, field] of Object.entries(KEYCHAIN_FIELD)) {
+    const list = Array.isArray(cfg.keychain[pf]) ? cfg.keychain[pf] : [];
+    const activeId = cfg.keychainActive && cfg.keychainActive[pf];
+    const hit = list.find((k) => k && k.id === activeId);
+    if (hit !== undefined) cfg[field] = hit.key || '';
+  }
+  return cfg;
+}
+/** 迁移 + 增改：确保结构存在；把 legacy 字段里已有的 key 收编为钥匙串条目 */
+function ensureKeychain(cur) {
+  let changed = false;
+  if (!cur.keychain || typeof cur.keychain !== 'object') { cur.keychain = {}; changed = true; }
+  if (!cur.keychainActive || typeof cur.keychainActive !== 'object') { cur.keychainActive = {}; changed = true; }
+  for (const [pf, field] of Object.entries(KEYCHAIN_FIELD)) {
+    if (!Array.isArray(cur.keychain[pf])) { cur.keychain[pf] = []; changed = true; }
+    const legacy = String(cur[field] || '');
+    if (legacy && !cur.keychain[pf].some((k) => k && k.key === legacy)) {
+      const entry = { id: newId(), label: '现有 Key（自动收编）', key: legacy, addedAt: Date.now(), activatedAt: Date.now() };
+      cur.keychain[pf].push(entry);
+      if (!cur.keychainActive[pf]) cur.keychainActive[pf] = entry.id;
+      changed = true;
+    }
+    // active 指向不存在的条目 → 清掉
+    if (cur.keychainActive[pf] && !cur.keychain[pf].some((k) => k && k.id === cur.keychainActive[pf])) {
+      cur.keychainActive[pf] = cur.keychain[pf][0] ? cur.keychain[pf][0].id : '';
+      changed = true;
+    }
+  }
+  return changed;
+}
+/** 写路径统一：改完钥匙串后把 active 物化回 legacy 字段再落盘 */
+function syncKeychainToLegacy(cur) {
+  for (const [pf, field] of Object.entries(KEYCHAIN_FIELD)) {
+    const hit = (cur.keychain[pf] || []).find((k) => k && k.id === cur.keychainActive[pf]);
+    cur[field] = hit ? (hit.key || '') : '';
+  }
+}
+function maskKey(k) {
+  const s = String(k || '');
+  if (s.length <= 10) return s.slice(0, 2) + '…' + s.slice(-2);
+  return s.slice(0, 10) + '…' + s.slice(-4);
+}
+
 function loadConfig() {
   let raw = null;
   try {
@@ -145,7 +197,7 @@ function loadConfig() {
   }
   if (raw !== null) {
     try {
-      const cfg = { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
+      const cfg = resolveKeychain({ ...DEFAULT_CONFIG, ...JSON.parse(raw) });
       configCorrupt = false; // 主文件完好 → 解除（瞬时读错误造成的）写入冻结
       return cfg;
     } catch {
@@ -1338,8 +1390,106 @@ app.post('/api/config', (req, res) => {
     const s = cur.llmSpend && typeof cur.llmSpend === 'object' ? cur.llmSpend : {};
     cur.llmSpend = { usd: Number(s.usd) || 0, capUsd: Number(llmSpendCap) };
   }
+  // ⚙ 设置里粘贴的 key 自动收编进钥匙串并设为当前生效（同 key 已存在则只激活）
+  ensureKeychain(cur); // 注意：它会先把 legacy 字段以「自动收编」名义入列 → 下面把本次粘贴的改成明确 label
+  for (const [pf, field] of Object.entries(KEYCHAIN_FIELD)) {
+    const v = req.body ? req.body[field] : undefined;
+    if (v === undefined || v === '' || v === null) continue;
+    let hit = cur.keychain[pf].find((k) => k && k.key === String(v));
+    if (!hit) {
+      hit = { id: newId(), label: '设置里粘贴 ' + new Date().toISOString().slice(5, 10), key: String(v), addedAt: Date.now(), activatedAt: Date.now() };
+      cur.keychain[pf].push(hit);
+    } else {
+      hit.activatedAt = Date.now();
+      if (hit.label === '现有 Key（自动收编）') hit.label = '设置里粘贴 ' + new Date().toISOString().slice(5, 10);
+    }
+    cur.keychainActive[pf] = hit.id;
+  }
+  syncKeychainToLegacy(cur);
   saveConfig(cur);
   res.json({ ok: true, hasKey: !!cur.apiKey });
+});
+
+// ---------------- 钥匙串端点：列表（掩码）/ 添加 / 切换 / 删除 / 改名 ----------------
+app.get('/api/keychain', (req, res) => {
+  const cur = loadConfig();
+  if (ensureKeychain(cur)) { try { syncKeychainToLegacy(cur); saveConfig(cur); } catch {} }
+  const out = {};
+  for (const pf of Object.keys(KEYCHAIN_FIELD)) {
+    out[pf] = {
+      label: KEYCHAIN_LABEL[pf],
+      entries: (cur.keychain[pf] || []).map((k) => ({
+        id: k.id, label: k.label || '', masked: maskKey(k.key),
+        active: cur.keychainActive[pf] === k.id,
+        addedAt: k.addedAt || 0, activatedAt: k.activatedAt || 0,
+      })),
+    };
+  }
+  res.json({ platforms: out });
+});
+app.post('/api/keychain/add', (req, res) => {
+  try {
+    const { platform, label, key, activate } = req.body || {};
+    if (!KEYCHAIN_FIELD[platform]) return res.status(400).json({ error: '未知平台' });
+    const k = String(key || '').trim();
+    if (!k) return res.status(400).json({ error: 'Key 不能为空' });
+    const cur = loadConfig();
+    ensureKeychain(cur);
+    let hit = cur.keychain[platform].find((x) => x && x.key === k);
+    if (hit) {
+      if (label) hit.label = String(label).slice(0, 40);
+    } else {
+      hit = { id: newId(), label: String(label || '未命名账号').slice(0, 40), key: k, addedAt: Date.now(), activatedAt: 0 };
+      cur.keychain[platform].push(hit);
+    }
+    if (activate !== false) { cur.keychainActive[platform] = hit.id; hit.activatedAt = Date.now(); }
+    syncKeychainToLegacy(cur);
+    saveConfig(cur);
+    res.json({ ok: true, id: hit.id });
+  } catch (e) { res.status(500).json({ error: String(e && e.message || e).slice(0, 200) }); }
+});
+app.post('/api/keychain/select', (req, res) => {
+  try {
+    const { platform, id } = req.body || {};
+    if (!KEYCHAIN_FIELD[platform]) return res.status(400).json({ error: '未知平台' });
+    const cur = loadConfig();
+    ensureKeychain(cur);
+    const hit = cur.keychain[platform].find((x) => x && x.id === id);
+    if (!hit) return res.status(404).json({ error: '找不到该 Key' });
+    cur.keychainActive[platform] = id;
+    hit.activatedAt = Date.now();
+    syncKeychainToLegacy(cur);
+    saveConfig(cur);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: String(e && e.message || e).slice(0, 200) }); }
+});
+app.post('/api/keychain/remove', (req, res) => {
+  try {
+    const { platform, id } = req.body || {};
+    if (!KEYCHAIN_FIELD[platform]) return res.status(400).json({ error: '未知平台' });
+    const cur = loadConfig();
+    ensureKeychain(cur);
+    cur.keychain[platform] = cur.keychain[platform].filter((x) => x && x.id !== id);
+    if (cur.keychainActive[platform] === id) {
+      cur.keychainActive[platform] = cur.keychain[platform][0] ? cur.keychain[platform][0].id : '';
+    }
+    syncKeychainToLegacy(cur);
+    saveConfig(cur);
+    res.json({ ok: true, activeId: cur.keychainActive[platform] || '' });
+  } catch (e) { res.status(500).json({ error: String(e && e.message || e).slice(0, 200) }); }
+});
+app.post('/api/keychain/label', (req, res) => {
+  try {
+    const { platform, id, label } = req.body || {};
+    if (!KEYCHAIN_FIELD[platform]) return res.status(400).json({ error: '未知平台' });
+    const cur = loadConfig();
+    ensureKeychain(cur);
+    const hit = cur.keychain[platform].find((x) => x && x.id === id);
+    if (!hit) return res.status(404).json({ error: '找不到该 Key' });
+    hit.label = String(label || '').slice(0, 40);
+    saveConfig(cur);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: String(e && e.message || e).slice(0, 200) }); }
 });
 
 // ---------------- 剧本解析智能体：PDF/文本 → 分场 + 镜头 + 提示词 + 角色/场景地 ----------------

@@ -67,6 +67,7 @@
     <span id="langSeg" class="lang-seg" role="group" aria-label="Language">
       <button data-lang="zh">中</button><button data-lang="en">EN</button><button data-lang="ja">日</button>
     </span>
+    <button id="btnKeychain" class="btn ghost" title="API Key 钥匙串：按平台管理多个账号的 Key，随时切换当前生效的那把">🔑</button>
     <button id="btnSettings" class="btn ghost">⚙ API 设置</button>
   </div>
 </header>
@@ -920,6 +921,17 @@
     <button id="simSendExtWin" class="btn ghost" title="备用通道：不装扩展时用应用内置窗口填充（需在该窗口单独登录一次）">🪟 备用窗口</button>
   </div>
   <div id="simStatus" class="hint accent"></div>
+</dialog>
+
+<!-- API Key 钥匙串：多账号按平台管理，选中的那把即当前生效 -->
+<dialog id="keyDialog" class="key-dialog">
+  <h3>🔑 API Key 钥匙串 <span class="hint">— 按平台管理多个账号；点「启用」切换当前生效的那把（立即对所有生成生效）</span></h3>
+  <div id="keyList" class="key-list"></div>
+  <div class="dialog-actions">
+    <button id="keyRefresh" class="btn">⟳ 刷新</button>
+    <button id="keyClose" class="btn ghost">关闭</button>
+  </div>
+  <div id="keyStatus" class="hint accent"></div>
 </dialog>
 
 <!-- @引用自动补全菜单（提示词里输入 @ 弹出，列出全部参考素材） -->
