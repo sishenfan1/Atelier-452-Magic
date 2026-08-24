@@ -2381,7 +2381,8 @@ const INGEST_SYS = [
   '你是 Atelier 452 的资深电影提示词工程师。用户给你一段用于 AI 视频生成的提示词草稿（任意语言、任意松散程度），',
   '你把它增强并结构化为严格 JSON。归属铁律（最高优先级，不得违反）：',
   '- 凡是段落标题含 SHOT / CUT / 镜头 / 分镜 / カット / ショット / SC+数字 之类"镜头"含义的段落 → 进 cuts，',
-  '  忠实沿用草稿的镜头划分、顺序与秒数（标题里的 3.5秒 / 2s 等）。',
+  '  标题的各种装饰写法一律要认（**SHOT 1 — LEVER** / ## CUT 2 / 【镜头 3】等）；',
+  '  忠实沿用草稿的镜头划分、顺序与秒数（标题里的 3.5秒 / 2s 等）；标题里的小标题（如 LEVER）保留在该镜头文本开头。',
   '- 其余一切内容（包括风格规则、负面清单、任何别的标题段落与散文）→ 全部合并进 context，',
   '  一个字都不许丢、不许挪到别处。cuts 之外没有第三个去处。',
   '- 草稿完全没有镜头标题时：context 装全文增强稿，另按叙事拆 2-6 个镜头进 cuts。',
@@ -2392,11 +2393,33 @@ const INGEST_SYS = [
 ].join('\n');
 
 // 二分铁律：标题是 SHOT/CUT/镜头/分镜类 → CUT；其余一切（含任何别的标题与散文）→ 只进 CONTEXT
-const CUT_HEAD_RE = /^\s*(?:#+\s*|【)?\s*(?:cuts?|shots?|镜头|分镜|カット|ショット|sc)\s*[-—·.]?\s*(\d+)?[^\n]*?(?:】)?\s*[:：]?\s*$/i;
+// 兼容各种装饰写法：**SHOT 1 — LEVER** / ## CUT 2 / 【镜头 3】 / > SHOT-4 / SC01 / 裸 CUT
+const CUT_WORD = '(?:cuts?|shots?|镜头|分镜|カット|ショット|sc)';
+// 带编号：关键词 + 编号 + 任意小标题（整行 ≤90 字符防误伤散文）
+const CUT_HEAD_NUM_RE = new RegExp('^\\s*[*_#>【\\-—·\\s]*' + CUT_WORD + '\\s*[-—·.．#]?\\s*\\d+[^\\n]{0,70}$', 'i');
+// 裸关键词：关键词后只剩装饰/冒号（"Cut to black" 这类散文不会命中）
+const CUT_HEAD_BARE_RE = new RegExp('^\\s*[*_#>【\\-—·\\s]*' + CUT_WORD + '\\s*[】*_]*\\s*[:：]?\\s*$', 'i');
+function isCutHead(line) { return CUT_HEAD_NUM_RE.test(line) || CUT_HEAD_BARE_RE.test(line); }
+/** 标题里除关键词/编号/时长/装饰外的小标题（如 **SHOT 1 — LEVER** 的 LEVER）——保留进 CUT 首行不丢字 */
+function cutHeadTitle(line) {
+  let s = String(line)
+    .replace(new RegExp('^\\s*[*_#>【\\-—·\\s]*' + CUT_WORD + '\\s*[-—·.．#]?\\s*\\d*', 'i'), '')
+    .replace(/[（(]?\d+(?:\.\d+)?\s*(?:秒|s\b)[）)]?/ig, '')
+    .replace(/[*_【】>]/g, '')
+    .replace(/^[\s\-—·:：.．]+|[\s\-—·:：.．]+$/g, '')
+    .trim();
+  return s.length >= 2 ? s : '';
+}
 // 纯 CONTEXT 标签行（仅这些无信息量的标签本身丢弃，正文保留）
 const CONTEXT_LABEL_RE = /^\s*(?:#+\s*|【)?\s*(?:context|scene\s*setup|情境|全局情境|全局|背景)\s*(?:】)?\s*[:：]?\s*$/i;
 // 非镜头的段落标题（负面/铁律/【任意标签】/markdown 标题等）：出现即结束当前 CUT，之后内容回 CONTEXT
-const GENERIC_HEAD_RE = /^\s*(?:【[^\n】]{1,24}】[^\n]{0,30}|#{1,6}\s+\S[^\n]*|(?:rules?|铁律|常青|evergreen|negatives?|负面(?:提示词|清单)?|style|风格|mood|情绪|音乐|music|audio|音频|旁白|字幕|参考|notes?)[^\n]{0,24}[:：][^\n]{0,60})\s*$/i;
+const GENERIC_KEYWORDS = '(?:rules?|铁律|常青|evergreen|negatives?|负面(?:提示词|清单)?|style|风格|mood|情绪|音乐|music|audio|音频|旁白|字幕|参考|notes?)';
+const GENERIC_HEAD_RE = new RegExp(
+  '^\\s*(?:【[^\\n】]{1,24}】[^\\n]{0,30}'            // 【任意标签】
+  + '|#{1,6}\\s+\\S[^\\n]*'                          // markdown 标题
+  + '|[*_]{1,3}' + GENERIC_KEYWORDS + '[*_]{1,3}[^\\n]{0,40}'  // **NEGATIVE** 装饰包裹（冒号可免）
+  + '|' + GENERIC_KEYWORDS + '[^\\n]{0,24}[:：][^\\n]{0,60}'    // 裸关键词必须带冒号
+  + ')\\s*$', 'i');
 
 function ingestHeuristic(text) {
   const t = String(text || '').replace(/\r\n?/g, '\n');
@@ -2410,13 +2433,14 @@ function ingestHeuristic(text) {
     curCut = null;
   };
   for (const line of t.split('\n')) {
-    if (CUT_HEAD_RE.test(line)) {
+    if (isCutHead(line)) {
       flushCut();
       let dur = 0;
       const dm = line.match(/(\d+(?:\.\d+)?)\s*(?:秒|s\b)/i);
       // 标题里的裸编号不当时长（CUT 3 ≠ 3 秒）：只认带单位的
       if (dm) dur = Math.min(30, Number(dm[1]) || 0);
-      curCut = { lines: [], dur };
+      const title = cutHeadTitle(line);
+      curCut = { lines: title ? [title] : [], dur }; // 小标题（如 LEVER）保留为 CUT 首行，不丢字
       continue;
     }
     if (curCut && GENERIC_HEAD_RE.test(line) && !CONTEXT_LABEL_RE.test(line)) {
