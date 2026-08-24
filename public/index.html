@@ -536,7 +536,8 @@
   <div class="col-center">
     <section class="panel highlight" id="dirPromptPanel">
       <h2>✍ 提示词 <span class="hint">— 情境 + 分镜头 CUT + 负面 · 输入 @ 引用参考素材 · 点入框内自动放大，无字数限制</span>
-        <button id="dirPromptCollapse" class="panel-collapse" type="button" title="收起整个提示词区，露出下方的历史生成">▲</button></h2>
+        <button id="dirPromptCollapse" class="panel-collapse" type="button" title="收起整个提示词区，露出下方的历史生成">▲</button>
+        <button id="dirIngestBtn" class="panel-collapse dir-ingest-btn" type="button" title="导入一段提示词（粘贴或拖入 .txt/.md）：按模板拆分或 LLM 增强后，自动填进 CONTEXT / 常青铁律 / CUT / 负面">📥</button></h2>
       <label class="check" style="font-size:12px" title="开启后：出站提示词里的大段英文会被 LLM 全文译成中文（可能损失原文措辞精度）。默认关闭 = 原文一字不动直接出站">
         <input type="checkbox" id="dirTranslate"> 出站中文化翻译（默认关 — 原文直发不改一字）
       </label>
@@ -923,6 +924,23 @@
     <button id="simSendExtWin" class="btn ghost" title="备用通道：不装扩展时用应用内置窗口填充（需在该窗口单独登录一次）">🪟 备用窗口</button>
   </div>
   <div id="simStatus" class="hint accent"></div>
+</dialog>
+
+<!-- 提示词导入：粘贴/拖入 → 拆分或增强 → 自动填充 CONTEXT / 铁律 / CUT / 负面 -->
+<dialog id="ingestDialog" class="ingest-dialog">
+  <h3>📥 导入提示词 <span class="hint">— 粘贴或拖入一段提示词，自动填进 CONTEXT / 常青铁律 / CUT / 负面</span></h3>
+  <div class="hint" style="margin-bottom:6px">
+    认识的模板标题：<b>CONTEXT/情境</b> · <b>RULES/铁律/常青</b> · <b>CUT 1/镜头 1（可带秒数）</b> · <b>NEGATIVE/负面</b>。
+    没有标题也行——「✨ 增强填入」会让 LLM 补足画面要素并自动分镜（原意与语言不变，@引用原样保留）。
+    当前场景已有内容时自动落到<b>新场景</b>，绝不覆盖。
+  </div>
+  <textarea id="ingestText" rows="14" style="width:100%" placeholder="把整段提示词粘贴到这里，或直接把 .txt / .md 文件拖进本窗口…"></textarea>
+  <div class="dialog-actions">
+    <button id="ingestSplit" class="btn" title="纯本地按模板标题切分 — 零花费">✂ 仅拆分填入（免费）</button>
+    <button id="ingestEnhance" class="btn primary" title="LLM 增强：规范术语、补足画面要素、自动分镜（Anthropic 通道受 $20 硬顶护栏）">✨ 增强并填入（用 LLM）</button>
+    <button id="ingestClose" class="btn ghost">关闭</button>
+  </div>
+  <div id="ingestStatus" class="hint accent"></div>
 </dialog>
 
 <!-- API Key 钥匙串：多账号按平台管理，选中的那把即当前生效 -->

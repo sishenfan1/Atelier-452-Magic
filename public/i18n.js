@@ -625,11 +625,23 @@ const I18N = {
   '放弃本场景专属常青，回到沿用 🌲 全局常青（顶栏那份）': ['Drop the scene-local evergreen and inherit the 🌲 global one (topbar)', 'シーン専用の常青をやめ、🌲 全体の常青（トップバー）を継承'],
   '已保存 ✓ 仅本场景生效': ['Saved ✓ effective for this scene only', '保存 ✓ このシーンのみに反映'],
   '已切回沿用 🌲 全局常青 ✓': ['Switched back to the 🌲 global evergreen ✓', '🌲 全体の常青の継承に戻しました ✓'],
+  '📥 导入提示词': ['📥 Import prompt', '📥 プロンプト読み込み'],
+  '— 粘贴或拖入一段提示词，自动填进 CONTEXT / 常青铁律 / CUT / 负面': ['— paste or drop a prompt; it auto-fills CONTEXT / evergreen rules / CUTs / negative', '— プロンプトを貼るかドロップ → CONTEXT / 常青ルール / CUT / ネガティブへ自動入力'],
+  '导入一段提示词（粘贴或拖入 .txt/.md）：按模板拆分或 LLM 增强后，自动填进 CONTEXT / 常青铁律 / CUT / 负面': ['Import a prompt (paste or drop .txt/.md): template-split or LLM-enhance, then auto-fill CONTEXT / evergreen rules / CUTs / negative', 'プロンプトを読み込み（貼付 or .txt/.md ドロップ）：テンプレ分割か LLM 強化で CONTEXT / 常青ルール / CUT / ネガティブへ自動入力'],
+  '✂ 仅拆分填入（免费）': ['✂ Split & fill only (free)', '✂ 分割のみ（無料）'],
+  '✨ 增强并填入（用 LLM）': ['✨ Enhance & fill (LLM)', '✨ LLM 強化して入力'],
+  '纯本地按模板标题切分 — 零花费': ['Local template-header split — zero cost', 'ローカルでテンプレ見出し分割 — コストゼロ'],
+  'LLM 增强：规范术语、补足画面要素、自动分镜（Anthropic 通道受 $20 硬顶护栏）': ['LLM enhance: normalize terms, complete visual elements, auto-shot-split (Anthropic channel guarded by the $20 hard cap)', 'LLM 強化：用語整備・画面要素補完・自動カット割り（Anthropic は $20 上限ガード付き）'],
+  '⚠ 先粘贴或拖入内容': ['⚠ Paste or drop something first', '⚠ 先に内容を貼るかドロップして'],
+  '拆分中…': ['Splitting…', '分割中…'],
+  '✨ 增强中…（LLM 结构化，失败自动退回拆分）': ['✨ Enhancing… (LLM structuring; falls back to split on failure)', '✨ 強化中…（LLM 構造化。失敗時は分割に自動フォールバック）'],
   '在 Director 仪表盘新建与管理项目':['Create & manage projects in the Director dashboard', 'プロジェクトの作成・管理は Director ダッシュボードで'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]
 const I18N_RULES = [
+  [/^📥 已(增强并)?填入 (.+)$/, '📥 Filled$1: $2', '📥 入力完了$1：$2'],
+  [/^⚠ 导入失败: (.*)$/, '⚠ Import failed: $1', '⚠ 読み込み失敗: $1'],
   [/^已切到「(.+)」— 各场景互相独立，随切随回$/, 'Switched to "$1" — scenes are fully independent, switch anytime', '「$1」へ切替 — シーンは完全独立、いつでも行き来できます'],
   [/^删除「(.+)」？该场景的提示词、参考素材与生成历史将一并移除（生成的视频文件仍在磁盘）。$/, 'Delete "$1"? Its prompts, refs and generation history will be removed (video files stay on disk).', '「$1」を削除？プロンプト・参照素材・生成履歴も消えます（動画ファイルはディスクに残ります）。'],
   [/^场景 (\d+)$/, 'Scene $1', 'シーン $1'],

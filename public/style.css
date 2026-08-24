@@ -1270,3 +1270,7 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
   border: 1px dashed rgba(246, 198, 109, .55); border-radius: 999px;
 }
 .dir-scene-add:hover { background: rgba(246, 198, 109, .1); border-style: solid; }
+
+/* 📥 提示词导入 */
+.ingest-dialog { width: min(780px, 94vw); }
+.dir-ingest-btn { margin-right: 6px; }

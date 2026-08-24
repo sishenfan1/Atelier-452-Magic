@@ -7297,3 +7297,105 @@ function renderDirSceneTabs() {
   bar.appendChild(add);
 }
 if ($('dirSceneTabs')) renderDirSceneTabs();
+
+// ---------------- 📥 提示词导入：拆分/增强 → 自动填充 CONTEXT / 铁律 / CUT / 负面 ----------------
+function dirSceneDirty() {
+  const anyCut = (state.director.cuts || []).some((c) => (c.text || '').trim());
+  const eg = state.director.evergreen;
+  return !!(($('dirPrompt') && $('dirPrompt').value.trim())
+    || ($('dirNegative') && $('dirNegative').value.trim())
+    || anyCut
+    || (typeof eg === 'string' && eg.trim()));
+}
+
+/** 解析结果 → 填进当前（或自动新开的）场景 */
+function applyIngestResult(r) {
+  let openedNew = false;
+  if (dirSceneDirty()) { dirSceneAdd(); openedNew = true; }
+  $('dirPrompt').value = r.context || '';
+  $('dirPrompt').dispatchEvent(new Event('input', { bubbles: true }));
+  $('dirNegative').value = r.negative || '';
+  $('dirNegative').dispatchEvent(new Event('input', { bubbles: true }));
+  state.director.negative = r.negative || '';
+  // 铁律 → 场景私有常青
+  state.director.evergreen = r.rules || '';
+  if (typeof egPanelApply === 'function') egPanelApply();
+  // CUT：覆盖为导入的分镜（不足 4 个由 dirEnsureCuts 补空盒）
+  state.director.cuts = (r.cuts || []).map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0 }));
+  dirEnsureCuts();
+  renderDirCuts();
+  if (typeof syncDurationFromCuts === 'function') { try { syncDurationFromCuts(); } catch {} }
+  if (typeof renderMentionPreview === 'function') renderMentionPreview();
+  renderDirSceneTabs();
+  scheduleSave();
+  return openedNew;
+}
+
+async function runIngest(mode) {
+  const text = $('ingestText').value.trim();
+  if (!text) { $('ingestStatus').textContent = '⚠ 先粘贴或拖入内容'; return; }
+  $('ingestStatus').textContent = mode === 'enhance' ? '✨ 增强中…（LLM 结构化，失败自动退回拆分）' : '拆分中…';
+  $('ingestSplit').disabled = $('ingestEnhance').disabled = true;
+  try {
+    const r = await fetch('/api/director/ingest', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, mode }),
+    }).then((x) => x.json());
+    if (r.error) throw new Error(r.error);
+    const openedNew = applyIngestResult(r);
+    const parts = [];
+    if (r.context) parts.push('CONTEXT');
+    if (r.rules) parts.push('铁律→常青');
+    parts.push(`CUT×${(r.cuts || []).length}`);
+    if (r.negative) parts.push('负面');
+    $('ingestDialog').close();
+    setDirStatus(`📥 已${r.mode === 'enhance' ? '增强并' : ''}填入 ${parts.join(' + ')}${openedNew ? ' — 已落到新场景，原场景未动' : ''}${r.notice ? '（' + r.notice + '）' : ''}`);
+  } catch (e) {
+    $('ingestStatus').textContent = '⚠ 导入失败: ' + errMsg(e);
+  } finally {
+    $('ingestSplit').disabled = $('ingestEnhance').disabled = false;
+  }
+}
+
+if ($('dirIngestBtn')) {
+  const openIngest = (prefill) => {
+    $('ingestStatus').textContent = '';
+    if (prefill !== undefined) $('ingestText').value = prefill;
+    $('ingestDialog').showModal();
+  };
+  $('dirIngestBtn').addEventListener('mousedown', (e) => e.stopPropagation());
+  $('dirIngestBtn').addEventListener('pointerdown', (e) => e.stopPropagation());
+  $('dirIngestBtn').onclick = (e) => { e.stopPropagation(); openIngest(); };
+  $('ingestClose').onclick = () => $('ingestDialog').close();
+  $('ingestSplit').onclick = () => runIngest('split');
+  $('ingestEnhance').onclick = () => runIngest('enhance');
+  $('ingestDialog').addEventListener('click', (e) => { if (e.target === $('ingestDialog')) $('ingestDialog').close(); });
+
+  // 拖 .txt/.md（或纯文本选区）到 ✍ 提示词面板或导入对话框 → 直接进导入流程
+  const readDropText = async (dt) => {
+    const f = [...(dt.files || [])].find((x) => /\.(txt|md|markdown)$/i.test(x.name) || (x.type || '').startsWith('text/'));
+    if (f) return await f.text();
+    const t = dt.getData && (dt.getData('text/plain') || '');
+    return t || null;
+  };
+  for (const host of [$('dirPromptPanel'), $('ingestDialog')].filter(Boolean)) {
+    host.addEventListener('dragover', (e) => {
+      const types = [...(e.dataTransfer && e.dataTransfer.types || [])];
+      if (types.includes('Files') || types.includes('text/plain')) {
+        e.preventDefault();
+        host.classList.add('file-drop-hot');
+      }
+    });
+    host.addEventListener('dragleave', () => host.classList.remove('file-drop-hot'));
+    host.addEventListener('drop', async (e) => {
+      host.classList.remove('file-drop-hot');
+      if (!(e.dataTransfer)) return;
+      // CUT 盒内部的参考拖拽重排等不拦（只有带文件或纯文本时接管）
+      const text = await readDropText(e.dataTransfer);
+      if (text === null || !text.trim()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openIngest(text.trim());
+    });
+  }
+}

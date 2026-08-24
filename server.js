@@ -2374,6 +2374,96 @@ app.get('/api/extgen/status', (req, res) => {
   res.json(extgenStatus[String(req.query.id || '')] || { phase: 'unknown' });
 });
 
+// ---------------- 提示词导入：模板拆分 / LLM 增强 → CONTEXT + 铁律 + CUT + 负面 自动填充 ----------------
+// mode=split：纯启发式按模板标题切分（零花费）；mode=enhance：LLM 把松散提示词增强并结构化
+//（走 llmComplete —— Anthropic 通道受 $20 硬顶护栏，失败自动退回 split，永远有结果）。
+const INGEST_SYS = [
+  '你是 Atelier 452 的资深电影提示词工程师。用户给你一段用于 AI 视频生成的提示词草稿（任意语言、任意松散程度），',
+  '你把它增强并结构化为严格 JSON。规则：',
+  '- 只输出一个 JSON 对象，无 markdown 围栏、无解释。',
+  '- 保持草稿的原语言与全部原意；增强 = 补足画面要素（主体/动作/镜头/光线/氛围）、术语规范化、去冗余，',
+  '  绝不发明草稿中不存在的剧情或角色，绝不删掉用户的具体要求。@image1/@video1 等引用原样保留。',
+  '- context：全局情境（世界观/主体/画风基调，整段视频共用）。',
+  '- rules：全片恒定的质量/风格铁律（画质要求、介质质感、光影原则、防AI感条款等"常青"内容）；没有就给空串。',
+  '- negative：负面清单（不想出现的东西，逗号分隔）；没有就给空串。',
+  '- cuts：按叙事拆 2-6 个镜头，每个 {"text": 镜头画面与动作的完整描述, "dur": 秒数或 0}；',
+  '  草稿里若已有 CUT/镜头/SHOT 分段与秒数，忠实沿用其划分与时长。',
+  'JSON schema: {"context": string, "rules": string, "negative": string, "cuts": [{"text": string, "dur": number}]}',
+].join('\n');
+
+function ingestHeuristic(text) {
+  const t = String(text || '').replace(/\r\n?/g, '\n');
+  const out = { context: '', rules: '', negative: '', cuts: [] };
+  // 标题行：CONTEXT/情境/全局 | RULES/铁律/常青 | NEGATIVE/负面 | CUT n/镜头 n/SHOT n
+  const headRe = /^\s*(?:#+\s*|【)?\s*(context|scene\s*setup|情境|全局情境|全局|背景|rules?|铁律|常青|evergreen|negative|负面(?:提示词|清单)?|(?:cut|shot|镜头)\s*(\d+)[^\n]*?)\s*(?:】)?\s*[:：]?\s*$/gim;
+  const marks = [];
+  let m;
+  while ((m = headRe.exec(t))) marks.push({ idx: m.index, end: m.index + m[0].length, head: m[1].toLowerCase(), n: m[2] ? Number(m[2]) : null });
+  if (!marks.length) { out.context = t.trim(); return out; }
+  // 首个标题前的散文归 context
+  const preamble = t.slice(0, marks[0].idx).trim();
+  if (preamble) out.context = preamble;
+  for (let i = 0; i < marks.length; i++) {
+    const body = t.slice(marks[i].end, i + 1 < marks.length ? marks[i + 1].idx : t.length).trim();
+    const h = marks[i].head;
+    if (/^(cut|shot|镜头)/.test(h)) {
+      // 时长：标题里 或 正文里的「X 秒 / Xs / 严格X.X秒」
+      let dur = 0;
+      const dm = (t.slice(marks[i].idx, marks[i].end) + ' ' + body.slice(0, 60)).match(/(\d+(?:\.\d+)?)\s*(?:秒|s\b)/i);
+      if (dm) dur = Math.min(30, Number(dm[1]) || 0);
+      out.cuts.push({ text: body, dur });
+    } else if (/rule|铁律|常青|evergreen/.test(h)) out.rules = out.rules ? out.rules + '\n' + body : body;
+    else if (/negative|负面/.test(h)) out.negative = out.negative ? out.negative + '，' + body : body;
+    else out.context = out.context ? out.context + '\n' + body : body;
+  }
+  return out;
+}
+
+app.post('/api/director/ingest', async (req, res) => {
+  try {
+    const { text, mode } = req.body || {};
+    const raw = String(text || '').trim();
+    if (!raw) return res.status(400).json({ error: '内容为空' });
+    if (raw.length > 20000) return res.status(400).json({ error: '内容过长（>20000 字符），请拆开导入' });
+    const shape = (o) => ({
+      context: String(o.context || '').trim(),
+      rules: String(o.rules || '').trim(),
+      negative: String(o.negative || '').trim(),
+      cuts: (Array.isArray(o.cuts) ? o.cuts : []).slice(0, 12).map((c) => ({
+        text: String((c && c.text) || '').trim(),
+        dur: Math.max(0, Math.min(30, Number(c && c.dur) || 0)),
+      })).filter((c) => c.text),
+    });
+    if (mode !== 'enhance') return res.json({ mode: 'split', ...shape(ingestHeuristic(raw)) });
+    const cfg = loadConfig();
+    // 'auto' 在别处落方舟便宜档，但其 chat 模型点可能未开通（实测 404）——
+    // 增强质量优先：auto/空 → Anthropic（$20 硬顶护栏）> 方舟 > OpenAI 兼容
+    let provider = cfg.llmProvider;
+    if (!provider || provider === 'auto') {
+      provider = cfg.anthropicKey ? 'anthropic' : (cfg.apiKey ? 'ark' : (cfg.openaiKey ? 'openai' : ''));
+    }
+    if (!provider) return res.json({ mode: 'split', notice: '未配置任何 LLM — 已按模板拆分（未增强）', ...shape(ingestHeuristic(raw)) });
+    try {
+      let reply = await llmComplete(cfg, provider, [{ role: 'user', content: raw }], INGEST_SYS);
+      if (reply && typeof reply === 'object') reply = JSON.stringify(reply); // 某些通道可能已解析
+      console.warn('[ingest] LLM 原始回复(前200):', String(reply).slice(0, 200));
+      let parsed = null;
+      try {
+        const s0 = String(reply);
+        const js = s0.slice(s0.indexOf('{'), s0.lastIndexOf('}') + 1); // 掐头去尾取最外层 JSON
+        parsed = JSON.parse(js);
+      } catch { throw new Error('LLM 输出不是合法 JSON'); }
+      const r = shape(parsed);
+      if (!r.context && !r.cuts.length) throw new Error('LLM 输出为空结构');
+      return res.json({ mode: 'enhance', ...r });
+    } catch (e) {
+      return res.json({ mode: 'split', notice: '增强失败已退回模板拆分: ' + String(e && e.message || e).slice(0, 140), ...shape(ingestHeuristic(raw)) });
+    }
+  } catch (e) {
+    res.status(500).json({ error: String(e && e.message || e).slice(0, 200) });
+  }
+});
+
 // 在资源管理器中打开模拟输出目录（仅限 simulations 下，防任意路径）
 app.post('/api/fs/open-folder', (req, res) => {
   try {
