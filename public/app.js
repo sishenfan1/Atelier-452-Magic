@@ -5615,6 +5615,19 @@ function dirEffectiveIs25() {
   return /2p5|2-5/.test(val) || (!val && modelIs25());
 }
 
+// 右栏模型牌 = 可点下拉：选项从 ⚡ 面板的 #dirModel 克隆（同一份真理源），双向同步。
+// 在这里换模型 = 触发 #dirModel 的 change → 换档参考集/徽标/提示等全部现有联动照常发生。
+function dirGoModelInit() {
+  const sel = $('dirGoModel');
+  if (!sel || sel.tagName !== 'SELECT' || sel.dataset.wired) return;
+  sel.dataset.wired = '1';
+  sel.innerHTML = $('dirModel').innerHTML; // 含 方舟直连 / Artcraft 两个 optgroup 的全部模型
+  sel.onchange = () => {
+    const src = $('dirModel');
+    src.value = sel.value;
+    src.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+}
 function updateDirGoModel() {
   const el = $('dirGoModel');
   if (!el) return;
@@ -5629,11 +5642,19 @@ function updateDirGoModel() {
   } else {
     label = `Seedance ${modelIs25() ? '2.5' : '2.0'} · ${serverProvider === 'artcraft' ? 'Artcraft' : '方舟'}`;
   }
-  el.textContent = '当前模型：' + label;
   el.classList.toggle('is25', dirEffectiveIs25());
   // 下拉首项动态标注，不再写死"Seedance 2.0（当前配置）"误导人
   const opt = $('dirModel').querySelector('option[value=""]');
   if (opt) opt.textContent = `跟随全局档位 — 当前 Seedance ${modelIs25() ? '2.5' : '2.0'}`;
+  if (el.tagName === 'SELECT') {
+    dirGoModelInit();
+    // 首项标注同步 + 选中态跟随；首项文本带上解析后的生效模型
+    const opt0 = el.querySelector('option[value=""]');
+    if (opt0) opt0.textContent = `跟随全局 → ${label}`;
+    if (el.value !== val) el.value = val;
+  } else {
+    el.textContent = '当前模型：' + label;
+  }
 }
 
 // ---- 跨档复制：把参考（连同 role + 说明词）带到另一档的参考集 ----
