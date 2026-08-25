@@ -637,11 +637,22 @@ const I18N = {
   '✨ 增强中…（LLM 结构化，失败自动退回拆分）': ['✨ Enhancing… (LLM structuring; falls back to split on failure)', '✨ 強化中…（LLM 構造化。失敗時は分割に自動フォールバック）'],
   '其余一切内容只进 CONTEXT': ['EVERYTHING else goes into CONTEXT only', 'それ以外はすべて CONTEXT のみへ'],
   'SHOT / CUT / 镜头 / 分镜': ['SHOT / CUT / 镜头 / 分镜', 'SHOT / CUT / 镜头 / 分镜'],
+  '📋 复制': ['📋 Copy', '📋 コピー'],
+  '复制全局情境': ['Copy global context', 'グローバル CONTEXT をコピー'],
+  '复制负面提示词': ['Copy negative prompt', 'ネガティブをコピー'],
+  '复制常青提示词': ['Copy evergreen prompt', '常青プロンプトをコピー'],
+  '复制动作描述': ['Copy action description', '動作説明をコピー'],
+  '复制风格锁定': ['Copy style lock', 'スタイルロックをコピー'],
+  '复制中割运动锁定': ['Copy in-between motion lock', '中割りモーションロックをコピー'],
+  '复制这个镜头的提示词（含 60/30/10 构图内容，若开启）': ['Copy this cut\'s prompt (incl. 60/30/10 composition if enabled)', 'このカットのプロンプトをコピー（60/30/10 有効時は込み）'],
+  '一键复制全部提示词（CONTEXT + 全部 CUT + 负面 + 本场景常青），按模板格式导出 — 可直接给其它平台或拖回 📥': ['Copy ALL prompts (CONTEXT + every CUT + negative + scene evergreen) in template format — paste anywhere or drop back into 📥', '全プロンプトを一括コピー（CONTEXT＋全 CUT＋ネガティブ＋シーン常青）テンプレ形式 — 他所へ貼付や 📥 への再取込に'],
   '在 Director 仪表盘新建与管理项目':['Create & manage projects in the Director dashboard', 'プロジェクトの作成・管理は Director ダッシュボードで'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]
 const I18N_RULES = [
+  [/^已复制「(.+)」✓ (\d+) 字符$/, 'Copied "$1" ✓ $2 chars', '「$1」をコピー ✓ $2 文字'],
+  [/^「(.+)」是空的 — 没有可复制的内容$/, '"$1" is empty — nothing to copy', '「$1」は空です — コピーする内容がありません'],
   [/^📥 已(增强并)?填入 (.+)$/, '📥 Filled$1: $2', '📥 入力完了$1：$2'],
   [/^⚠ 导入失败: (.*)$/, '⚠ Import failed: $1', '⚠ 読み込み失敗: $1'],
   [/^已切到「(.+)」— 各场景互相独立，随切随回$/, 'Switched to "$1" — scenes are fully independent, switch anytime', '「$1」へ切替 — シーンは完全独立、いつでも行き来できます'],

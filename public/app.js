@@ -5784,6 +5784,19 @@ function renderDirCuts() {
       scheduleSave();
     };
     head.appendChild(compBtn);
+    const cpy = document.createElement('button');
+    cpy.type = 'button';
+    cpy.className = 'cut-toggle cut-copy';
+    cpy.textContent = '📋';
+    cpy.title = '复制这个镜头的提示词（含 60/30/10 构图内容，若开启）';
+    cpy.onclick = () => {
+      const parts = [cut.text || ''];
+      if (cut.comp && cut.comp.on && (cut.comp.p60 || cut.comp.p30 || cut.comp.p10)) {
+        parts.push(['60%: ' + (cut.comp.p60 || ''), '30%: ' + (cut.comp.p30 || ''), '10%: ' + (cut.comp.p10 || '')].join('\n'));
+      }
+      copyBoxText(parts.filter(Boolean).join('\n'), `CUT ${i + 1}`);
+    };
+    head.appendChild(cpy);
     const clr = document.createElement('button');
     clr.type = 'button';
     clr.className = 'cut-toggle cut-clear';
@@ -7424,3 +7437,65 @@ if ($('dirIngestBtn')) {
     });
   }
 }
+
+// ---------------- 📋 复制随处可点：每个提示词框 + 一键复制全部 ----------------
+async function copyBoxText(text, label) {
+  const t = String(text || '');
+  const statusFn = (typeof switchModeName !== 'undefined' && false) ? null : null;
+  const say = (msg) => {
+    if ($('dirStatus') && !$('viewDirector').hidden) setDirStatus(msg);
+    else if (typeof setWholeStatus === 'function') setWholeStatus(msg);
+  };
+  if (!t.trim()) { say(`「${label}」是空的 — 没有可复制的内容`); return false; }
+  try {
+    await navigator.clipboard.writeText(t);
+  } catch {
+    // 剪贴板 API 被拒 → 退回隐藏 textarea 选中复制
+    const ta = document.createElement('textarea');
+    ta.value = t;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch {}
+    ta.remove();
+  }
+  say(`已复制「${label}」✓ ${t.length} 字符`);
+  return true;
+}
+
+/** 全部提示词 → 模板格式导出（与 📥 导入往返兼容：CUT 标题带秒数，其余进 CONTEXT 区块） */
+function dirComposeAllText() {
+  const parts = [];
+  const ctx = $('dirPrompt').value.trim();
+  if (ctx) parts.push('CONTEXT:\n' + ctx);
+  (state.director.cuts || []).forEach((c, i) => {
+    const text = (c.text || '').trim();
+    const comp = c.comp && c.comp.on && (c.comp.p60 || c.comp.p30 || c.comp.p10)
+      ? ['60%: ' + (c.comp.p60 || ''), '30%: ' + (c.comp.p30 || ''), '10%: ' + (c.comp.p10 || '')].join('\n') : '';
+    if (!text && !comp) return;
+    const dur = Number(c.dur) > 0 ? `（${Number(c.dur)}秒）` : '';
+    parts.push(`**CUT ${i + 1}${dur}**\n` + [text, comp].filter(Boolean).join('\n'));
+  });
+  const neg = $('dirNegative').value.trim();
+  if (neg) parts.push('NEGATIVE:\n' + neg);
+  const eg = state.director.evergreen;
+  if (typeof eg === 'string' && eg.trim()) parts.push('RULES:\n' + eg.trim());
+  return parts.join('\n\n');
+}
+
+(() => {
+  const wire = (btnId, getText, label) => {
+    const b = $(btnId);
+    if (!b) return;
+    b.onclick = (e) => { e.stopPropagation(); copyBoxText(getText(), label); };
+    b.addEventListener('mousedown', (e) => e.stopPropagation());
+    b.addEventListener('pointerdown', (e) => e.stopPropagation());
+  };
+  wire('dirCtxCopy', () => $('dirPrompt').value, 'CONTEXT');
+  wire('dirNegCopy', () => $('dirNegative').value, '负面提示词');
+  wire('egPanelCopy', () => $('egPanelText').value, '常青提示词');
+  wire('dirCopyAllBtn', dirComposeAllText, '全部提示词');
+  wire('globalPromptCopy', () => $('globalPrompt').value, '动作描述');
+  wire('stylePromptCopy', () => $('stylePrompt').value, '风格锁定');
+  wire('inbetweenPromptCopy', () => $('inbetweenPrompt').value, '中割运动锁定');
+})();

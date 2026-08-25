@@ -129,16 +129,19 @@
       </div>
       <div class="field">
         <label>动作描述（所有分段共用）<button class="btn plib" data-target="globalPrompt">📚</button>
+          <button id="globalPromptCopy" class="box-clear box-copy" type="button" title="复制动作描述">📋 复制</button>
           <button id="globalPromptClear" class="box-clear" type="button" title="清空动作描述">🗑 清空</button></label>
         <textarea id="globalPrompt" rows="2" placeholder="例：挥舞武士刀，动作流畅"></textarea>
       </div>
       <div class="field">
         <label>风格锁定 <span class="hint">自动附加，保持画风与首尾帧一致</span><button class="btn plib" data-target="stylePrompt">📚</button>
+          <button id="stylePromptCopy" class="box-clear box-copy" type="button" title="复制风格锁定">📋 复制</button>
           <button id="stylePromptClear" class="box-clear" type="button" title="清空风格锁定">🗑 清空</button></label>
         <textarea id="stylePrompt" rows="3"></textarea>
       </div>
       <div class="field">
         <label>中割运动锁定 <span class="hint">自动附加，强制关键帧之间持续运动</span><button class="btn plib" data-target="inbetweenPrompt">📚</button>
+          <button id="inbetweenPromptCopy" class="box-clear box-copy" type="button" title="复制中割运动锁定">📋 复制</button>
           <button id="inbetweenPromptClear" class="box-clear" type="button" title="清空中割运动锁定">🗑 清空</button></label>
         <textarea id="inbetweenPrompt" rows="3"></textarea>
       </div>
@@ -537,18 +540,21 @@
     <section class="panel highlight" id="dirPromptPanel">
       <h2>✍ 提示词 <span class="hint">— 情境 + 分镜头 CUT + 负面 · 输入 @ 引用参考素材 · 点入框内自动放大，无字数限制</span>
         <button id="dirPromptCollapse" class="panel-collapse" type="button" title="收起整个提示词区，露出下方的历史生成">▲</button>
-        <button id="dirIngestBtn" class="panel-collapse dir-ingest-btn" type="button" title="导入一段提示词（粘贴或拖入 .txt/.md）：按模板拆分或 LLM 增强后，自动填进 CONTEXT / 常青铁律 / CUT / 负面">📥</button></h2>
+        <button id="dirIngestBtn" class="panel-collapse dir-ingest-btn" type="button" title="导入一段提示词（粘贴或拖入 .txt/.md）：按模板拆分或 LLM 增强后，自动填进 CONTEXT / 常青铁律 / CUT / 负面">📥</button>
+        <button id="dirCopyAllBtn" class="panel-collapse dir-ingest-btn" type="button" title="一键复制全部提示词（CONTEXT + 全部 CUT + 负面 + 本场景常青），按模板格式导出 — 可直接给其它平台或拖回 📥">📋</button></h2>
       <label class="check" style="font-size:12px" title="开启后：出站提示词里的大段英文会被 LLM 全文译成中文（可能损失原文措辞精度）。默认关闭 = 原文一字不动直接出站">
         <input type="checkbox" id="dirTranslate"> 出站中文化翻译（默认关 — 原文直发不改一字）
       </label>
       <div class="prompt-block-label">🌍 全局情境 CONTEXT <span class="hint">— 整段视频共用：世界观 / 主体 / 画风基调（永远注入）</span>
         <select id="dirMood" class="mood-select" title="全局场面情绪锁 — 只锁氛围/节奏/画面能量，不碰角色演技；选'无'零注入"></select>
+        <button id="dirCtxCopy" class="box-clear box-copy" type="button" title="复制全局情境">📋 复制</button>
         <button id="dirCtxClear" class="box-clear" type="button" title="清空全局情境">🗑 清空</button></div>
       <textarea id="dirPrompt" rows="3" class="dir-ta" placeholder="例：16:9 宽银幕电影感 2D 动画。@image1 的角色是唯一主角，赛博朋克雨夜街头。"></textarea>
       <div id="dirMentionPreview" class="mention-preview" hidden></div>
       <div id="dirCuts"></div>
       <button id="dirAddCut" class="btn wide add-cut" type="button">＋ ADD CUT · 添加镜头</button>
       <div class="prompt-block-label neg">🚫 负面提示词 <span class="hint">— 不想出现的一切（留空则不注入）</span>
+        <button id="dirNegCopy" class="box-clear box-copy" type="button" title="复制负面提示词">📋 复制</button>
         <button id="dirNegClear" class="box-clear" type="button" title="清空负面提示词">🗑 清空</button></div>
       <textarea id="dirNegative" rows="2" class="dir-ta neg" placeholder="例：画面模糊、闪烁、抖动、多余人物、字幕、水印、logo、3D 渲染质感、真实照片质感。"></textarea>
     </section>
@@ -627,6 +633,7 @@
         placeholder="写在这里的内容不随镜头变化，自动追加到本场景每一次生成的提示词末尾。适合放：画质要求、介质质感（赛璐璐/胶片）、光影原则、场景色彩章程、防 AI 感条款、角色比例恒定条款。新开的空白场景常青也是空白。"></textarea>
       <div class="row" style="margin-top:8px">
         <button id="egPanelSave" class="btn primary">保存（本场景生效）</button>
+        <button id="egPanelCopy" class="btn ghost" title="复制常青提示词">📋</button>
         <button id="egPanelUseGlobal" class="btn ghost" title="放弃本场景专属常青，回到沿用 🌲 全局常青（顶栏那份）">↩ 沿用全局</button>
         <span id="egPanelStatus" class="hint accent"></span>
       </div>

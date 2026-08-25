@@ -1289,3 +1289,7 @@ select.dir-go-model {
 select.dir-go-model:hover { border-color: var(--accent); box-shadow: 0 0 10px rgba(167, 139, 250, .3); }
 select.dir-go-model.is25 { color: var(--accent2); }
 select.dir-go-model option, select.dir-go-model optgroup { background: #1e1849; color: var(--text); }
+
+/* 📋 复制按钮：沿用 box-clear 外观，悬停偏金 */
+.box-copy:hover { color: var(--accent2); border-color: rgba(246, 198, 109, .55); }
+.cut-copy { padding: 2px 8px; }
