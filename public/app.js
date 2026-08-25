@@ -3345,7 +3345,11 @@ function moodPromptOf(id) {
   return m ? m[2] : '';
 }
 function moodOptionsHtml(selected) {
-  return DIR_MOODS.map(([id, label]) => `<option value="${id}" ${id === (selected || '') ? 'selected' : ''}>${label}</option>`).join('');
+  // option title = 完整中文情绪锁文案 +（有则）英文解释，弹出列表里悬停即读
+  return DIR_MOODS.map(([id, label, zhText]) => {
+    const tip = (zhText || '') + (typeof MOOD_EN === 'object' && MOOD_EN[id] ? '\n' + MOOD_EN[id] : '');
+    return `<option value="${id}" ${tip ? `title="${escapeHtml(tip)}"` : ''} ${id === (selected || '') ? 'selected' : ''}>${label}</option>`;
+  }).join('');
 }
 
 // ---------------- CUT 镜头语言全量术语库：景别 / 机位 / 运镜 ----------------
@@ -5935,12 +5939,27 @@ const DIR_MIN_CUTS = 4;
 function dirEnsureCuts() {
   if (!Array.isArray(state.director.cuts)) state.director.cuts = [];
   while (state.director.cuts.length < DIR_MIN_CUTS) state.director.cuts.push({ text: '', dur: 0 });
+  // 旧版「运镜下拉持久选择」→ 迁移为盒内可编辑提示词行（一次性；场景切换/历史复用带回旧数据时同样在此收编）
+  let migrated = false;
+  for (const c of state.director.cuts) {
+    if (Array.isArray(c.moves) && c.moves.length) {
+      const terms = c.moves.map((m) => cineTermOf(DIR_MOVE_GROUPS, m)).filter(Boolean);
+      if (terms.length) {
+        const lines = terms.map((t) => cineMoveSnippet(t)).join('\n');
+        c.text = (c.text ? String(c.text).replace(/\s+$/, '') + '\n' : '') + lines;
+      }
+      c.moves = [];
+      migrated = true;
+    }
+  }
+  if (migrated) scheduleSave();
 }
 
 // ---------------- CUT 镜头语言三下拉：景别 / 机位 / 运镜（＋ 叠加复合运镜） ----------------
 // 选项 = 全量专业片场术语（中英双语显示）；注入永远中文行业用语（item[2]）。选'无'零注入。
 function cineOptionsHtml(groups, selected, placeholder) {
-  const opt = ([id, label]) => `<option value="${id}" ${id === (selected || '') ? 'selected' : ''}>${label}</option>`;
+  // 每个 option 带 title：原生弹出列表里悬停即见「中文释义 + 英文解释」
+  const opt = ([id, label, zh]) => `<option value="${id}" title="${escapeHtml(jargonOptionTitle(id, zh))}" ${id === (selected || '') ? 'selected' : ''}>${label}</option>`;
   return `<option value="" ${selected ? '' : 'selected'}>${placeholder}</option>`
     + groups.map((g) => `<optgroup label="${g.g}">${g.items.map(opt).join('')}</optgroup>`).join('');
 }
@@ -5964,54 +5983,337 @@ function buildCutCineRow(cut) {
     sel.onchange = () => onchange(sel.value);
     return sel;
   };
-  row.appendChild(mkSel(DIR_SHOT_GROUPS, cut.shot || '', '🎞 景别：无',
-    '本镜头的景别（拍多大）——注入中文行业术语', (v) => { cut.shot = v; scheduleSave(); }));
-  row.appendChild(mkSel(DIR_ANGLE_GROUPS, cut.angle || '', '📐 机位：无',
-    '本镜头的机位/角度（从哪拍）——注入中文行业术语', (v) => { cut.angle = v; scheduleSave(); }));
+  const shotSel = mkSel(DIR_SHOT_GROUPS, cut.shot || '', '🎞 景别：无',
+    '本镜头的景别（拍多大）——注入中文行业术语', (v) => { cut.shot = v; scheduleSave(); });
+  shotSel.dataset.jargon = 'shot';
+  row.appendChild(shotSel);
+  const angleSel = mkSel(DIR_ANGLE_GROUPS, cut.angle || '', '📐 机位：无',
+    '本镜头的机位/角度（从哪拍）——注入中文行业术语', (v) => { cut.angle = v; scheduleSave(); });
+  angleSel.dataset.jargon = 'angle';
+  row.appendChild(angleSel);
+  // 运镜 = 插入器：选一个运镜 → 立即写入镜头框成为可编辑提示词行（不再隐形注入）。
+  // 默认整镜头生效；「作用时段」槽位就是给用户改成任意时间段的。
   const movesWrap = document.createElement('span');
   movesWrap.className = 'cine-moves' + (cut.fixedCam ? ' disabled' : '');
-  if (cut.fixedCam) movesWrap.title = '📌 固定机位开启中——运镜不注入；选择任一运镜会自动解除固定机位';
-  const moves = cut.moves.length ? cut.moves.slice() : [''];
-  moves.forEach((mv, mi) => {
-    const sel = mkSel(DIR_MOVE_GROUPS, mv || '', mi === 0 ? '🎥 运镜：无' : '↳ 接：无',
-      mi === 0 ? '本镜头的运镜——点右侧 ＋ 可叠加成复合运镜（按序连贯执行）' : `复合运镜第 ${mi + 1} 段——与前段连贯衔接一次完成`,
-      (v) => {
-        moves[mi] = v;
-        cut.moves = moves.slice();
-        if (v && cut.fixedCam) { cut.fixedCam = false; renderDirCuts(); } // 互斥：选了运镜就解除机位锁死
-        scheduleSave();
-      });
-    movesWrap.appendChild(sel);
-    if (moves.length > 1) {
-      const del = document.createElement('button');
-      del.type = 'button';
-      del.className = 'cine-move-del';
-      del.textContent = '✕';
-      del.title = '移除这一段运镜';
-      del.onclick = () => {
-        moves.splice(mi, 1);
-        cut.moves = moves.slice();
-        renderDirCuts();
-        scheduleSave();
-      };
-      movesWrap.appendChild(del);
-    }
-  });
-  const add = document.createElement('button');
-  add.type = 'button';
-  add.className = 'cine-move-add';
-  add.textContent = '＋';
-  add.title = '叠加一段运镜——组成复合运镜（如 推进 → 右摇 → 环绕，按序连贯执行）';
-  add.onclick = () => {
-    cut.moves = moves.slice();
-    cut.moves.push('');
-    renderDirCuts();
-    scheduleSave();
-  };
-  movesWrap.appendChild(add);
+  if (cut.fixedCam) movesWrap.title = '📌 固定机位开启中——插入运镜会自动解除固定机位';
+  const inserter = mkSel(DIR_MOVE_GROUPS, '', '🎥 插入运镜…',
+    '选一个运镜 → 立即写入镜头框，成为可编辑提示词（默认整镜头生效，把「整个镜头」改成任意时段即可精控节奏）；可连插多条叠成复合运镜',
+    (v) => {
+      if (!v) return;
+      const term = cineTermOf(DIR_MOVE_GROUPS, v);
+      if (!term) return;
+      cut.text = (cut.text ? String(cut.text).replace(/\s+$/, '') + '\n' : '') + cineMoveSnippet(term);
+      if (cut.fixedCam) cut.fixedCam = false; // 互斥：插入运镜就解除机位锁死
+      const idx = state.director.cuts.indexOf(cut);
+      renderDirCuts();
+      syncDurationFromCuts();
+      renderMentionPreview();
+      scheduleSave();
+      // 插入后把光标送回该镜头框末尾，方便立刻改时段
+      const ta2 = document.querySelectorAll('#dirCuts .cut-box')[idx]?.querySelector('textarea');
+      if (ta2) { ta2.focus(); ta2.selectionStart = ta2.selectionEnd = ta2.value.length; }
+    });
+  inserter.classList.add('cine-insert');
+  inserter.dataset.jargon = 'move';
+  movesWrap.appendChild(inserter);
   row.appendChild(movesWrap);
   return row;
 }
+/** 运镜插入行模板：「作用时段」是显式可编辑槽位（整个镜头 → 改成如「第0.0–1.5秒，随后停稳」） */
+function cineMoveSnippet(term) {
+  return `【运镜】${term}｜作用时段：整个镜头`;
+}
+
+// ---------------- 术语悬停解释（jargon tips）：悬停稍久 → 弹出解释卡 ----------------
+// DIR_JARGON_EN：id → 英文一句话解释（三写手智能体起草 + DP 审计，中文释义直接用注入词自带的物理化短释）。
+const DIR_JARGON_EN = {
+  'ews': "Camera is so far back the person is a tiny speck; the landscape or setting dominates the whole frame.",
+  'ls': "A far-off view where the whole person is visible but small, and the surroundings still fill most of the frame.",
+  'vws': "Wider than a full shot but closer than a long shot — whole bodies read clearly while the setting still dominates the frame.",
+  'fs': "Frames the person from head to toe, so their whole body and stance are in the shot.",
+  'mls': "Shows the person from about the knees up — closer than full body, still with room around them.",
+  'cowboy': "Frames from mid-thigh up — invented for Westerns so the gun holster stays visible in the shot.",
+  'ms': "Shows the person from the waist up, the natural everyday 'talking to someone' distance.",
+  'mcu': "Frames from the chest up — close enough to read the face, with a hint of shoulders showing.",
+  'close': "Frames from the shoulders up, so the head and face take up most of the screen.",
+  'cu': "The face fills the frame, so every expression and eye movement reads clearly.",
+  'bcu': "Tighter than a close-up — chin to forehead, with the top of the head cropped out by the frame.",
+  'ecu': "One small detail fills the whole screen — just the eyes, the lips, or a trembling fingertip.",
+  'italian': "Only the eyes fill the frame — the ultra-tight stare-down shot from Sergio Leone's spaghetti Westerns.",
+  'macro': "Microscope-like magnification of a tiny detail — a water drop, fabric weave, an insect's wing.",
+  'single': "One person alone in the frame, with nobody else visible.",
+  'clean-single': "One person in frame with nothing in the foreground blocking them — a clear, unobstructed view.",
+  'dirty-single': "One person in focus, but a sliver of someone else's shoulder or head edges into the foreground.",
+  'two': "Two people share the frame together, showing their relationship in a single shot.",
+  'fifty': "Two people face each other in profile, each filling exactly half the frame — a balanced standoff look.",
+  'three': "Three people arranged together in one frame.",
+  'group': "A whole group of people composed together in a single frame.",
+  'ots': "Shot over one person's shoulder — their blurred back frames the person we're actually watching.",
+  'reverse': "The answering shot in a conversation — the camera flips to show the other person looking back.",
+  'pov': "The camera becomes the character's eyes — we see exactly what they see.",
+  'back': "Camera sits directly behind the person, so we see their back and whatever they're facing.",
+  'profile': "The person seen straight from the side at 90 degrees, like a face on a coin.",
+  'silhouette': "The person is a solid black outline against a bright background — pure shape, no facial detail.",
+  'fwf': "The subject is framed a second time inside the shot — seen through a doorway, window, or arch.",
+  'through': "Camera peeks at the subject through gaps in foreground objects — leaves, shelves, a door crack — like spying.",
+  'mirror': "The subject appears as a reflection in a mirror, water, or glass instead of being filmed directly.",
+  'symmetry': "Subject dead center with the left and right halves mirroring each other — the tidy Wes Anderson look.",
+  'deep-focus': "Everything from near to far is sharp at once, so foreground and background action both read clearly.",
+  'shallow-focus': "Only the subject is sharp; everything behind melts into soft blur, pulling the eye straight to them.",
+  'split-diopter': "A half-lens trick keeps a near face AND a distant object both sharp at once — a Brian De Palma signature.",
+  'trunk': "Camera looks up from inside a car trunk or box at the people peering down — Tarantino's signature shot.",
+  'establishing': "An opening wide view that tells the audience where we are before the scene starts.",
+  're-establishing': "A return to the wide view mid-scene to remind us where everyone is standing.",
+  'master': "One wide take that records the entire scene start to finish; close-ups get cut into it later.",
+  'insert': "A quick close-up of an important object — a note, a key, a phone screen.",
+  'cut-in': "Cuts from the main view to a tighter detail of the same subject — their hands, the thing they're holding.",
+  'cutaway': "Briefly cuts away from the main action to something related nearby — a ticking clock, a watching bystander.",
+  'reaction': "Cuts to a person's face to show how they respond to what we just saw or heard.",
+  'empty': "A shot with no people at all — just scenery or objects, used for mood and breathing room.",
+  'aerial': "Filmed from high in the air by drone or helicopter, looking across or down at the world below.",
+  'aerial-est': "A high aerial view that opens a scene, mapping out the whole location from above.",
+  'oner': "One long unbroken take with no cuts, the camera flowing through the action — think 1917.",
+  'reveal': "The framing or camera move hides something at first, then shows it — a surprise built into one shot.",
+  'hero': "A low, flattering angle that makes the character look powerful — their triumphant movie-poster moment.",
+  'eye': "Camera sits at the subject's eye height, looking straight on — neutral and natural, like talking to them face to face.",
+  'front': "Camera points straight at the subject's face — direct and confrontational, as if they could be talking right to you.",
+  'front-34': "Camera sits 45° off the face, showing one full cheek and part of the other — the flattering default for most dialogue shots.",
+  'side': "Camera at 90° so you see the subject in pure profile — one side of the face only, like a face on a coin.",
+  'back-34': "Camera sits behind and to one side at 45°, seeing the back of the head plus a sliver of cheek — hints at what they're looking at.",
+  'rear': "Camera directly behind the subject, showing only their back — you watch what they watch while their face stays hidden.",
+  'high-slight': "Camera just above eye level, tipped slightly down — a gentle downward look that makes the subject feel a touch smaller or vulnerable.",
+  'high': "Camera clearly above the subject looking down, shrinking them in the frame — reads as weak, small, or watched from above.",
+  'high-extreme': "Camera very high up, pointed steeply down, so the subject looks tiny and crushed by the space around them.",
+  'overhead': "Camera directly above, pointing straight down at the tops of heads — flattens the scene into a map-like view.",
+  'birds-eye': "Very high view looking down over the whole scene, like a bird in flight — shows layout, scale, and how small the people are.",
+  'top-down': "Camera locked at exactly 90° straight down, turning floors, tables, or bodies into a flat graphic layout — a Wes Anderson favorite.",
+  'gods-eye': "An extremely high, straight-down view that feels detached and all-seeing, as if fate itself is watching the characters below.",
+  'fukan': "Japanese-anime downward-angle framing: looking down on a character from above, often to show isolation — a staple of anime storyboards.",
+  'low-slight': "Camera just below eye level, tipped slightly up — subtly makes the subject taller and more confident without shouting about it.",
+  'low': "Camera clearly below the subject looking up, so they tower over you — reads as powerful, heroic, or threatening.",
+  'low-extreme': "Camera very low, aimed sharply upward so the subject looms like a giant against the ceiling or sky.",
+  'worms-eye': "Camera almost on the ground looking straight up, the way a worm would see it — people and buildings soar dramatically overhead.",
+  'bottom': "Camera points 90° straight up from directly below — like lying on your back staring at the sky, a ceiling, or faces circled around you.",
+  'aori': "Japanese-anime upward-angle framing: looking up at a character from below to make them imposing — the counterpart of fukan.",
+  'shoulder': "Camera raised to the subject's shoulder height — a hair below eye level, the everyday workhorse height for shots of people.",
+  'chest': "Camera at chest height, looking slightly up at faces — a casual, mildly heroic feel without an obvious low angle.",
+  'hip': "Camera at hip height, where a gun sits in its holster — classic Western-duel framing for hands hovering near belts.",
+  'knee': "Camera down at knee height — good for legs and footsteps, and it makes anyone walking toward it feel tall.",
+  'ankle': "Camera just above the floor at ankle height — feet, dropped objects, and pets fill the frame while people tower above.",
+  'ground': "Camera lies practically on the ground itself, with dirt or asphalt cutting across the bottom of frame — gritty and intimate.",
+  'tatami': "Camera fixed low, at the eye height of someone kneeling on a tatami mat — Yasujiro Ozu's calm signature view of Japanese home life.",
+  'dutch': "The camera is tilted sideways so the horizon sits at a slant — the world looks off-balance, signaling unease or madness.",
+  'dutch-left': "A tilted frame leaning left — the horizon slopes down toward the left edge, giving the scene an uneasy, off-kilter feel.",
+  'dutch-right': "A tilted frame leaning right — the horizon slopes down toward the right edge, same unsettling off-kilter feel.",
+  'dutch-extreme': "The frame tilted hard, close to 45° — the world is violently askew, screaming chaos, panic, or a broken mind.",
+  'aerial-pos': "Camera flies on a drone or helicopter, viewing the scene from the air — sweeping views no ground-based rig can reach.",
+  'aerial-high': "Drone camera way up high, where cities shrink into patterns and people become dots — pure scale and geography.",
+  'aerial-low': "Drone camera skimming low over ground or water, close enough to feel the speed as terrain rushes by underneath.",
+  'underwater': "Camera submerged, looking up through the water's surface — swimmers become silhouettes against rippling, shimmering light.",
+  'ceiling': "Camera bolted to the ceiling, looking down like a security camera — a fixed, watchful view of the room below.",
+  'overhead-rig': "Camera mounted directly above a table, pointing straight down — the classic cooking-video view of hands working on a surface.",
+  'floor': "Camera fixed on the floor looking up or across it — feet, wheels, and falling objects loom large in the frame.",
+  'static': "Camera doesn't move at all — locked on a tripod, so only the action inside the frame changes.",
+  'pan-left': "Camera stays in place and swivels left, like you turning your head to look to the left.",
+  'pan-right': "Camera stays in place and swivels right, like you turning your head to look to the right.",
+  'tilt-up': "Camera stays put and tips upward, like lifting your chin to take in something tall.",
+  'tilt-down': "Camera stays put and tips downward, like lowering your gaze from a face to the ground.",
+  'whip-pan-left': "Camera snaps left so fast the picture smears into blur streaks — a jolt of energy, often used to hide a cut.",
+  'whip-pan-right': "Camera snaps right so fast the picture smears into blur streaks — a jolt of energy, often used to hide a cut.",
+  'whip-tilt-up': "Camera flicks upward in a blur-fast snap, like whipping your gaze from someone's feet up to their face.",
+  'whip-tilt-down': "Camera flicks downward in a blur-fast snap, like slamming your gaze from the sky to the ground.",
+  'follow-pan': "Camera stays in one spot but swivels to keep a moving subject in frame, like watching a car pass by.",
+  'roll-cw': "The whole picture rotates clockwise, tilting the horizon as if the world is turning around you.",
+  'roll-ccw': "The whole picture rotates counterclockwise, tilting the horizon as if the world is turning around you.",
+  'dutch-roll': "Camera rolls and then holds at a tilted angle, leaving the horizon slanted so the scene feels uneasy or wrong.",
+  'push-in': "Camera physically moves closer to the subject, slowly filling the frame with them to build intensity.",
+  'pull-out': "Camera physically backs away from the subject, revealing more and more of the space around them.",
+  'dolly-in': "Camera glides smoothly toward the subject on wheels or rails — steadier and more deliberate than walking in.",
+  'dolly-out': "Camera glides smoothly backward on wheels or rails, easing away from the subject.",
+  'truck-left': "Camera slides sideways to the left on wheels, the whole frame shifting left while staying level.",
+  'truck-right': "Camera slides sideways to the right on wheels, the whole frame shifting right while staying level.",
+  'pedestal-up': "The whole camera rises straight up, like riding an elevator, staying level instead of tilting.",
+  'pedestal-down': "The whole camera lowers straight down, like riding an elevator, staying level instead of tilting.",
+  'follow': "Camera travels along with a moving subject, keeping the same distance so they stay steady in frame.",
+  'lead': "Camera moves backward in front of a walking subject, facing them as they advance — the classic walk-and-talk look.",
+  'side-track': "Camera slides sideways alongside the subject, matching their pace like someone running next to them.",
+  'car-rig': "Camera is mounted on a moving vehicle, so it rides along at car speed, locked to the ride.",
+  'arc-left': "Camera swings around the subject in a curve to the left, so the background wheels past behind them.",
+  'arc-right': "Camera swings around the subject in a curve to the right, so the background wheels past behind them.",
+  'orbit-cw': "Camera circles clockwise around the subject like a satellite, keeping them centered while the background spins.",
+  'orbit-ccw': "Camera circles counterclockwise around the subject, keeping them centered while the background spins.",
+  'orbit-360': "Camera makes one complete circle all the way around the subject, showing them from every side.",
+  'spiral-up': "Camera circles the subject while climbing, corkscrewing upward for a grand rising reveal.",
+  'spiral-down': "Camera circles the subject while sinking, corkscrewing downward and closing in on them.",
+  'crane-up': "Camera sweeps high into the air on a big mechanical arm, rising from eye level to a grand overview.",
+  'crane-down': "Camera swoops down from high up on a big mechanical arm, descending into the middle of the scene.",
+  'jib-sweep': "Camera on an arm swings sideways in a big arc across the scene — a smooth, sweeping flourish.",
+  'technocrane': "A telescoping robotic crane arm extends and retracts, letting the camera dart along fast, precise, complex paths.",
+  'zoom-in': "The lens magnifies the subject while the camera stays put — the image grows but feels flatter than actually moving in.",
+  'zoom-out': "The lens widens while the camera stays put, shrinking the subject and bringing more surroundings into view.",
+  'crash-zoom-in': "A sudden violent zoom that slams toward the subject in a split second — the punchy kung-fu-movie / Tarantino zoom.",
+  'crash-zoom-out': "A sudden violent zoom that yanks back from the subject in a split second, jolting out to a wide view.",
+  'dolly-zoom-in': "Camera moves in while zooming out: the subject stays the same size but the background stretches away — the dizzy Vertigo effect.",
+  'dolly-zoom-out': "Camera pulls back while zooming in: the subject stays the same size while the background squeezes in closer behind them.",
+  'rack-focus': "Focus slides from one thing to another — a blurry face sharpens as the foreground goes soft — steering the viewer's eye.",
+  'tilt-shift': "A tilted lens keeps only a thin strip of the image sharp, making real places look like tiny miniature models.",
+  'probe': "A long skinny snake-like lens threads through tiny gaps or inside objects, going where no normal camera fits.",
+  'handheld': "Camera carried in the operator's hands, with a gentle natural sway that feels human and documentary-real.",
+  'shaky': "Deliberately rough, jittery camera shake that makes action feel chaotic, panicked, or dangerous.",
+  'impact-shake': "A quick violent jolt of the frame at the moment of a hit or explosion, so the viewer feels the impact.",
+  'steadicam': "A body-worn stabilizer lets the camera float smoothly with the operator — the gliding hallway feel of The Shining.",
+  'gimbal': "A motorized stabilizer keeps the camera perfectly smooth and level as it moves — a clean, even, drone-steady glide.",
+  'snorricam': "Camera strapped to the actor's chest facing their face: they stay rock steady while the world lurches behind — Requiem for a Dream.",
+  'drone-rise': "A drone carries the camera straight up into the air, the ground dropping away below.",
+  'drone-descend': "A drone lowers the camera straight down from the air toward the scene below.",
+  'flyover': "Camera flies across the scene from above, passing over rooftops or landscape like a bird.",
+  'flythrough': "Camera flies through an opening — a window, doorway, or narrow gap — carrying the viewer inside the space.",
+  'top-down-descend': "Camera looks straight down and descends, the ground rising toward you like a slow vertical landing.",
+  'fpv-dive': "A racing drone nose-dives at high speed in first-person view, plummeting down the face of a building or cliff.",
+  'proximity': "A drone skims at speed just inches from surfaces — walls, treetops, water — for a thrilling near-miss rush.",
+  'barrel-roll': "The flying camera rolls a full 360 degrees, the whole world flipping upside down and back around.",
+  'aerial-reveal': "Camera pulls back and climbs into the sky, gradually revealing how big the whole scene really is.",
+  'whip-transition': "Camera whips into a blur and the next shot whips out of it, stitching two scenes together as one fast move.",
+  'speed-ramp': "Footage glides between fast and slow motion mid-shot — sprint, then dreamy slow-mo, then sprint again.",
+  'slowmo': "Action plays in silky slow motion (shot at a high frame rate), stretching a moment so every detail reads.",
+  'fastmo': "Action plays sped-up and slightly jumpy, compressing time for comic or frantic energy.",
+  'bullet-time': "Time nearly freezes while the camera whirls around the subject — the famous Matrix dodge effect.",
+  'hyperlapse': "A time-lapse where the camera also travels a long distance, so hours of movement whoosh past in seconds.",
+  'timelapse': "Camera stays fixed while time races forward — clouds stream, crowds blur, day flips to night in seconds.",
+  'russian-arm': "A crane mounted on a speeding chase car swings the camera around a moving subject — the signature car-commercial move.",
+  'cablecam': "Camera zips along a cable strung over the scene, flying fast and smooth above a stadium or set.",
+};
+const MOOD_EN = {
+  explosive: 'Explosive: relentless fast aggressive energy — dense action, sparks and debris, zero calm beats.',
+  urgent: 'Urgent chase: every movement presses toward the goal, rhythm tightens, breathless pursuit tension.',
+  triumphant: 'Rising heroic energy building to a climax — determination, power, the boil before victory.',
+  epic: 'Vast, weighty grandeur — monumental scale, unhurried powerful motion, awe.',
+  chaotic: 'Motion collides from every direction, rhythm shatters — order falling apart.',
+  tension: 'Quiet surface over a taut wire — slowed pace, magnified small movements, about-to-snap suspense.',
+  horror: 'Shadow-led frame, slow ominous motion, unnatural stillness broken by sudden dread.',
+  meditative: 'Slow long-breath calm — minimal motion, stillness and negative space, stretched time.',
+  serene: 'Soft healing warmth — gentle rounded movement, safe cozy air, breeze-like rhythm.',
+  dreamy: 'Floating motion, softened edges, blurred time — a suspended dreamlike haze.',
+  romantic: 'Tender glow, intimate unhurried motion, slow-dance rhythm.',
+  melancholy: 'Sinking mood — slow heavy rhythm, wistful powerless movement, restrained sorrow.',
+  nostalgic: 'Old-times texture — unhurried remembering pace, warm with a faint ache.',
+  cold: 'Restraint verging on mercilessness — precise calm motion, empty space, emotion frozen beneath the surface.',
+  whimsical: 'Light bouncy rhythm, elastic humorous movement, bright playful surprises.',
+};
+const JARGON_EXTRA = {
+  fixedCam: {
+    t: '📌 固定机位 · Locked-Off Camera',
+    zh: '机位完全锁死零运镜——不推不拉不摇不移，画框纹丝不动，只有画面内的主体在运动。',
+    en: 'The camera is bolted still — no pan, push or drift; only the subjects move inside a rock-steady frame.',
+  },
+  movingHold: {
+    t: '🎥 moving hold · 活动保持',
+    zh: '角色保持关键姿态但全程微动（呼吸起伏/重心调整/发丝衣角轻摆），镜头带手持呼吸感——绝不冻结。',
+    en: 'Characters hold a key pose while still breathing and swaying subtly, with gentle handheld drift — alive, never frozen.',
+  },
+  comp603010: {
+    t: '🎨 60/30/10 · 构图章程',
+    zh: '画面 60% 主导 / 30% 次要衬托 / 10% 点睛强调——强调项即视觉焦点，占比全镜头严格保持。',
+    en: 'Composition recipe: 60% of the frame is the dominant subject, 30% supporting layer, 10% the accent — that accent is the focal point.',
+  },
+  moveInserter: {
+    t: '🎥 运镜插入器 · Camera-Move Inserter',
+    zh: '选一个运镜会立即写进镜头框，变成你可随意编辑的提示词行；把「整个镜头」改成任意时段即可精控节奏，连插多条 = 复合运镜。',
+    en: 'Picking a move writes an editable prompt line into the box — edit the “time span” slot for fine timing; insert several to stack a composite move.',
+  },
+  shotDropdown: {
+    t: '🎞 景别 · Shot Size',
+    zh: '决定拍多大：从大远景到微距的取景尺度 + 取景方式与功能镜头；选中项以中文行业术语注入提示词。',
+    en: 'How much of the subject fills the frame — from extreme wide to macro, plus framing and functional shot types. Hover an option for its meaning.',
+  },
+  angleDropdown: {
+    t: '📐 机位 · Camera Angle',
+    zh: '决定从哪拍：高度、俯仰、方向与倾斜；选中项以中文行业术语注入提示词。',
+    en: 'Where the camera sits — height, up/down tilt, direction and cant. Hover an option for its meaning.',
+  },
+  moodLock: {
+    t: '情绪锁 · Scene-Mood Lock',
+    zh: '只锁场面氛围/节奏/画面能量，不碰角色演技；选「无」零注入。',
+    en: 'Locks the scene\'s atmosphere, pace and energy only — never touches the acting. "None" injects nothing.',
+  },
+};
+/** option 的原生悬停提示：中文释义 +（有则）英文解释（原生 select 弹出列表里也能悬停看解释） */
+function jargonOptionTitle(id, zh) {
+  const en = DIR_JARGON_EN[id];
+  return (zh || '') + (en ? '\n' + en : '');
+}
+function jargonGroupsFor(kind) {
+  return kind === 'shot' ? DIR_SHOT_GROUPS : kind === 'angle' ? DIR_ANGLE_GROUPS : kind === 'move' ? DIR_MOVE_GROUPS : null;
+}
+/** 悬停目标 → 解释卡内容 {t 标题, zh 中文释义, en 英文解释}；返回 null = 不弹 */
+function jargonInfoFor(el) {
+  const kind = el.dataset.jargon;
+  if (!kind) return null;
+  const groups = jargonGroupsFor(kind);
+  if (groups) {
+    const id = el.tagName === 'SELECT' ? el.value : '';
+    if (!id) return JARGON_EXTRA[kind === 'move' ? 'moveInserter' : kind === 'shot' ? 'shotDropdown' : 'angleDropdown'];
+    for (const g of groups) {
+      const hit = g.items.find((x) => x[0] === id);
+      if (hit) return { t: hit[1], zh: hit[2] || '', en: DIR_JARGON_EN[id] || '' };
+    }
+    return null;
+  }
+  if (kind === 'mood') {
+    const id = el.tagName === 'SELECT' ? el.value : '';
+    if (!id) return JARGON_EXTRA.moodLock;
+    const m = DIR_MOODS.find((x) => x[0] === id);
+    return m ? { t: m[1], zh: m[2] || '', en: MOOD_EN[id] || '' } : null;
+  }
+  return JARGON_EXTRA[kind] || null;
+}
+const jargonTip = { el: null, timer: 0, over: null };
+function jargonTipEl() {
+  if (jargonTip.el) return jargonTip.el;
+  const d = document.createElement('div');
+  d.className = 'jargon-tip i18n-skip'; // 解释卡自带双语，i18n 观察器跳过
+  d.hidden = true;
+  document.body.appendChild(d);
+  jargonTip.el = d;
+  return d;
+}
+function jargonTipHide() {
+  if (jargonTip.timer) { clearTimeout(jargonTip.timer); jargonTip.timer = 0; }
+  jargonTip.over = null;
+  if (jargonTip.el) jargonTip.el.hidden = true;
+}
+function jargonTipShow(target) {
+  const info = jargonInfoFor(target);
+  if (!info) return;
+  const d = jargonTipEl();
+  d.innerHTML = `<b>${escapeHtml(info.t)}</b>`
+    + (info.zh ? `<span class="jt-zh">${escapeHtml(info.zh)}</span>` : '')
+    + (info.en ? `<span class="jt-en">${escapeHtml(info.en)}</span>` : '');
+  d.hidden = false;
+  // 目标下方展开，越界则翻到上方；左右夹回视口
+  const r = target.getBoundingClientRect();
+  d.style.left = '0px'; d.style.top = '0px'; // 先复位再量，避免旧位置影响换行宽度
+  const w = d.offsetWidth, h = d.offsetHeight;
+  let x = Math.min(Math.max(6, r.left), Math.max(6, window.innerWidth - w - 6));
+  let y = r.bottom + 8;
+  if (y + h > window.innerHeight - 6) y = Math.max(6, r.top - h - 8);
+  d.style.left = x + 'px';
+  d.style.top = y + 'px';
+}
+document.addEventListener('pointerover', (e) => {
+  const t = e.target && e.target.closest ? e.target.closest('[data-jargon]') : null;
+  if (!t) return;
+  if (jargonTip.timer) clearTimeout(jargonTip.timer);
+  jargonTip.over = t;
+  jargonTip.timer = setTimeout(() => { if (jargonTip.over === t) jargonTipShow(t); }, 650); // 悬停稍久才弹
+});
+document.addEventListener('pointerout', (e) => {
+  const t = e.target && e.target.closest ? e.target.closest('[data-jargon]') : null;
+  if (t && t === jargonTip.over) jargonTipHide();
+});
+document.addEventListener('pointerdown', jargonTipHide, true);
+document.addEventListener('scroll', jargonTipHide, true);
+document.addEventListener('change', (e) => { if (e.target && e.target.matches && e.target.matches('[data-jargon]')) jargonTipHide(); }, true);
 
 function renderDirCuts() {
   const wrap = $('dirCuts');
@@ -6031,6 +6333,7 @@ function renderDirCuts() {
     moodSel.className = 'mood-select';
     moodSel.title = '本镜头的场面情绪锁 — 只锁氛围/节奏/画面能量';
     moodSel.innerHTML = moodOptionsHtml(cut.mood || '');
+    moodSel.dataset.jargon = 'mood';
     moodSel.onchange = () => { cut.mood = moodSel.value; scheduleSave(); };
     head.appendChild(moodSel);
     // 运镜切换钮：固定机位 / moving hold（互斥）
@@ -6040,6 +6343,7 @@ function renderDirCuts() {
       b.className = 'cut-toggle' + (extraClass ? ' ' + extraClass : '') + (cut[key] ? ' on' : '');
       b.textContent = label;
       b.title = tip;
+      b.dataset.jargon = key; // 术语悬停解释（fixedCam / movingHold）
       b.onclick = () => {
         cut[key] = !cut[key];
         if (cut[key]) cut[otherKey] = false; // 互斥：锁死机位与手持晃动不能共存
@@ -6057,6 +6361,7 @@ function renderDirCuts() {
     const compBtn = document.createElement('button');
     compBtn.type = 'button';
     compBtn.className = 'cut-toggle comp' + (cut.comp.on ? ' on' : '');
+    compBtn.dataset.jargon = 'comp603010';
     compBtn.textContent = '🎨 60/30/10';
     compBtn.title = '构图章程：画面 60% 主导 / 30% 次要 / 10% 强调（强调项即视觉焦点）。开启且填了内容才注入';
     compBtn.onclick = () => {
@@ -6188,6 +6493,7 @@ $('dirCtxClear').onclick = () => {
 };
 // 全局场面情绪锁
 $('dirMood').innerHTML = moodOptionsHtml(state.director.mood || '');
+$('dirMood').dataset.jargon = 'mood';
 $('dirMood').onchange = () => { state.director.mood = $('dirMood').value; scheduleSave(); };
 $('dirNegClear').onclick = () => {
   $('dirNegative').value = '';
@@ -6250,20 +6556,14 @@ function buildDirCutsBlock(resolveFn) {
       compEmbed = `（构图章程 60/30/10：画面${parts.join('，')}；该占比在整个镜头内严格保持，不许漂移）`;
     }
     const moodEmbed = c.mood ? `（${moodPromptOf(c.mood)}）` : '';
-    // 镜头语言三下拉 → 中文行业术语注入（📌 固定机位开启时运镜段不注入，避免自相矛盾）
+    // 景别/机位下拉 → 中文行业术语注入（运镜已改为盒内可编辑提示词行，不再在此隐形注入）
     let cineEmbed = '';
     {
       const cineParts = [];
       const shotT = cineTermOf(DIR_SHOT_GROUPS, c.shot);
       const angleT = cineTermOf(DIR_ANGLE_GROUPS, c.angle);
-      const moveTs = c.moves.map((m) => cineTermOf(DIR_MOVE_GROUPS, m)).filter(Boolean);
       if (shotT) cineParts.push(`景别——${shotT}`);
       if (angleT) cineParts.push(`机位——${angleT}`);
-      if (moveTs.length && !c.fixedCam) {
-        cineParts.push(moveTs.length === 1
-          ? `运镜——${moveTs[0]}`
-          : `复合运镜（按序连贯衔接、一次完成、段间不停顿）——先${moveTs.join('，再')}`);
-      }
       if (cineParts.length) cineEmbed = `（镜头语言：${cineParts.join('；')}）`;
     }
     const body = resolveFn(c.text)

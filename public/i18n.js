@@ -658,6 +658,10 @@ const I18N = {
   '叠加一段运镜——组成复合运镜（如 推进 → 右摇 → 环绕，按序连贯执行）': ['Stack another camera move — build a composite (e.g. push-in → pan right → orbit, executed in sequence)', 'カメラワークを追加 — 複合ムーブを構築（例：プッシュイン→右パン→オービット、順に連続実行）'],
   '移除这一段运镜': ['Remove this move segment', 'このムーブ区間を削除'],
   '📌 固定机位开启中——运镜不注入；选择任一运镜会自动解除固定机位': ['📌 Locked-off camera is ON — moves are not injected; picking any move auto-unlocks it', '📌 フィックス固定中 — カメラワークは注入されない；ムーブを選ぶと自動解除'],
+  // ===== 2026-08-25 运镜插入器 + 术语悬停解释 =====
+  '🎥 插入运镜…': ['🎥 Insert camera move…', '🎥 カメラワークを挿入…'],
+  '选一个运镜 → 立即写入镜头框，成为可编辑提示词（默认整镜头生效，把「整个镜头」改成任意时段即可精控节奏）；可连插多条叠成复合运镜': ['Pick a move → it is written into the cut box as an editable prompt line (defaults to the whole shot; edit the time-span slot for fine timing); insert several to stack a composite move', 'ムーブを選ぶ → カットボックスに編集可能なプロンプト行として書き込み（既定はショット全体；時間帯スロットを書き換えて微調整）；複数挿入で複合ムーブ'],
+  '📌 固定机位开启中——插入运镜会自动解除固定机位': ['📌 Locked-off camera is ON — inserting a move auto-unlocks it', '📌 フィックス固定中 — ムーブを挿入すると自動解除'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]
