@@ -647,10 +647,22 @@ const I18N = {
   '复制这个镜头的提示词（含 60/30/10 构图内容，若开启）': ['Copy this cut\'s prompt (incl. 60/30/10 composition if enabled)', 'このカットのプロンプトをコピー（60/30/10 有効時は込み）'],
   '一键复制全部提示词（CONTEXT + 全部 CUT + 负面 + 本场景常青），按模板格式导出 — 可直接给其它平台或拖回 📥': ['Copy ALL prompts (CONTEXT + every CUT + negative + scene evergreen) in template format — paste anywhere or drop back into 📥', '全プロンプトを一括コピー（CONTEXT＋全 CUT＋ネガティブ＋シーン常青）テンプレ形式 — 他所へ貼付や 📥 への再取込に'],
   '在 Director 仪表盘新建与管理项目':['Create & manage projects in the Director dashboard', 'プロジェクトの作成・管理は Director ダッシュボードで'],
+  // ===== 2026-08-25 CUT 镜头语言三下拉（景别/机位/运镜）UI 层 =====
+  '🎞 景别：无': ['🎞 Shot size: none', '🎞 画面サイズ：なし'],
+  '📐 机位：无': ['📐 Angle: none', '📐 アングル：なし'],
+  '🎥 运镜：无': ['🎥 Camera move: none', '🎥 カメラワーク：なし'],
+  '↳ 接：无': ['↳ then: none', '↳ 次：なし'],
+  '本镜头的景别（拍多大）——注入中文行业术语': ['This cut\'s shot size — injects the Chinese industry term', 'このカットの画面サイズ — 中国語の業界用語を注入'],
+  '本镜头的机位/角度（从哪拍）——注入中文行业术语': ['This cut\'s camera angle/position — injects the Chinese industry term', 'このカットのアングル/カメラ位置 — 中国語の業界用語を注入'],
+  '本镜头的运镜——点右侧 ＋ 可叠加成复合运镜（按序连贯执行）': ['This cut\'s camera move — click ＋ to stack into a composite move (executed in sequence)', 'このカットのカメラワーク — ＋ で複合ムーブに重ねられる（順に連続実行）'],
+  '叠加一段运镜——组成复合运镜（如 推进 → 右摇 → 环绕，按序连贯执行）': ['Stack another camera move — build a composite (e.g. push-in → pan right → orbit, executed in sequence)', 'カメラワークを追加 — 複合ムーブを構築（例：プッシュイン→右パン→オービット、順に連続実行）'],
+  '移除这一段运镜': ['Remove this move segment', 'このムーブ区間を削除'],
+  '📌 固定机位开启中——运镜不注入；选择任一运镜会自动解除固定机位': ['📌 Locked-off camera is ON — moves are not injected; picking any move auto-unlocks it', '📌 フィックス固定中 — カメラワークは注入されない；ムーブを選ぶと自動解除'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]
 const I18N_RULES = [
+  [/^复合运镜第 (\d+) 段——与前段连贯衔接一次完成$/, 'Composite move segment $1 — flows seamlessly from the previous segment', '複合ムーブ第 $1 区間 — 前の区間から途切れず連続実行'],
   [/^已复制「(.+)」✓ (\d+) 字符$/, 'Copied "$1" ✓ $2 chars', '「$1」をコピー ✓ $2 文字'],
   [/^「(.+)」是空的 — 没有可复制的内容$/, '"$1" is empty — nothing to copy', '「$1」は空です — コピーする内容がありません'],
   [/^📥 已(增强并)?填入 (.+)$/, '📥 Filled$1: $2', '📥 入力完了$1：$2'],

@@ -1099,6 +1099,25 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
   border-color: rgba(199, 120, 0, .6); background: rgba(199, 120, 0, .08); font-weight: 700;
 }
 
+/* CUT 镜头语言三下拉：景别 / 机位 / 运镜（＋ 叠加复合运镜） */
+.cut-cine { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 2px 0 6px; }
+.cut-cine .cine-select {
+  font-size: 11px; padding: 2px 6px; border-radius: 8px; max-width: 168px;
+  border: 1px solid rgba(120, 140, 255, .3); background: none; color: inherit; cursor: pointer;
+}
+.cut-cine .cine-select:has(option:checked:not([value=""])) {
+  border-color: rgba(79, 217, 208, .65); background: rgba(79, 217, 208, .08); font-weight: 700;
+}
+.cine-moves { display: inline-flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+.cine-moves.disabled .cine-select { opacity: .4; }
+.cine-move-del { border: none; background: none; color: inherit; cursor: pointer; opacity: .45; font-size: 11px; padding: 0 3px; }
+.cine-move-del:hover { opacity: 1; color: #d0454c; }
+.cine-move-add {
+  border: 1px dashed rgba(120, 140, 255, .45); background: none; color: inherit; cursor: pointer;
+  border-radius: 999px; font-size: 11px; padding: 1px 8px; opacity: .7;
+}
+.cine-move-add:hover { opacity: 1; background: rgba(120, 140, 255, .1); }
+
 /* 悬停即播：历史卡缩略图 + 视频参考 + 选择器流回放 */
 .hist-thumb-wrap { position: relative; margin-bottom: 5px; border-radius: 8px; overflow: hidden; }
 .dir-hist-thumb {

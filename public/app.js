@@ -3348,6 +3348,211 @@ function moodOptionsHtml(selected) {
   return DIR_MOODS.map(([id, label]) => `<option value="${id}" ${id === (selected || '') ? 'selected' : ''}>${label}</option>`).join('');
 }
 
+// ---------------- CUT 镜头语言全量术语库：景别 / 机位 / 运镜 ----------------
+// 每项 [id, 下拉双语标签, 中文注入词]。注入词 = 行业用语（+必要的物理化短释，按 CINEDANCE 写可见结果）。
+// 标签双语故意不进 i18n 词典（专业术语全球通用英文名，三语模式下双语标签自明）。
+const DIR_SHOT_GROUPS = [
+  { g: '基础景别 | Shot Sizes', items: [
+    ['ews', '大远景 · Extreme Wide (EWS)', '大远景（人物极小或不可辨，环境占绝对主导）'],
+    ['ls', '远景 · Long Shot (LS)', '远景（人物完整可见但环境为主）'],
+    ['vws', '大全景 · Very Wide (VWS)', '大全景'],
+    ['fs', '全景 · Full Shot (FS)', '全景（人物头到脚完整入画）'],
+    ['mls', '中全景 · Medium Long (MLS)', '中全景（膝盖以上）'],
+    ['cowboy', '牛仔景 · Cowboy Shot', '牛仔景别（大腿中部以上七分身取景）'],
+    ['ms', '中景 · Medium Shot (MS)', '中景（腰部以上）'],
+    ['mcu', '中近景 · Medium Close-Up (MCU)', '中近景（胸部以上）'],
+    ['close', '近景 · Close Shot', '近景（肩部以上）'],
+    ['cu', '特写 · Close-Up (CU)', '特写（面部充满画面）'],
+    ['bcu', '紧特写 · Big Close-Up (BCU)', '紧特写（下巴到额头，面部溢出画框）'],
+    ['ecu', '大特写 · Extreme Close-Up (ECU)', '大特写（局部细节充满整个画框）'],
+    ['italian', '眼部特写 · Italian Shot', '眼部大特写（只取双眼，意大利西部片式）'],
+    ['macro', '微距 · Macro Shot', '微距特写（极端放大的微观细节）'],
+  ] },
+  { g: '取景方式 | Framing', items: [
+    ['single', '单人镜头 · Single', '单人镜头'],
+    ['clean-single', '干净单人 · Clean Single', '干净单人镜头（无前景遮挡）'],
+    ['dirty-single', '脏单人 · Dirty Single', '脏单人镜头（前景带另一人肩/头的局部遮挡）'],
+    ['two', '双人镜头 · Two-Shot', '双人镜头'],
+    ['fifty', '对视侧写 · 50-50 Shot', '双人对视侧面构图（两人侧脸相对各占一半画面）'],
+    ['three', '三人镜头 · Three-Shot', '三人镜头'],
+    ['group', '群像 · Group Shot', '群像镜头'],
+    ['ots', '过肩 · Over-the-Shoulder', '过肩镜头（前景是一人肩背，焦点在对面人物）'],
+    ['reverse', '反打 · Reverse Shot', '反打镜头（切到对话另一方视线方向）'],
+    ['pov', '主观 · POV Shot', '主观镜头（画面即人物眼中所见）'],
+    ['back', '背影 · From Behind', '背影镜头（从人物正后方拍摄）'],
+    ['profile', '侧写 · Profile Shot', '侧面镜头（正侧90度拍摄人物）'],
+    ['silhouette', '剪影 · Silhouette', '剪影镜头（人物全黑轮廓衬亮背景）'],
+    ['fwf', '框中框 · Frame in Frame', '框中框构图（用门窗/缝隙等在画框内再框住主体）'],
+    ['through', '前景遮挡 · Through-Object', '前景遮挡镜头（隔着物体缝隙窥视主体）'],
+    ['mirror', '镜像 · Mirror Shot', '镜像倒影镜头（通过镜面/水面/反光拍摄主体）'],
+    ['symmetry', '对称构图 · Centered Symmetry', '中心对称构图（主体居中、画面左右严格对称）'],
+    ['deep-focus', '深焦 · Deep Focus', '深焦镜头（前中后景全部清晰的全景深画面）'],
+    ['shallow-focus', '浅焦 · Shallow Focus', '浅焦镜头（主体清晰、背景大幅虚化的浅景深）'],
+    ['split-diopter', '裂焦 · Split Diopter', '裂焦镜头（前景与远景两个焦平面同时清晰）'],
+    ['trunk', '后备箱视角 · Trunk Shot', '后备箱视角镜头（从低处容器内向外仰视俯看的人物）'],
+  ] },
+  { g: '功能镜头 | Functional', items: [
+    ['establishing', '定场 · Establishing', '定场镜头（交代场景全貌与空间关系）'],
+    ['re-establishing', '再定场 · Re-establishing', '再定场镜头（重新交代空间关系）'],
+    ['master', '主镜头 · Master Shot', '主镜头（完整收录整场调度的全景机位）'],
+    ['insert', '插入 · Insert Shot', '插入镜头（特写关键物件细节）'],
+    ['cut-in', '切入 · Cut-In', '切入镜头（从主画面切入同一场景内主体的局部细节）'],
+    ['cutaway', '切出 · Cutaway', '切出镜头（切到主动作之外的相关画面）'],
+    ['reaction', '反应 · Reaction Shot', '反应镜头（承接上一镜、拍人物的反应表情）'],
+    ['empty', '空镜 · Empty Scenery', '空镜头（画面中无人物，只有环境景物）'],
+    ['aerial', '航拍 · Aerial Shot', '航拍镜头'],
+    ['aerial-est', '航拍定场 · Aerial Establishing', '航拍定场镜头（高空俯瞰交代地理全貌）'],
+    ['oner', '一镜到底 · Long Take', '长镜头（一镜到底不切换）'],
+    ['reveal', '揭示 · Reveal Shot', '揭示镜头（构图或运动逐步揭露关键信息）'],
+    ['hero', '英雄镜头 · Hero Shot', '英雄镜头（塑造人物高光时刻的仰拍造型感镜头）'],
+  ] },
+];
+const DIR_ANGLE_GROUPS = [
+  { g: '水平 | Level', items: [
+    ['eye', '平视 · Eye Level', '平视机位（镜头与人物视线等高）'],
+  ] },
+  { g: '拍摄方向 | Direction', items: [
+    ['front', '正面 · Frontal', '正面机位（正对人物面部拍摄）'],
+    ['front-34', '前侧 · 3/4 Front', '前侧面机位（与人物成45度的四分之三前侧）'],
+    ['side', '正侧 · Side Angle', '正侧面机位（与人物成90度正侧方）'],
+    ['back-34', '后侧 · 3/4 Back', '后侧面机位（人物斜后方45度）'],
+    ['rear', '背面 · Rear Angle', '背面机位（人物正后方拍摄）'],
+  ] },
+  { g: '俯角 | High Angles', items: [
+    ['high-slight', '微俯 · Slight High', '微俯机位（略高于视线向下俯拍）'],
+    ['high', '俯拍 · High Angle', '俯拍机位（明显高角度向下拍摄）'],
+    ['high-extreme', '大俯 · Extreme High', '大俯机位（极端高角度俯压）'],
+    ['overhead', '顶摄 · Overhead', '顶摄机位（正上方垂直向下）'],
+    ['birds-eye', '鸟瞰 · Bird’s-Eye', '鸟瞰机位（高空俯瞰全局）'],
+    ['top-down', '垂直俯拍 · Top-Down 90°', '垂直90度俯拍'],
+    ['gods-eye', '上帝视角 · God’s-Eye', '上帝视角（超然的极高空垂直俯瞰）'],
+    ['fukan', '俯瞰构图 · Fukan（动画）', '俯瞰构图（日式动画俯角构图）'],
+  ] },
+  { g: '仰角 | Low Angles', items: [
+    ['low-slight', '微仰 · Slight Low', '微仰机位（略低于视线向上仰拍）'],
+    ['low', '仰拍 · Low Angle', '仰拍机位（明显低角度向上拍摄）'],
+    ['low-extreme', '大仰 · Extreme Low', '大仰机位（极端低角度仰视）'],
+    ['worms-eye', '虫视 · Worm’s-Eye', '虫视角度（贴近地面极端仰视）'],
+    ['bottom', '垂直仰拍 · Straight Up', '垂直仰拍（正下方90度垂直向上）'],
+    ['aori', '仰视构图 · Aori（动画）', '仰视构图（日式动画仰角构图）'],
+  ] },
+  { g: '高度机位 | Heights', items: [
+    ['shoulder', '齐肩 · Shoulder Level', '齐肩高度机位'],
+    ['chest', '齐胸 · Chest Level', '齐胸高度机位'],
+    ['hip', '齐腰 · Hip Level', '齐腰高度机位（西部片枪战高度）'],
+    ['knee', '齐膝 · Knee Level', '齐膝高度机位'],
+    ['ankle', '脚踝 · Ankle Level', '脚踝高度机位'],
+    ['ground', '贴地 · Ground Level', '贴地机位（镜头几乎贴着地面）'],
+    ['tatami', '榻榻米 · Tatami (Ozu)', '榻榻米机位（小津安二郎式的低座视线固定低机位）'],
+  ] },
+  { g: '倾斜 | Canted', items: [
+    ['dutch', '荷兰角 · Dutch Angle', '荷兰角（画框倾斜的斜角构图）'],
+    ['dutch-left', '左倾荷兰角 · Dutch Left', '左倾荷兰角（画框向左倾斜）'],
+    ['dutch-right', '右倾荷兰角 · Dutch Right', '右倾荷兰角（画框向右倾斜）'],
+    ['dutch-extreme', '极端荷兰角 · Extreme Dutch', '极端荷兰角（接近45度的强烈倾斜）'],
+  ] },
+  { g: '特殊机位 | Special Rigs', items: [
+    ['aerial-pos', '航拍机位 · Aerial/Drone', '航拍机位'],
+    ['aerial-high', '高空航拍 · High-Altitude', '高空航拍机位'],
+    ['aerial-low', '低空航拍 · Low-Altitude', '低空航拍机位'],
+    ['underwater', '水下仰拍 · Underwater Up', '水下仰拍机位（透过水面向上看）'],
+    ['ceiling', '吊顶 · Ceiling-Mounted', '吊顶机位（固定在天花板向下）'],
+    ['overhead-rig', '顶摄支架 · Overhead Rig', '顶摄支架机位（桌面正上方垂直俯拍）'],
+    ['floor', '地面固定 · Floor-Mounted', '地面固定机位'],
+  ] },
+];
+const DIR_MOVE_GROUPS = [
+  { g: '固定 | Static', items: [
+    ['static', '固定镜头 · Static/Locked-Off', '固定镜头（机位锁死零运动）'],
+  ] },
+  { g: '摇移旋转 | Pan / Tilt / Roll', items: [
+    ['pan-left', '左摇 · Pan Left', '左摇镜头'],
+    ['pan-right', '右摇 · Pan Right', '右摇镜头'],
+    ['tilt-up', '上摇 · Tilt Up', '上摇镜头'],
+    ['tilt-down', '下摇 · Tilt Down', '下摇镜头'],
+    ['whip-pan-left', '左甩 · Whip Pan Left', '向左急甩镜头（高速横甩带动态模糊）'],
+    ['whip-pan-right', '右甩 · Whip Pan Right', '向右急甩镜头（高速横甩带动态模糊）'],
+    ['whip-tilt-up', '上甩 · Whip Tilt Up', '向上急甩镜头'],
+    ['whip-tilt-down', '下甩 · Whip Tilt Down', '向下急甩镜头'],
+    ['follow-pan', '跟摇 · Follow Pan', '跟摇镜头（机位不动，镜头摇转跟随主体移动）'],
+    ['roll-cw', '顺时针滚转 · Roll CW', '镜头顺时针旋转（画面绕视轴滚转）'],
+    ['roll-ccw', '逆时针滚转 · Roll CCW', '镜头逆时针旋转（画面绕视轴滚转）'],
+    ['dutch-roll', '荷兰角倾斜 · Dutch Roll', '滚转进入荷兰角（画框倾斜定格）'],
+  ] },
+  { g: '推拉平移 | Dolly / Truck / Pedestal', items: [
+    ['push-in', '推进 · Push In', '推镜头（镜头向主体推进）'],
+    ['pull-out', '拉远 · Pull Out', '拉镜头（镜头远离主体后撤）'],
+    ['dolly-in', '轨道推进 · Dolly In', '轨道平稳推进'],
+    ['dolly-out', '轨道后拉 · Dolly Out', '轨道平稳后拉'],
+    ['truck-left', '左移 · Truck Left', '镜头向左横移'],
+    ['truck-right', '右移 · Truck Right', '镜头向右横移'],
+    ['pedestal-up', '升镜头 · Pedestal Up', '机位垂直上升（不改变俯仰角）'],
+    ['pedestal-down', '降镜头 · Pedestal Down', '机位垂直下降（不改变俯仰角）'],
+  ] },
+  { g: '跟随 | Tracking', items: [
+    ['follow', '跟拍 · Tracking/Follow', '跟拍镜头（跟随主体保持距离移动）'],
+    ['lead', '倒退跟拍 · Lead Shot', '倒退跟拍（镜头在主体前方后退引领）'],
+    ['side-track', '侧面跟拍 · Side-Tracking', '侧面跟拍（与主体平行横向同步移动）'],
+    ['car-rig', '车拍 · Vehicle Mount', '车拍跟车拍摄（镜头固定于行驶车辆同速跟随）'],
+  ] },
+  { g: '弧线环绕 | Arc / Orbit', items: [
+    ['arc-left', '左弧线 · Arc Left', '左弧线运镜（绕主体走弧线向左）'],
+    ['arc-right', '右弧线 · Arc Right', '右弧线运镜（绕主体走弧线向右）'],
+    ['orbit-cw', '顺时针环绕 · Orbit CW', '顺时针环绕主体'],
+    ['orbit-ccw', '逆时针环绕 · Orbit CCW', '逆时针环绕主体'],
+    ['orbit-360', '360°环绕 · 360 Orbit', '360度完整环绕主体一周'],
+    ['spiral-up', '螺旋上升 · Spiral Up', '螺旋环绕上升（环绕主体同时爬升）'],
+    ['spiral-down', '螺旋下降 · Spiral Down', '螺旋环绕下降（环绕主体同时下降）'],
+  ] },
+  { g: '升降吊臂 | Crane / Jib', items: [
+    ['crane-up', '摇臂上升 · Crane Up', '摇臂上升（大幅度弧线抬升）'],
+    ['crane-down', '摇臂下降 · Crane Down', '摇臂下降（大幅度弧线降落）'],
+    ['jib-sweep', '摇臂横扫 · Jib Sweep', '摇臂横扫（大弧线横向掠过场景）'],
+    ['technocrane', '伸缩炮 · Technocrane', '伸缩炮遥控摇臂（臂长伸缩实现快速精准的复杂轨迹）'],
+  ] },
+  { g: '变焦对焦 | Zoom / Focus', items: [
+    ['zoom-in', '变焦推近 · Zoom In', '变焦推近（焦距变长放大主体，机位不动）'],
+    ['zoom-out', '变焦拉远 · Zoom Out', '变焦拉远（焦距变短纳入更多环境，机位不动）'],
+    ['crash-zoom-in', '急推变焦 · Crash Zoom In', '急推变焦（瞬间暴力放大冲向主体）'],
+    ['crash-zoom-out', '急拉变焦 · Crash Zoom Out', '急拉变焦（瞬间暴力缩小远离主体）'],
+    ['dolly-zoom-in', '滑动变焦·推 · Dolly Zoom In', '希区柯克滑动变焦（机位推进同时变焦拉远：主体大小不变，背景被拉伸远离产生眩晕感）'],
+    ['dolly-zoom-out', '滑动变焦·拉 · Dolly Zoom Out', '希区柯克滑动变焦（机位后拉同时变焦推近：主体大小不变，背景向主体压缩逼近）'],
+    ['rack-focus', '焦点转移 · Rack Focus', '焦点转移（焦点在前后景之间拉动切换）'],
+    ['tilt-shift', '移轴 · Tilt-Shift', '移轴镜头效果（焦平面倾斜的微缩模型感）'],
+    ['probe', '探针穿越 · Probe Lens', '探针镜头穿越推进（超细长镜头贴着微小缝隙或物体内部穿行）'],
+  ] },
+  { g: '手持稳定器 | Handheld / Stabilizer', items: [
+    ['handheld', '手持 · Handheld', '手持拍摄（自然的呼吸式晃动）'],
+    ['shaky', '剧烈晃动 · Shaky Cam', '剧烈晃动镜头（激烈失稳的紧张晃动）'],
+    ['impact-shake', '冲击震动 · Impact Shake', '冲击震动（受击/爆炸瞬间的镜头震颤）'],
+    ['steadicam', '斯坦尼康 · Steadicam Float', '斯坦尼康稳定跟拍（漂浮般丝滑移动）'],
+    ['gimbal', '云台滑行 · Gimbal Glide', '云台平滑运镜（电子稳定的匀速滑行）'],
+    ['snorricam', '身绑镜头 · Snorricam', '身绑相机（镜头固定在角色躯干正对其面部，角色稳定而背景剧烈晃动）'],
+  ] },
+  { g: '航拍 | Aerial / Drone', items: [
+    ['drone-rise', '无人机上升 · Drone Rise', '无人机上升'],
+    ['drone-descend', '无人机下降 · Drone Descend', '无人机下降'],
+    ['flyover', '飞越 · Flyover', '空中飞越（从场景上空掠过）'],
+    ['flythrough', '穿越飞行 · Fly-Through', '穿越飞行（穿过缝隙/门窗/结构内部）'],
+    ['top-down-descend', '垂直降落 · Top-Down Descend', '垂直俯拍下降'],
+    ['fpv-dive', '穿越机俯冲 · FPV Dive', '穿越机俯冲（第一视角高速俯冲下坠）'],
+    ['proximity', '贴近穿越 · Proximity Flythrough', '贴近穿越飞行（紧贴物体表面高速掠过）'],
+    ['barrel-roll', '桶滚 · Barrel Roll', '桶滚翻转（机身绕视轴360度翻滚）'],
+    ['aerial-reveal', '拉升揭示 · Aerial Pull-Back', '航拍拉升揭示（后拉爬升逐步揭露全景）'],
+  ] },
+  { g: '特殊 | Special', items: [
+    ['whip-transition', '甩镜转场 · Whip Transition', '甩镜转场（高速甩动衔接下一画面）'],
+    ['speed-ramp', '变速升降格 · Speed Ramp', '变速升降格（动作在快慢之间平滑切换）'],
+    ['slowmo', '升格慢动作 · Slow Motion', '升格慢动作（高帧率拍摄的丝滑慢动作）'],
+    ['fastmo', '降格快动作 · Fast Motion', '降格快动作（低帧率造成的快速跳跃动感）'],
+    ['bullet-time', '子弹时间 · Bullet Time', '子弹时间（时间近乎冻结，镜头绕主体高速环绕）'],
+    ['hyperlapse', '移动延时 · Hyperlapse', '移动延时摄影（大范围移动的时间快进）'],
+    ['timelapse', '延时摄影 · Time-lapse', '延时摄影（固定机位的时间快进）'],
+    ['russian-arm', '俄罗斯臂 · Russian Arm', '俄罗斯臂车载摇臂（高速行驶中环绕主体的车载摇臂运镜）'],
+    ['cablecam', '飞猫索道 · Cable Cam', '飞猫索道摄像（沿高空索道高速掠过全场）'],
+  ] },
+];
+
 const DIR_KIND_META = {
   image: { icon: '🖼', name: '参考图', accept: 'image/*', defaultRole: 'style' },
   video: { icon: '🎞', name: '参考视频', accept: 'video/*', defaultRole: 'action' },
@@ -3617,7 +3822,7 @@ function assembleDirectorRequest() {
   // 点击瞬间快照（注入前的原文 + 当时的全部参考）：生成期间用户改框也不影响历史记录
   const genSnapshot = {
     context: $('dirPrompt').value,
-    cuts: state.director.cuts.map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold, mood: c.mood || '', comp: c.comp ? { on: !!c.comp.on, p60: c.comp.p60 || '', p30: c.comp.p30 || '', p10: c.comp.p10 || '' } : undefined })),
+    cuts: state.director.cuts.map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold, mood: c.mood || '', shot: c.shot || '', angle: c.angle || '', moves: Array.isArray(c.moves) ? c.moves.filter(Boolean) : [], comp: c.comp ? { on: !!c.comp.on, p60: c.comp.p60 || '', p30: c.comp.p30 || '', p10: c.comp.p10 || '' } : undefined })),
     negative: $('dirNegative').value,
     mood: state.director.mood || '',
     animMode: $('dirAnimMode').value,
@@ -3733,7 +3938,7 @@ function renderDirector() {
         if (item.inputs) {
           // 完整重现：情境 + 分镜 + 负面 + 帧率 + 当时的全部参考素材（含 role/说明词）
           ta.value = item.inputs.context || '';
-          state.director.cuts = (item.inputs.cuts || []).map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold, mood: c.mood || '', comp: c.comp ? { on: !!c.comp.on, p60: c.comp.p60 || '', p30: c.comp.p30 || '', p10: c.comp.p10 || '' } : { on: false, p60: '', p30: '', p10: '' } }));
+          state.director.cuts = (item.inputs.cuts || []).map((c) => ({ text: c.text || '', dur: Number(c.dur) || 0, fixedCam: !!c.fixedCam, movingHold: !!c.movingHold, mood: c.mood || '', shot: c.shot || '', angle: c.angle || '', moves: Array.isArray(c.moves) ? c.moves.filter(Boolean) : [], comp: c.comp ? { on: !!c.comp.on, p60: c.comp.p60 || '', p30: c.comp.p30 || '', p10: c.comp.p10 || '' } : { on: false, p60: '', p30: '', p10: '' } }));
           state.director.mood = item.inputs.mood || '';
           if ($('dirMood')) $('dirMood').value = state.director.mood;
           state.director.negative = item.inputs.negative || '';
@@ -5732,6 +5937,82 @@ function dirEnsureCuts() {
   while (state.director.cuts.length < DIR_MIN_CUTS) state.director.cuts.push({ text: '', dur: 0 });
 }
 
+// ---------------- CUT 镜头语言三下拉：景别 / 机位 / 运镜（＋ 叠加复合运镜） ----------------
+// 选项 = 全量专业片场术语（中英双语显示）；注入永远中文行业用语（item[2]）。选'无'零注入。
+function cineOptionsHtml(groups, selected, placeholder) {
+  const opt = ([id, label]) => `<option value="${id}" ${id === (selected || '') ? 'selected' : ''}>${label}</option>`;
+  return `<option value="" ${selected ? '' : 'selected'}>${placeholder}</option>`
+    + groups.map((g) => `<optgroup label="${g.g}">${g.items.map(opt).join('')}</optgroup>`).join('');
+}
+function cineTermOf(groups, id) {
+  if (!id) return '';
+  for (const g of groups) {
+    const hit = g.items.find((x) => x[0] === id);
+    if (hit) return hit[2] || hit[1];
+  }
+  return '';
+}
+function buildCutCineRow(cut) {
+  if (!Array.isArray(cut.moves)) cut.moves = [];
+  const row = document.createElement('div');
+  row.className = 'cut-cine';
+  const mkSel = (groups, val, ph, tip, onchange) => {
+    const sel = document.createElement('select');
+    sel.className = 'cine-select';
+    sel.title = tip;
+    sel.innerHTML = cineOptionsHtml(groups, val, ph);
+    sel.onchange = () => onchange(sel.value);
+    return sel;
+  };
+  row.appendChild(mkSel(DIR_SHOT_GROUPS, cut.shot || '', '🎞 景别：无',
+    '本镜头的景别（拍多大）——注入中文行业术语', (v) => { cut.shot = v; scheduleSave(); }));
+  row.appendChild(mkSel(DIR_ANGLE_GROUPS, cut.angle || '', '📐 机位：无',
+    '本镜头的机位/角度（从哪拍）——注入中文行业术语', (v) => { cut.angle = v; scheduleSave(); }));
+  const movesWrap = document.createElement('span');
+  movesWrap.className = 'cine-moves' + (cut.fixedCam ? ' disabled' : '');
+  if (cut.fixedCam) movesWrap.title = '📌 固定机位开启中——运镜不注入；选择任一运镜会自动解除固定机位';
+  const moves = cut.moves.length ? cut.moves.slice() : [''];
+  moves.forEach((mv, mi) => {
+    const sel = mkSel(DIR_MOVE_GROUPS, mv || '', mi === 0 ? '🎥 运镜：无' : '↳ 接：无',
+      mi === 0 ? '本镜头的运镜——点右侧 ＋ 可叠加成复合运镜（按序连贯执行）' : `复合运镜第 ${mi + 1} 段——与前段连贯衔接一次完成`,
+      (v) => {
+        moves[mi] = v;
+        cut.moves = moves.slice();
+        if (v && cut.fixedCam) { cut.fixedCam = false; renderDirCuts(); } // 互斥：选了运镜就解除机位锁死
+        scheduleSave();
+      });
+    movesWrap.appendChild(sel);
+    if (moves.length > 1) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'cine-move-del';
+      del.textContent = '✕';
+      del.title = '移除这一段运镜';
+      del.onclick = () => {
+        moves.splice(mi, 1);
+        cut.moves = moves.slice();
+        renderDirCuts();
+        scheduleSave();
+      };
+      movesWrap.appendChild(del);
+    }
+  });
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'cine-move-add';
+  add.textContent = '＋';
+  add.title = '叠加一段运镜——组成复合运镜（如 推进 → 右摇 → 环绕，按序连贯执行）';
+  add.onclick = () => {
+    cut.moves = moves.slice();
+    cut.moves.push('');
+    renderDirCuts();
+    scheduleSave();
+  };
+  movesWrap.appendChild(add);
+  row.appendChild(movesWrap);
+  return row;
+}
+
 function renderDirCuts() {
   const wrap = $('dirCuts');
   if (!wrap) return;
@@ -5804,6 +6085,7 @@ function renderDirCuts() {
     clr.title = '一键清空这个镜头：文字清空 + 时长归 0 + 运镜开关全关';
     clr.onclick = () => {
       cut.text = ''; cut.dur = 0; cut.fixedCam = false; cut.movingHold = false; cut.mood = ''; cut.comp = { on: false, p60: '', p30: '', p10: '' };
+      cut.shot = ''; cut.angle = ''; cut.moves = [];
       renderDirCuts();
       syncDurationFromCuts();
       renderMentionPreview();
@@ -5830,6 +6112,7 @@ function renderDirCuts() {
     ta.value = cut.text || '';
     ta.oninput = () => { cut.text = ta.value; syncDurationFromCuts(); renderMentionPreview(); scheduleSave(); };
     attachMentionAutocomplete(ta);
+    const cineRow = buildCutCineRow(cut);
     const durRow = document.createElement('div');
     durRow.className = 'cut-dur';
     const slider = document.createElement('input');
@@ -5849,6 +6132,7 @@ function renderDirCuts() {
     durRow.appendChild(slider);
     durRow.appendChild(label);
     box.appendChild(head);
+    box.appendChild(cineRow);
     box.appendChild(ta);
     box.appendChild(durRow);
     if (cut.comp.on) {
@@ -5946,6 +6230,9 @@ function buildDirCutsBlock(resolveFn) {
       fixedCam: !!c.fixedCam,
       movingHold: !!c.movingHold,
       mood: c.mood || '',
+      shot: c.shot || '',
+      angle: c.angle || '',
+      moves: Array.isArray(c.moves) ? c.moves.filter(Boolean) : [],
       comp: c.comp && c.comp.on ? { p60: String(c.comp.p60 || '').trim(), p30: String(c.comp.p30 || '').trim(), p10: String(c.comp.p10 || '').trim() } : null,
     }))
     .filter((c) => c.text);
@@ -5963,7 +6250,24 @@ function buildDirCutsBlock(resolveFn) {
       compEmbed = `（构图章程 60/30/10：画面${parts.join('，')}；该占比在整个镜头内严格保持，不许漂移）`;
     }
     const moodEmbed = c.mood ? `（${moodPromptOf(c.mood)}）` : '';
+    // 镜头语言三下拉 → 中文行业术语注入（📌 固定机位开启时运镜段不注入，避免自相矛盾）
+    let cineEmbed = '';
+    {
+      const cineParts = [];
+      const shotT = cineTermOf(DIR_SHOT_GROUPS, c.shot);
+      const angleT = cineTermOf(DIR_ANGLE_GROUPS, c.angle);
+      const moveTs = c.moves.map((m) => cineTermOf(DIR_MOVE_GROUPS, m)).filter(Boolean);
+      if (shotT) cineParts.push(`景别——${shotT}`);
+      if (angleT) cineParts.push(`机位——${angleT}`);
+      if (moveTs.length && !c.fixedCam) {
+        cineParts.push(moveTs.length === 1
+          ? `运镜——${moveTs[0]}`
+          : `复合运镜（按序连贯衔接、一次完成、段间不停顿）——先${moveTs.join('，再')}`);
+      }
+      if (cineParts.length) cineEmbed = `（镜头语言：${cineParts.join('；')}）`;
+    }
     const body = resolveFn(c.text)
+      + cineEmbed
       + moodEmbed
       + compEmbed
       + (c.fixedCam ? CUT_FIXED_CAM_EMBED : '')
