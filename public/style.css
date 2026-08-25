@@ -270,6 +270,15 @@ textarea { transition: height 0.12s ease; overflow-y: auto; }
 .timing-card label { display: block; margin-bottom: 5px; color: var(--dim); font-size: 12px; }
 .timing-card label b { float: right; color: var(--text); }
 .timing-card input[type="range"] { width: 100%; }
+/* 下拉可读性铁律（基础层，cosmic.css 会按主题色再覆写）：
+   页面是深色但 <select> 默认 color-scheme: light → 原生弹出列表白底+浅字=看不见。
+   1) select 声明 color-scheme: dark 让 Chromium 用深色弹出层；
+   2) option/optgroup 显式深底亮字双保险（Chromium 支持 option 背景色）。 */
+select { color-scheme: dark; }
+select option { background-color: #1e1849; color: #eaefff; font-weight: 400; }
+select optgroup { background-color: #121036; color: #ffd98a; font-weight: 700; font-style: normal; }
+select option:disabled { color: #7c7aa8; }
+
 textarea, input[type="text"], input[type="password"], select {
   width: 100%; background: #0d1520; color: var(--text);
   border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
@@ -1093,7 +1102,7 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 /* 场面情绪锁下拉 */
 .mood-select {
   font-size: 11px; padding: 2px 6px; border-radius: 8px; max-width: 130px;
-  border: 1px solid rgba(120, 140, 255, .3); background: none; color: inherit; cursor: pointer;
+  border: 1px solid rgba(120, 140, 255, .3); background: var(--card2, rgba(10, 14, 40, .85)); color: var(--text); cursor: pointer;
 }
 .mood-select:has(option:checked:not([value=""])) {
   border-color: rgba(199, 120, 0, .6); background: rgba(199, 120, 0, .08); font-weight: 700;
@@ -1103,7 +1112,7 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .cut-cine { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 2px 0 6px; }
 .cut-cine .cine-select {
   font-size: 11px; padding: 2px 6px; border-radius: 8px; max-width: 168px;
-  border: 1px solid rgba(120, 140, 255, .3); background: none; color: inherit; cursor: pointer;
+  border: 1px solid rgba(120, 140, 255, .3); background: var(--card2, rgba(10, 14, 40, .85)); color: var(--text); cursor: pointer;
 }
 .cut-cine .cine-select:has(option:checked:not([value=""])) {
   border-color: rgba(79, 217, 208, .65); background: rgba(79, 217, 208, .08); font-weight: 700;

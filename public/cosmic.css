@@ -569,3 +569,18 @@ dialog h3 { letter-spacing: 0.1em; text-transform: uppercase; color: var(--navy)
 .dir-ref-row.drop-below { box-shadow: 0 3px 0 0 var(--accent); }
 .input-cell.active { border-color: var(--accent2); box-shadow: 0 0 10px rgba(246, 198, 109, .5); }
 .mt-gap:hover { background: rgba(167, 139, 250, .12); }
+
+/* ===== 2026-08-25 下拉菜单可读性铁律（深空版）=====
+   原生 <select> 弹出列表默认 color-scheme: light → 白底 + 主题浅薰衣草字 = 看不见。
+   全局三连修：1) color-scheme: dark 让弹出层走深色；2) option/optgroup 显式深空底亮字；
+   3) 收起态实底面板色，不再依赖 inherit 低对比。适用于应用内一切下拉。 */
+select { color-scheme: dark; }
+select option { background-color: var(--panel); color: var(--text); font-weight: 400; }
+select optgroup { background-color: var(--bg); color: var(--accent2); font-weight: 700; font-style: normal; }
+select option:disabled { color: #6c619e; }
+select option:checked { background-color: var(--line); color: #ffffff; }
+.mood-select, .cut-cine .cine-select {
+  background: rgba(17, 12, 44, .85);
+  color: var(--text);
+  border-color: rgba(139, 124, 246, .38);
+}
