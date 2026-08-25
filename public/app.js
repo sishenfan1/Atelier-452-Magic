@@ -680,13 +680,13 @@ function switchMode(mode) {
     refine: ['工作区 3', '原画精修', 3],
     library: ['工作区 4', '提示词库', 4],
     motion: ['工作区 5', '動作分析', 5],
-    director: ['工作区 6', 'REFERENCES TOOL', 6],
+    director: ['主工作区', 'REFERENCES TOOL', '★'], // 主力工作区：排位第一、开机即入
   };
   const nm = MODE_NAMES[mode];
   if (nm) {
     $('modeCurrentKicker').textContent = nm[0];
     $('modeCurrentTitle').textContent = nm[1];
-    $('modeCount').textContent = nm[2] + ' / 6';
+    $('modeCount').textContent = nm[2] === '★' ? '★' : nm[2] + ' / 6';
   }
   const tabsEl = $('modeTabs');
   tabsEl.classList.add('force-hide');
@@ -8103,3 +8103,8 @@ function dirComposeAllText() {
   wire('stylePromptCopy', () => $('stylePrompt').value, '风格锁定');
   wire('inbetweenPromptCopy', () => $('inbetweenPrompt').value, '中割运动锁定');
 })();
+
+// ---------------- 开机主工作区：REFERENCES TOOL（用户 2026-08-25 拍板为主力工具） ----------------
+// index.html 初始 DOM 已直接以 director 可见防闪烁；这里再跑一次 switchMode 让
+// 徽章/自愈/浮层收起等全套切换逻辑生效。放全文件末尾 = 所有函数与状态先就位（TDZ 安全）。
+switchMode('director');

@@ -662,6 +662,9 @@ const I18N = {
   '🎥 插入运镜…': ['🎥 Insert camera move…', '🎥 カメラワークを挿入…'],
   '选一个运镜 → 立即写入镜头框，成为可编辑提示词（默认整镜头生效，把「整个镜头」改成任意时段即可精控节奏）；可连插多条叠成复合运镜': ['Pick a move → it is written into the cut box as an editable prompt line (defaults to the whole shot; edit the time-span slot for fine timing); insert several to stack a composite move', 'ムーブを選ぶ → カットボックスに編集可能なプロンプト行として書き込み（既定はショット全体；時間帯スロットを書き換えて微調整）；複数挿入で複合ムーブ'],
   '📌 固定机位开启中——插入运镜会自动解除固定机位': ['📌 Locked-off camera is ON — inserting a move auto-unlocks it', '📌 フィックス固定中 — ムーブを挿入すると自動解除'],
+  // ===== 2026-08-25 主工作区（REFERENCES TOOL 升主力） =====
+  '主工作区': ['Main Workspace', 'メイン作業区'],
+  '参考驱动 · CUT 分镜 · 2.5': ['Reference-driven · CUT board · 2.5', '参照駆動 · CUT 分鏡 · 2.5'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]

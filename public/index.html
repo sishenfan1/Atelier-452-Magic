@@ -13,13 +13,18 @@
   <span id="verChip" class="ver-chip"></span>
   <nav class="mode-nav" id="modeNav">
     <button class="mode-current" id="modeCurrent" aria-haspopup="true" title="悬停查看全部 6 个工作区">
-      <span class="mode-kicker" id="modeCurrentKicker">工作区 1</span>
-      <span class="mode-title" id="modeCurrentTitle">中割生成</span>
-      <span class="mode-count" id="modeCount">1 / 6</span>
+      <span class="mode-kicker" id="modeCurrentKicker">主工作区</span>
+      <span class="mode-title" id="modeCurrentTitle">REFERENCES TOOL</span>
+      <span class="mode-count" id="modeCount">★</span>
       <span class="mode-caret">▾</span>
     </button>
     <div class="mode-tabs" id="modeTabs">
-      <button id="tabInbetween" class="mode-tab active">
+      <button id="tabDirector" class="mode-tab primary active">
+        <span class="mode-kicker">主工作区</span>
+        <span class="mode-title">REFERENCES TOOL</span>
+        <small>参考驱动 · CUT 分镜 · 2.5</small>
+      </button>
+      <button id="tabInbetween" class="mode-tab">
         <span class="mode-kicker">工作区 1</span>
         <span class="mode-title">中割生成</span>
         <small>关键帧 → 补间动画</small>
@@ -43,11 +48,6 @@
         <span class="mode-kicker">工作区 5</span>
         <span class="mode-title">動作分析</span>
         <small>视频 → 原画拾取</small>
-      </button>
-      <button id="tabDirector" class="mode-tab">
-        <span class="mode-kicker">工作区 6</span>
-        <span class="mode-title">REFERENCES TOOL</span>
-        <small>首尾帧 + 参考视频 · 2.5</small>
       </button>
     </div>
   </nav>
@@ -80,7 +80,7 @@
 </div>
 
 <!-- ============ 模式一：中割生成 ============ -->
-<main class="layout" id="viewInbetween">
+<main class="layout" id="viewInbetween" hidden>
   <aside class="col-left">
     <section class="panel highlight" id="panelImages">
       <h2>① 输入关键帧（原画）<span class="hint">— 拖拽可排序</span></h2>
@@ -487,7 +487,7 @@
 </main>
 
 <!-- ============ 模式六：导演生成（首尾帧 + 参考视频 + 参考图 · Seedance 2.0/2.5） ============ -->
-<main class="layout" id="viewDirector" hidden>
+<main class="layout" id="viewDirector">
   <div id="dirSceneTabs" class="dir-scene-tabs" aria-label="场景标签 — 多个并行的 REFERENCES TOOL 实例"></div>
   <aside class="col-left">
     <section class="panel highlight">

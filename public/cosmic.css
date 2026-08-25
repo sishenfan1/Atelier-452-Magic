@@ -584,3 +584,14 @@ select option:checked { background-color: var(--line); color: #ffffff; }
   color: var(--text);
   border-color: rgba(139, 124, 246, .38);
 }
+
+/* ===== 2026-08-25 主工作区（REFERENCES TOOL）：暖金语言 = 主力入口 ===== */
+.mode-tab.primary { border: 1px solid rgba(255, 180, 92, .6); box-shadow: 0 0 12px rgba(255, 158, 100, .25); }
+.mode-tab.primary .mode-title { color: #ffd98a; }
+.mode-tab.primary .mode-kicker { color: #ffcf8a; }
+.mode-tab.primary.active {
+  background: linear-gradient(135deg, rgba(255, 180, 92, .3), rgba(255, 111, 157, .26));
+  border-color: var(--warm-a);
+  box-shadow: 0 0 16px var(--glow-warm);
+}
+.mode-tab.primary.active .mode-title, .mode-tab.primary.active .mode-kicker { color: #fff; }
