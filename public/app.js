@@ -7990,6 +7990,102 @@ function dirSceneAddToSeq(seqId) {
   scheduleSave();
   setDirStatus('已在序列内开新空白场景 ✓ — 原场景完好保存');
 }
+/** ⧉ 另存为新场景：完整复制当前工作台（参考/提示词/历史全带上）成新实例，原场景不动 */
+function dirSceneDuplicate() {
+  ensureDirScenes();
+  const cur = state.dirScenes[state.dirSceneActive];
+  cur.data = captureDirectorLive();
+  const copy = JSON.parse(JSON.stringify(cur.data));
+  const name = ((cur.name || '场景') + ' 副本').slice(0, 24);
+  state.dirScenes.push({ id: 'sc-' + Date.now().toString(36), name, data: copy, seq: cur.seq || undefined });
+  state.dirSceneActive = state.dirScenes.length - 1;
+  applyDirectorData(copy);
+  dirSceneRerender();
+  renderDirSceneTabs();
+  scheduleSave();
+  setDirStatus('已把当前场景另存为新实例 ✓ — 素材与提示词全部带上，原场景保持不动');
+}
+/** 📤 把当前场景的参考素材+提示词传送到目标场景 —— 只追加，绝不覆盖/删除对方任何内容 */
+function dirScenePortTo(targetIdx) {
+  ensureDirScenes();
+  if (targetIdx === state.dirSceneActive) return;
+  const t = state.dirScenes[targetIdx];
+  if (!t) return;
+  const src = captureDirectorLive();
+  if (!t.data || typeof t.data !== 'object') t.data = {};
+  const td = t.data;
+  // 参考素材：同 url 跳过并同步说明；按目标场景档位上限满位跳过（沿用跨档复制语义）
+  td.refs = Array.isArray(td.refs) ? td.refs : [];
+  const tIs25 = /2p5|2-5/.test(String(td.model || '')) || (!td.model && modelIs25());
+  const caps = dirTierCaps(tIs25 ? '25' : '20');
+  let added = 0, dup = 0, full = 0;
+  for (const r of (src.refs || [])) {
+    const kind = r.kind || 'image';
+    const hit = td.refs.find((x) => x.url === r.url);
+    if (hit) { hit.name = r.name; hit.role = r.role; hit.note = r.note; hit.weight = r.weight; hit.fidelity = r.fidelity; dup += 1; continue; }
+    if (td.refs.filter((x) => (x.kind || 'image') === kind).length >= caps[kind]) { full += 1; continue; }
+    td.refs.push({ id: nextRefId++, name: r.name, url: r.url, kind, role: r.role, note: r.note, weight: r.weight, fidelity: r.fidelity });
+    added += 1;
+  }
+  // 提示词：CONTEXT/负面 尾部追加（已包含则不重复），CUT 接在对方现有镜头之后
+  const glue = (a, b, sep) => {
+    a = String(a || '').trim(); b = String(b || '').trim();
+    if (!b || a.includes(b)) return a;
+    return a ? a + sep + b : b;
+  };
+  td.context = glue(td.context, src.context, '\n\n');
+  td.negative = glue(td.negative, src.negative, '\n');
+  const srcCuts = (src.cuts || []).filter((c) => String((c || {}).text || '').trim());
+  if (srcCuts.length) {
+    const tCuts = (Array.isArray(td.cuts) ? td.cuts : []).filter((c) => String((c || {}).text || '').trim());
+    td.cuts = tCuts.concat(JSON.parse(JSON.stringify(srcCuts)));
+  }
+  scheduleSave();
+  setDirStatus(`已传送到「${t.name}」✓ — 参考 +${added}、重复 ${dup}、满位跳过 ${full}；提示词已追加（不覆盖）`);
+}
+/** 📤 级联菜单：先列序列文件夹（＋未分组），点开后列该序列内其它场景，点场景即传送 */
+function dirPortMenuShow(anchor, srcIdx) {
+  dirSeqMenuHide();
+  const menu = document.createElement('div');
+  menu.className = 'dir-seq-menu';
+  const mkRow = (label, cls, fn) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    if (cls) b.className = cls;
+    if (fn) b.onclick = (e) => { e.stopPropagation(); fn(); };
+    else b.disabled = true;
+    menu.appendChild(b);
+    return b;
+  };
+  const sceneRow = (i) => mkRow(state.dirScenes[i].name || `场景 ${i + 1}`, '', () => { dirSeqMenuHide(); dirScenePortTo(i); });
+  const renderScenes = (list, backFn) => {
+    menu.innerHTML = '';
+    mkRow('◂ 返回', 'back', backFn);
+    if (!list.length) mkRow('（此序列没有其它场景）', 'hdr', null);
+    list.forEach(sceneRow);
+  };
+  const renderTop = () => {
+    menu.innerHTML = '';
+    mkRow('📤 传送 参考+提示词 到…', 'hdr', null);
+    const others = state.dirScenes.map((_, i) => i).filter((i) => i !== srcIdx);
+    if (!state.dirSeqs.length) {
+      if (!others.length) mkRow('（没有其它场景）', 'hdr', null);
+      others.forEach(sceneRow);
+      return;
+    }
+    const inSeq = new Set();
+    for (const q of state.dirSeqs) {
+      const items = others.filter((i) => state.dirScenes[i].seq === q.id);
+      items.forEach((i) => inSeq.add(i));
+      mkRow(`📁 ${q.name}（${items.length}）▸`, '', () => renderScenes(items, renderTop));
+    }
+    const loose = others.filter((i) => !inSeq.has(i) && !(state.dirScenes[i].seq && state.dirSeqs.some((q) => q.id === state.dirScenes[i].seq)));
+    if (loose.length) mkRow(`未分组（${loose.length}）▸`, '', () => renderScenes(loose, renderTop));
+  };
+  renderTop();
+  dirMenuOpen(menu, anchor);
+}
 /** 序列 chip 的下拉：本序列全部场景（点选即切换）+ 在此序列开新场景 */
 function dirSeqDropShow(anchor, q, items) {
   dirSeqMenuHide();
@@ -8073,6 +8169,18 @@ function renderDirSceneTabs() {
         dirInlineEdit(label, sc.name || '', (v) => { sc.name = v; renderDirSceneTabs(); scheduleSave(); });
       };
       tab.appendChild(rn);
+      const dup = document.createElement('span');
+      dup.className = 'dir-scene-mini';
+      dup.textContent = '⧉';
+      dup.title = '另存为新场景 — 参考素材与提示词全部带上开新实例，本场景保持不动';
+      dup.onclick = (e) => { e.stopPropagation(); dirSceneDuplicate(); };
+      tab.appendChild(dup);
+      const port = document.createElement('span');
+      port.className = 'dir-scene-mini';
+      port.textContent = '📤';
+      port.title = '传送参考素材+提示词到其它场景（按序列选目标；只追加，绝不覆盖对方内容）';
+      port.onclick = (e) => { e.stopPropagation(); dirPortMenuShow(tab, i); };
+      tab.appendChild(port);
       const mv = document.createElement('span');
       mv.className = 'dir-scene-mini';
       mv.textContent = '📁';

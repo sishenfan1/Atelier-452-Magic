@@ -682,11 +682,22 @@ const I18N = {
   '（空序列）': ['(empty sequence)', '（空のシーケンス）'],
   '已在序列内开新空白场景 ✓ — 原场景完好保存': ['Opened a fresh blank scene inside the sequence ✓ — previous scene safely kept', 'シーケンス内に新しい空シーンを作成 ✓ — 元のシーンは保持'],
   '重命名序列': ['Rename sequence', 'シーケンス名を変更'],
+  // ===== 2026-08-26 另存新场景 + 传送参考/提示词 =====
+  '另存为新场景 — 参考素材与提示词全部带上开新实例，本场景保持不动': ['Save as new scene — opens a fresh instance carrying all references and prompts; this scene stays untouched', '新しいシーンとして保存 — 参照素材とプロンプトを全部持って新インスタンスを開く。元のシーンはそのまま'],
+  '传送参考素材+提示词到其它场景（按序列选目标；只追加，绝不覆盖对方内容）': ['Send references + prompts to another scene (pick target by sequence; append-only, never overwrites)', '参照素材＋プロンプトを他のシーンへ送る（シーケンスから選択；追記のみ、上書きなし）'],
+  '已把当前场景另存为新实例 ✓ — 素材与提示词全部带上，原场景保持不动': ['Saved current scene as a new instance ✓ — all assets and prompts carried over, the original is untouched', '現在のシーンを新インスタンスとして保存 ✓ — 素材とプロンプトを引き継ぎ、元シーンは無傷'],
+  '📤 传送 参考+提示词 到…': ['📤 Send refs + prompts to…', '📤 参照＋プロンプトを送る…'],
+  '◂ 返回': ['◂ Back', '◂ 戻る'],
+  '（此序列没有其它场景）': ['(no other scenes in this sequence)', '（このシーケンスに他のシーンなし）'],
+  '（没有其它场景）': ['(no other scenes)', '（他のシーンなし）'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]
 const I18N_RULES = [
   [/^已把「(.+)」移入序列「(.+)」✓（纯组织，不影响生成）$/, 'Moved "$1" into sequence "$2" ✓ (organization only — generation untouched)', '「$1」をシーケンス「$2」へ移動 ✓（整理専用）'],
+  [/^已传送到「(.+)」✓ — 参考 \+(\d+)、重复 (\d+)、满位跳过 (\d+)；提示词已追加（不覆盖）$/, 'Sent to "$1" ✓ — refs +$2, $3 already there (notes synced), $4 skipped (slots full); prompts appended (nothing overwritten)', '「$1」へ送信 ✓ — 参照 +$2、既存 $3（説明同期）、満杯スキップ $4；プロンプトは追記（上書きなし）'],
+  [/^📁 (.+)（(\d+)）▸$/, '📁 $1 ($2) ▸', '📁 $1（$2）▸'],
+  [/^未分组（(\d+)）▸$/, 'Ungrouped ($1) ▸', '未分類（$1）▸'],
   [/^已把「(.+)」移出序列 ✓$/, 'Moved "$1" out of its sequence ✓', '「$1」をシーケンスから外しました ✓'],
   [/^复合运镜第 (\d+) 段——与前段连贯衔接一次完成$/, 'Composite move segment $1 — flows seamlessly from the previous segment', '複合ムーブ第 $1 区間 — 前の区間から途切れず連続実行'],
   [/^已复制「(.+)」✓ (\d+) 字符$/, 'Copied "$1" ✓ $2 chars', '「$1」をコピー ✓ $2 文字'],
