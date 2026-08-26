@@ -802,6 +802,56 @@
   <div id="egStatus" class="hint accent"></div>
 </dialog>
 
+<!-- ❓ REFERENCES TOOL 教程：每个节点一行讲清（双语内联，i18n-skip） -->
+<dialog id="tutDialog" class="tut-dialog i18n-skip">
+  <h3>🎬 REFERENCES TOOL — 60 秒教程 · 60-second tour</h3>
+  <div class="tut-body">
+    <h4>① 场景与序列 · Scenes &amp; Sequences（顶部标签栏）</h4>
+    <ul>
+      <li><b>场景标签</b> — 每个场景=独立工作台（参考/提示词/历史互不干扰）。单击切换，✏/双击改名 · <i>each scene is an isolated workbench</i></li>
+      <li><b>⧉ 另存新场景</b> — 连素材整场景复制成新实例，原场景不动 · <i>clone the scene with all assets</i></li>
+      <li><b>📤 传送</b> — 把参考+提示词追加到别的场景（先选序列再选场景，绝不覆盖）· <i>send refs+prompts, append-only</i></li>
+      <li><b>📁 序列</b> — 纯组织文件夹：点 chip=场景下拉清单，✏ 改名，✕ 解散（场景保留）· <i>folders as dropdowns, organization only</i></li>
+    </ul>
+    <h4>② 参考素材 · Reference Material（左栏）</h4>
+    <ul>
+      <li><b>🖼/🎞/🎵 三分区</b> — 图/视频/音频各有独立上限，随 2.0/2.5 档位变化 · <i>per-tier caps</i></li>
+      <li><b>role 下拉</b> — 这份素材让模型学什么：风格/动作/角色一致性/道具/场景/表演/节奏 · <i>what to learn from it</i></li>
+      <li><b>说明词</b> — 一句话补充，注入后台提示词 · <i>one-line note, injected</i></li>
+      <li><b>影响力/忠实度滑杆</b> — 权重与还原度；50=中性不注入 · <i>50 = neutral</i></li>
+      <li><b>⇄ 2.0/2.5</b> — 复制到另一档参考集（两档独立记忆，切档即换）· <i>copy to the other tier</i></li>
+      <li><b>⠿ 拖拽重排</b> — @编号随位置自动重算 · <i>@numbers follow position</i></li>
+    </ul>
+    <h4>③ 提示词 · Prompts（中栏）</h4>
+    <ul>
+      <li><b>CONTEXT</b> — 全片共享的世界观/主体/风格底，永远注入 · <i>shared base, always injected</i></li>
+      <li><b>情绪锁</b> — 只锁氛围/节奏/画面能量，不碰演技；全局一个+每 CUT 一个 · <i>mood only, never acting</i></li>
+      <li><b>CUT 盒</b> — 一盒=一个镜头；留空=此镜头不存在 · <i>one shot per box, blank = skipped</i></li>
+      <li><b>时长滑杆</b> — 全部设秒数时自动按时间戳编排并对齐总时长 · <i>timestamps auto-align total</i></li>
+      <li><b>🎞 景别 / 📐 机位</b> — 选中即以中文行业术语注入（拍多大/从哪拍）· <i>injected as pro terms</i></li>
+      <li><b>🎥 插入运镜</b> — 选一个=写进框里的可编辑行；改「作用时段」精控节奏；连插多条=复合运镜 · <i>editable move lines, stack for composites</i></li>
+      <li><b>📌 固定机位 / 🎥 moving hold</b> — 互斥：机位锁死 vs 活动保持+手持感 · <i>mutually exclusive camera locks</i></li>
+      <li><b>🎨 60/30/10</b> — 构图章程：60%主导/30%次要/10%强调=视觉焦点 · <i>composition recipe</i></li>
+      <li><b>@引用</b> — 打 @ 唤出参考清单；彩色气泡=已链接（单击换绑、拖动搬家）；红 chip 点击循环跳转问题处 · <i>@-cite refs; bubbles link, red chips locate problems</i></li>
+      <li><b>NEGATIVE</b> — 画面中绝不出现的清单 · <i>never-appear list</i></li>
+      <li><b>🌲 常青</b> — 每次生成末尾恒定注入的质量/风格锚；场景可设私有版 · <i>evergreen anchor, per-scene override</i></li>
+      <li><b>💡 悬停任何术语/按钮稍久</b> — 弹出双语解释卡 · <i>hover longer on any jargon for an explainer</i></li>
+    </ul>
+    <h4>④ 生成 · Generate（右栏）</h4>
+    <ul>
+      <li><b>演技滑杆</b> — 行为化表演注入（写行为不写情绪词）· <i>behavior-based acting layer</i></li>
+      <li><b>模型下拉</b> — 跟随全局档位或本场景指定 · <i>per-scene model override</i></li>
+      <li><b>🎬 导演生成</b> — 组装全部输入出片；点击瞬间快照原文，历史可完全复现 · <i>generate; snapshotted, fully reproducible</i></li>
+      <li><b>SIMULATE GEN</b> — 零 API 消耗拿到最终提示词+编号素材包 · <i>free dry-run with asset bundle</i></li>
+      <li><b>📥 导入 / 📋 复制全部</b> — 模板格式无损往返（SHOT/CUT 标题进 CUT，其余进 CONTEXT）· <i>lossless template import/export</i></li>
+      <li><b>历史卡</b> — 悬停即播；↩ 复用提示词把当时的全部输入装回 · <i>hover to play, reuse restores all inputs</i></li>
+    </ul>
+  </div>
+  <div class="dialog-actions">
+    <button id="tutClose" class="btn primary">开始干活 · Let's go</button>
+  </div>
+</dialog>
+
 <dialog id="settingsDialog">
   <h3>API 设置（火山方舟 · Seedance）</h3>
   <div class="field">

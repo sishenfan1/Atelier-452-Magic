@@ -8296,6 +8296,13 @@ function renderDirSceneTabs() {
     dirSeqStartRename(q.id);
   };
   bar.appendChild(addSeq);
+  const helpBtn = document.createElement('button');
+  helpBtn.type = 'button';
+  helpBtn.className = 'dir-scene-add tut';
+  helpBtn.textContent = '❓';
+  helpBtn.title = '打开 REFERENCES TOOL 教程（每个控件一行讲清）';
+  helpBtn.onclick = () => tutOpen();
+  bar.appendChild(helpBtn);
 }
 if ($('dirSceneTabs')) renderDirSceneTabs();
 
@@ -8465,6 +8472,35 @@ function dirComposeAllText() {
   wire('globalPromptCopy', () => $('globalPrompt').value, '动作描述');
   wire('stylePromptCopy', () => $('stylePrompt').value, '风格锁定');
   wire('inbetweenPromptCopy', () => $('inbetweenPrompt').value, '中割运动锁定');
+})();
+
+// ---------------- ❓ REFERENCES TOOL 教程 + 首次进入指引（一次性，看过/关过就永不再弹） ----------------
+function tutOpen() {
+  try { localStorage.setItem('a452TutSeen', '1'); } catch {}
+  const tip = document.getElementById('dirIntroTip');
+  if (tip) tip.remove();
+  const d = $('tutDialog');
+  if (d) d.showModal();
+}
+if ($('tutClose')) $('tutClose').onclick = () => $('tutDialog').close();
+(function dirIntroMaybe() {
+  let seen = null;
+  try { seen = localStorage.getItem('a452TutSeen'); } catch {}
+  if (seen) return;
+  const host = $('viewDirector');
+  if (!host) return;
+  const tip = document.createElement('div');
+  tip.id = 'dirIntroTip';
+  tip.className = 'dir-intro-tip i18n-skip'; // 双语内联，跳过 i18n 观察器
+  tip.innerHTML = '<span>👋 <b>REFERENCES TOOL 是主工作台</b> — 参考素材 + CUT 分镜驱动出片 · <i>your main workbench: references + cut board drive every shot</i></span>'
+    + '<button type="button" id="dirIntroTut">❓ 60 秒教程 · Tour</button>'
+    + '<button type="button" id="dirIntroOk">知道了 · Got it</button>';
+  host.prepend(tip);
+  tip.querySelector('#dirIntroTut').onclick = () => tutOpen();
+  tip.querySelector('#dirIntroOk').onclick = () => {
+    try { localStorage.setItem('a452TutSeen', '1'); } catch {}
+    tip.remove();
+  };
 })();
 
 // ---------------- 开机主工作区：REFERENCES TOOL（用户 2026-08-25 拍板为主力工具） ----------------

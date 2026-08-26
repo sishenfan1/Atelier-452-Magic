@@ -690,6 +690,7 @@ const I18N = {
   '◂ 返回': ['◂ Back', '◂ 戻る'],
   '（此序列没有其它场景）': ['(no other scenes in this sequence)', '（このシーケンスに他のシーンなし）'],
   '（没有其它场景）': ['(no other scenes)', '（他のシーンなし）'],
+  '打开 REFERENCES TOOL 教程（每个控件一行讲清）': ['Open the REFERENCES TOOL tour (one line per control)', 'REFERENCES TOOL チュートリアルを開く（各コントロール一行で）'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]

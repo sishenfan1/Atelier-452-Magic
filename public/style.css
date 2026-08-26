@@ -1335,6 +1335,29 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .dir-seq-chip.collapsed { opacity: .85; border-style: dashed; }
 .dir-scene-tab.in-seq { border-radius: 8px; margin-left: -2px; }
 
+/* ❓ 教程入口 + 首次进入指引条 + 教程弹窗 */
+.dir-scene-add.tut { padding: 5px 9px; }
+.dir-intro-tip {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px; border-radius: 12px; font-size: 12.5px;
+  background: rgba(246, 198, 109, .1);
+  border: 1px solid rgba(246, 198, 109, .5);
+}
+.dir-intro-tip span { flex: 1; min-width: 220px; }
+.dir-intro-tip i { opacity: .65; }
+.dir-intro-tip button {
+  font: inherit; font-size: 12px; cursor: pointer; border-radius: 999px; padding: 3px 10px;
+  background: none; color: inherit; border: 1px solid rgba(246, 198, 109, .55);
+}
+.dir-intro-tip button:hover { background: rgba(246, 198, 109, .15); }
+.tut-dialog { width: min(720px, 94vw); }
+.tut-dialog .tut-body { overflow-y: auto; max-height: 62vh; padding-right: 6px; }
+.tut-dialog h4 { margin: 10px 0 4px; font-size: 12.5px; color: var(--accent2, #f6c66d); }
+.tut-dialog ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; }
+.tut-dialog li { font-size: 12px; line-height: 1.5; }
+.tut-dialog li i { opacity: .65; }
+
 /* 就地改名输入框（Electron 无 prompt，一律内联编辑） */
 .dir-rename-input {
   font: inherit; font-size: 12px; width: 110px;
