@@ -1335,6 +1335,15 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .dir-seq-chip.collapsed { opacity: .85; border-style: dashed; }
 .dir-scene-tab.in-seq { border-radius: 8px; margin-left: -2px; }
 
+/* 就地改名输入框（Electron 无 prompt，一律内联编辑） */
+.dir-rename-input {
+  font: inherit; font-size: 12px; width: 110px;
+  padding: 1px 6px; border-radius: 6px;
+  background: rgba(5, 6, 15, .65); color: var(--text, #eae6ff);
+  border: 1px solid var(--accent2, #f6c66d);
+  outline: none;
+}
+
 /* 📁 移入序列菜单 */
 .dir-seq-menu {
   position: fixed; z-index: 10060; min-width: 170px; max-width: 280px;

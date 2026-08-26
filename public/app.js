@@ -7903,6 +7903,44 @@ function dirSceneRemove(idx) {
 }
 
 // ---------------- 序列文件夹（纯组织层）：装一批场景、可改名/收起/解散，不影响生成 ----------------
+// ⚠ Electron 不支持 window.prompt()（静默失败）——所有改名一律用就地 <input> 内联编辑。
+/** 把 host（名字所在的 span）就地换成输入框：Enter/失焦=提交，Esc=取消；空值=取消 */
+function dirInlineEdit(host, initial, commit) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'dir-rename-input i18n-skip';
+  input.value = initial || '';
+  input.maxLength = 24;
+  // 输入框活在 <button> 里：一切点击/双击都不能冒泡成 切换/收起/再改名
+  for (const ev of ['click', 'dblclick', 'pointerdown', 'mousedown']) {
+    input.addEventListener(ev, (e) => e.stopPropagation());
+  }
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    const v = input.value.trim().slice(0, 24);
+    if (save && v && v !== initial) commit(v);
+    else renderDirSceneTabs(); // 取消/未改：重渲染还原
+  };
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    e.stopPropagation();
+  };
+  input.onblur = () => finish(true);
+  host.textContent = '';
+  host.appendChild(input);
+  input.focus();
+  input.select();
+}
+/** 渲染后立刻进入某序列 chip 的改名态（新建序列时用） */
+function dirSeqStartRename(seqId) {
+  const chip = document.querySelector(`#dirSceneTabs .dir-seq-chip[data-seq-id="${seqId}"]`);
+  const q = state.dirSeqs.find((x) => x.id === seqId);
+  if (!chip || !q) return;
+  dirInlineEdit(chip.querySelector('.dir-seq-name'), q.name, (v) => { q.name = v; renderDirSceneTabs(); scheduleSave(); });
+}
 function dirSeqCreate(name) {
   const q = { id: 'seq-' + Date.now().toString(36), name: (name || '').trim().slice(0, 24) || `序列 ${state.dirSeqs.length + 1}`, collapsed: false };
   state.dirSeqs.push(q);
@@ -7940,10 +7978,10 @@ function dirSeqMenuShow(anchor, i) {
     mkItem(`📁 ${q.name}`, sc.seq === q.id, () => dirSceneMoveToSeq(i, q.id));
   }
   mkItem('＋ 新序列…', false, () => {
-    const name = prompt('序列名称：', `序列 ${state.dirSeqs.length + 1}`);
-    if (name === null) return;
-    const q = dirSeqCreate(name);
+    // Electron 无 prompt：先按默认名建夹并移入，随即在 chip 上就地改名
+    const q = dirSeqCreate('');
     dirSceneMoveToSeq(i, q.id);
+    dirSeqStartRename(q.id);
   });
   if (sc.seq) mkItem('⬆ 移出序列', false, () => dirSceneMoveToSeq(i, null));
   document.body.appendChild(menu);
@@ -7980,8 +8018,7 @@ function renderDirSceneTabs() {
       rn.title = '重命名场景';
       rn.onclick = (e) => {
         e.stopPropagation();
-        const name = prompt('场景名称：', sc.name || '');
-        if (name && name.trim()) { sc.name = name.trim().slice(0, 24); renderDirSceneTabs(); scheduleSave(); }
+        dirInlineEdit(label, sc.name || '', (v) => { sc.name = v; renderDirSceneTabs(); scheduleSave(); });
       };
       tab.appendChild(rn);
       const mv = document.createElement('span');
@@ -8002,8 +8039,7 @@ function renderDirSceneTabs() {
     tab.onclick = () => dirSceneSwitch(i);
     tab.ondblclick = (e) => {
       e.preventDefault();
-      const name = prompt('场景名称：', sc.name || '');
-      if (name && name.trim()) { sc.name = name.trim().slice(0, 24); renderDirSceneTabs(); scheduleSave(); }
+      dirInlineEdit(label, sc.name || '', (v) => { sc.name = v; renderDirSceneTabs(); scheduleSave(); });
     };
     return tab;
   };
@@ -8021,13 +8057,28 @@ function renderDirSceneTabs() {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'dir-seq-chip' + (q.collapsed ? ' collapsed' : '') + (containsActive ? ' has-active' : '');
-    chip.title = '单击展开/收起 · 双击改名 · ✕ 解散序列（场景不会被删除）';
+    chip.dataset.seqId = q.id;
+    chip.title = '单击展开/收起 · ✏/双击改名 · ✕ 解散序列（场景不会被删除）';
+    const icon = document.createElement('span');
+    icon.className = 'dir-seq-icon';
+    icon.textContent = q.collapsed ? '📁' : '📂';
+    chip.appendChild(icon);
     const lb = document.createElement('span');
-    lb.textContent = `${q.collapsed ? '📁' : '📂'} ${q.name}`;
+    lb.className = 'dir-seq-name';
+    lb.textContent = q.name;
     chip.appendChild(lb);
     const cnt = document.createElement('b');
     cnt.textContent = String(items.length);
     chip.appendChild(cnt);
+    const rn = document.createElement('span');
+    rn.className = 'dir-scene-mini';
+    rn.textContent = '✏';
+    rn.title = '重命名序列';
+    rn.onclick = (e) => {
+      e.stopPropagation();
+      dirInlineEdit(lb, q.name || '', (v) => { q.name = v; renderDirSceneTabs(); scheduleSave(); });
+    };
+    chip.appendChild(rn);
     const x = document.createElement('span');
     x.className = 'dir-scene-x';
     x.textContent = '✕';
@@ -8044,8 +8095,7 @@ function renderDirSceneTabs() {
     chip.onclick = () => { q.collapsed = !q.collapsed; renderDirSceneTabs(); scheduleSave(); };
     chip.ondblclick = (e) => {
       e.preventDefault();
-      const name = prompt('序列名称：', q.name || '');
-      if (name && name.trim()) { q.name = name.trim().slice(0, 24); renderDirSceneTabs(); scheduleSave(); }
+      dirInlineEdit(lb, q.name || '', (v) => { q.name = v; renderDirSceneTabs(); scheduleSave(); });
     };
     bar.appendChild(chip);
     if (!q.collapsed) items.forEach((i) => bar.appendChild(mkSceneTab(i, true)));
@@ -8064,11 +8114,11 @@ function renderDirSceneTabs() {
   addSeq.textContent = '＋ 新序列';
   addSeq.title = '建一个序列文件夹装场景（纯组织用）— 场景标签上的 📁 按钮把场景移进来';
   addSeq.onclick = () => {
-    const name = prompt('序列名称：', `序列 ${state.dirSeqs.length + 1}`);
-    if (name === null) return;
-    dirSeqCreate(name);
+    // Electron 无 prompt：按默认名即建，随即在 chip 上就地改名
+    const q = dirSeqCreate('');
     renderDirSceneTabs();
     scheduleSave();
+    dirSeqStartRename(q.id);
   };
   bar.appendChild(addSeq);
 }
