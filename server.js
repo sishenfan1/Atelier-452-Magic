@@ -1091,6 +1091,12 @@ function mediaKindOf(name) {
 }
 const HIDDEN_DIRS = new Set(['$recycle.bin', 'system volume information', 'node_modules', '$windows.~bt']);
 
+// 跨平台打开文件夹：win=explorer / mac=open / linux=xdg-open（打开器退出码不可靠，一律即发即忘）
+function openFolderNative(dir) {
+  const opener = process.platform === 'win32' ? 'explorer' : (process.platform === 'darwin' ? 'open' : 'xdg-open');
+  try { spawn(opener, [dir], { detached: true, stdio: 'ignore' }).unref(); } catch {}
+}
+
 app.get('/api/fs/roots', (req, res) => {
   const roots = [];
   if (process.platform === 'win32') {
@@ -2009,7 +2015,7 @@ app.post('/api/projects/:id/open', (req, res) => {
   if (!p) return res.status(404).json({ error: '工程不存在' });
   try {
     fs.mkdirSync(p.dir, { recursive: true });
-    spawn('explorer', [p.dir], { detached: true }).unref(); // explorer 退出码不代表失败，直接视为成功
+    openFolderNative(p.dir); // 打开器退出码不代表失败，直接视为成功
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
@@ -2510,7 +2516,7 @@ app.post('/api/fs/open-folder', (req, res) => {
     const p = path.resolve(String(req.body && req.body.path || ''));
     const simRoot = path.resolve(path.join(BASE, 'simulations'));
     if (!p.startsWith(simRoot) || !fs.existsSync(p)) return res.status(400).json({ error: '只允许打开模拟输出目录' });
-    spawn('explorer', [p], { detached: true, stdio: 'ignore' }).unref();
+    openFolderNative(p);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: String(e && e.message || e).slice(0, 160) });
