@@ -1315,6 +1315,41 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
   border: 1px dashed rgba(246, 198, 109, .55); border-radius: 999px;
 }
 .dir-scene-add:hover { background: rgba(246, 198, 109, .1); border-style: solid; }
+.dir-scene-add.seq { color: var(--accent, #a78bfa); border-color: rgba(167, 139, 250, .5); }
+.dir-scene-add.seq:hover { background: rgba(167, 139, 250, .1); }
+
+/* 场景标签上的小按钮（✏ 改名 / 📁 序列） */
+.dir-scene-mini { opacity: .7; font-size: 11px; cursor: pointer; }
+.dir-scene-mini:hover { opacity: 1; transform: scale(1.15); }
+
+/* 序列文件夹 chip：装一批场景，收起时只剩 chip */
+.dir-seq-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+  background: rgba(167, 139, 250, .1); color: var(--text);
+  border: 1px solid rgba(167, 139, 250, .55); border-radius: 10px;
+}
+.dir-seq-chip b { font-size: 10.5px; padding: 0 6px; border-radius: 999px; background: rgba(167, 139, 250, .25); }
+.dir-seq-chip:hover { border-color: var(--accent, #a78bfa); background: rgba(167, 139, 250, .18); }
+.dir-seq-chip.has-active { border-color: rgba(255, 190, 130, .85); box-shadow: 0 0 10px var(--glow-warm, rgba(255, 158, 100, .3)); }
+.dir-seq-chip.collapsed { opacity: .85; border-style: dashed; }
+.dir-scene-tab.in-seq { border-radius: 8px; margin-left: -2px; }
+
+/* 📁 移入序列菜单 */
+.dir-seq-menu {
+  position: fixed; z-index: 10060; min-width: 170px; max-width: 280px;
+  display: flex; flex-direction: column; padding: 5px;
+  background: var(--card2, #10142e); color: var(--text, #d7e1ee);
+  border: 1px solid var(--line-strong, rgba(120, 140, 255, .5));
+  border-radius: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, .5);
+}
+.dir-seq-menu button {
+  text-align: left; padding: 6px 10px; font: inherit; font-size: 12px; cursor: pointer;
+  background: none; color: inherit; border: none; border-radius: 7px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dir-seq-menu button:hover { background: rgba(167, 139, 250, .16); }
+.dir-seq-menu button.cur { color: var(--accent2, #f6c66d); font-weight: 700; }
 
 /* 📥 提示词导入 */
 .ingest-dialog { width: min(780px, 94vw); }

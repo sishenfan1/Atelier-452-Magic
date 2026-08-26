@@ -171,6 +171,7 @@ function snapshot() {
     director: captureDirectorLive(), // 向后兼容字段（旧版本打开也能读）
     dirScenes: dirScenesSnapshot(),
     dirSceneActive: state.dirSceneActive || 0,
+    dirSeqs: Array.isArray(state.dirSeqs) ? state.dirSeqs : [], // 序列文件夹（纯组织层）
     pendingTasks: state.pendingTasks,
   };
 }
@@ -262,6 +263,7 @@ async function loadProject() {
     state.motion.poses = Array.isArray(mo.poses) ? mo.poses : [];
     restoreMotionUI();
     // 多场景：优先恢复场景集；旧工程只有 director 单场 → 自动迁移为「场景 1」
+    state.dirSeqs = Array.isArray(p.dirSeqs) ? p.dirSeqs.filter((q) => q && typeof q === 'object' && q.id) : [];
     if (Array.isArray(p.dirScenes) && p.dirScenes.length) {
       state.dirScenes = p.dirScenes.filter((s) => s && typeof s === 'object');
       state.dirSceneActive = Math.max(0, Math.min(Number(p.dirSceneActive) || 0, state.dirScenes.length - 1));
@@ -7746,6 +7748,7 @@ if ($('btnKeychain')) {
 const DIR_ACT_IDS = ['dirActOverall', 'dirActFace', 'dirActBody', 'dirActTempo', 'dirActVelocity', 'dirActFx', 'dirActPhysics'];
 
 function ensureDirScenes() {
+  if (!Array.isArray(state.dirSeqs)) state.dirSeqs = []; // 序列文件夹 [{id,name,collapsed}]
   if (!Array.isArray(state.dirScenes) || !state.dirScenes.length) {
     state.dirScenes = [{ id: 'sc-' + Date.now().toString(36), name: '场景 1', data: null }];
     state.dirSceneActive = 0;
@@ -7851,7 +7854,7 @@ function dirScenesSnapshot() {
   ensureDirScenes();
   const sc = state.dirScenes[state.dirSceneActive];
   if (sc && $('dirPrompt')) sc.data = captureDirectorLive();
-  return state.dirScenes.map((s) => ({ id: s.id, name: s.name, data: s.data }));
+  return state.dirScenes.map((s) => ({ id: s.id, name: s.name, data: s.data, seq: s.seq || undefined }));
 }
 
 function dirSceneSwitch(idx) {
@@ -7870,7 +7873,9 @@ function dirSceneAdd() {
   ensureDirScenes();
   state.dirScenes[state.dirSceneActive].data = captureDirectorLive();
   const n = state.dirScenes.length + 1;
-  state.dirScenes.push({ id: 'sc-' + Date.now().toString(36), name: `场景 ${n}`, data: null });
+  // 新场景继承当前场景所在序列（在某序列里工作时加场景，自然归入同一序列；📁 菜单随时可移）
+  const curSeq = (state.dirScenes[state.dirSceneActive] || {}).seq;
+  state.dirScenes.push({ id: 'sc-' + Date.now().toString(36), name: `场景 ${n}`, data: null, seq: curSeq || undefined });
   state.dirSceneActive = state.dirScenes.length - 1;
   applyDirectorData({ evergreen: '' }); // 全新空白实例：常青也清空（本场景不注入，需要就现写或点「沿用全局」）
   dirSceneRerender();
@@ -7897,19 +7902,95 @@ function dirSceneRemove(idx) {
   scheduleSave();
 }
 
+// ---------------- 序列文件夹（纯组织层）：装一批场景、可改名/收起/解散，不影响生成 ----------------
+function dirSeqCreate(name) {
+  const q = { id: 'seq-' + Date.now().toString(36), name: (name || '').trim().slice(0, 24) || `序列 ${state.dirSeqs.length + 1}`, collapsed: false };
+  state.dirSeqs.push(q);
+  return q;
+}
+function dirSceneMoveToSeq(i, seqId) {
+  const sc = state.dirScenes[i];
+  if (!sc) return;
+  if (seqId) sc.seq = seqId; else delete sc.seq;
+  renderDirSceneTabs();
+  scheduleSave();
+  const q = state.dirSeqs.find((x) => x.id === seqId);
+  setDirStatus(q ? `已把「${sc.name}」移入序列「${q.name}」✓（纯组织，不影响生成）` : `已把「${sc.name}」移出序列 ✓`);
+}
+let dirSeqMenuEl = null;
+function dirSeqMenuHide() {
+  if (dirSeqMenuEl) { dirSeqMenuEl.remove(); dirSeqMenuEl = null; }
+}
+/** 📁 菜单：把场景 i 移入某序列 / 新建序列 / 移出 */
+function dirSeqMenuShow(anchor, i) {
+  dirSeqMenuHide();
+  const sc = state.dirScenes[i];
+  if (!sc) return;
+  const menu = document.createElement('div');
+  menu.className = 'dir-seq-menu';
+  const mkItem = (label, cur, fn) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label + (cur ? ' ·当前' : '');
+    if (cur) b.classList.add('cur');
+    b.onclick = (e) => { e.stopPropagation(); dirSeqMenuHide(); fn(); };
+    menu.appendChild(b);
+  };
+  for (const q of state.dirSeqs) {
+    mkItem(`📁 ${q.name}`, sc.seq === q.id, () => dirSceneMoveToSeq(i, q.id));
+  }
+  mkItem('＋ 新序列…', false, () => {
+    const name = prompt('序列名称：', `序列 ${state.dirSeqs.length + 1}`);
+    if (name === null) return;
+    const q = dirSeqCreate(name);
+    dirSceneMoveToSeq(i, q.id);
+  });
+  if (sc.seq) mkItem('⬆ 移出序列', false, () => dirSceneMoveToSeq(i, null));
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.min(r.left, Math.max(6, window.innerWidth - menu.offsetWidth - 6)) + 'px';
+  menu.style.top = (r.bottom + 6) + 'px';
+  dirSeqMenuEl = menu;
+  setTimeout(() => {
+    const close = (e) => { if (!menu.contains(e.target)) { dirSeqMenuHide(); document.removeEventListener('pointerdown', close, true); } };
+    document.addEventListener('pointerdown', close, true);
+  }, 0);
+}
+
 function renderDirSceneTabs() {
   const bar = $('dirSceneTabs');
   if (!bar) return;
   ensureDirScenes();
+  dirSeqMenuHide();
   bar.innerHTML = '';
-  state.dirScenes.forEach((sc, i) => {
+  const mkSceneTab = (i, inSeq) => {
+    const sc = state.dirScenes[i];
     const tab = document.createElement('button');
     tab.type = 'button';
-    tab.className = 'dir-scene-tab' + (i === state.dirSceneActive ? ' active' : '');
+    tab.className = 'dir-scene-tab' + (i === state.dirSceneActive ? ' active' : '') + (inSeq ? ' in-seq' : '');
     tab.title = '单击切换 · 双击改名';
     const label = document.createElement('span');
     label.textContent = sc.name || `场景 ${i + 1}`;
     tab.appendChild(label);
+    if (i === state.dirSceneActive) {
+      // 活场景带可见小按钮：✏ 改名（双击改名的显性入口）+ 📁 移入/移出序列
+      const rn = document.createElement('span');
+      rn.className = 'dir-scene-mini';
+      rn.textContent = '✏';
+      rn.title = '重命名场景';
+      rn.onclick = (e) => {
+        e.stopPropagation();
+        const name = prompt('场景名称：', sc.name || '');
+        if (name && name.trim()) { sc.name = name.trim().slice(0, 24); renderDirSceneTabs(); scheduleSave(); }
+      };
+      tab.appendChild(rn);
+      const mv = document.createElement('span');
+      mv.className = 'dir-scene-mini';
+      mv.textContent = '📁';
+      mv.title = '移入/移出序列（纯组织用，不影响生成）';
+      mv.onclick = (e) => { e.stopPropagation(); dirSeqMenuShow(tab, i); };
+      tab.appendChild(mv);
+    }
     if (state.dirScenes.length > 1) {
       const x = document.createElement('span');
       x.className = 'dir-scene-x';
@@ -7924,8 +8005,52 @@ function renderDirSceneTabs() {
       const name = prompt('场景名称：', sc.name || '');
       if (name && name.trim()) { sc.name = name.trim().slice(0, 24); renderDirSceneTabs(); scheduleSave(); }
     };
-    bar.appendChild(tab);
+    return tab;
+  };
+  // 分组：先按序列（dirSeqs 顺序）成组渲染，散场景殿后；场景在 dirScenes 里的真实下标始终不变
+  const bySeq = new Map();
+  const loose = [];
+  state.dirScenes.forEach((sc, i) => {
+    const ok = sc.seq && state.dirSeqs.some((q) => q.id === sc.seq);
+    if (ok) { if (!bySeq.has(sc.seq)) bySeq.set(sc.seq, []); bySeq.get(sc.seq).push(i); }
+    else loose.push(i);
   });
+  for (const q of state.dirSeqs) {
+    const items = bySeq.get(q.id) || [];
+    const containsActive = items.includes(state.dirSceneActive);
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'dir-seq-chip' + (q.collapsed ? ' collapsed' : '') + (containsActive ? ' has-active' : '');
+    chip.title = '单击展开/收起 · 双击改名 · ✕ 解散序列（场景不会被删除）';
+    const lb = document.createElement('span');
+    lb.textContent = `${q.collapsed ? '📁' : '📂'} ${q.name}`;
+    chip.appendChild(lb);
+    const cnt = document.createElement('b');
+    cnt.textContent = String(items.length);
+    chip.appendChild(cnt);
+    const x = document.createElement('span');
+    x.className = 'dir-scene-x';
+    x.textContent = '✕';
+    x.title = '解散这个序列（场景不会被删除，只是移出）';
+    x.onclick = (e) => {
+      e.stopPropagation();
+      if (items.length && !confirm(`解散序列「${q.name}」？里面的 ${items.length} 个场景不会被删除，只会移出序列。`)) return;
+      for (const i of items) delete state.dirScenes[i].seq;
+      state.dirSeqs = state.dirSeqs.filter((z) => z.id !== q.id);
+      renderDirSceneTabs();
+      scheduleSave();
+    };
+    chip.appendChild(x);
+    chip.onclick = () => { q.collapsed = !q.collapsed; renderDirSceneTabs(); scheduleSave(); };
+    chip.ondblclick = (e) => {
+      e.preventDefault();
+      const name = prompt('序列名称：', q.name || '');
+      if (name && name.trim()) { q.name = name.trim().slice(0, 24); renderDirSceneTabs(); scheduleSave(); }
+    };
+    bar.appendChild(chip);
+    if (!q.collapsed) items.forEach((i) => bar.appendChild(mkSceneTab(i, true)));
+  }
+  loose.forEach((i) => bar.appendChild(mkSceneTab(i, false)));
   const add = document.createElement('button');
   add.type = 'button';
   add.className = 'dir-scene-add';
@@ -7933,6 +8058,19 @@ function renderDirSceneTabs() {
   add.title = '开一个全新空白的 REFERENCES TOOL 实例 — 现有场景原样保留，随时切回';
   add.onclick = dirSceneAdd;
   bar.appendChild(add);
+  const addSeq = document.createElement('button');
+  addSeq.type = 'button';
+  addSeq.className = 'dir-scene-add seq';
+  addSeq.textContent = '＋ 新序列';
+  addSeq.title = '建一个序列文件夹装场景（纯组织用）— 场景标签上的 📁 按钮把场景移进来';
+  addSeq.onclick = () => {
+    const name = prompt('序列名称：', `序列 ${state.dirSeqs.length + 1}`);
+    if (name === null) return;
+    dirSeqCreate(name);
+    renderDirSceneTabs();
+    scheduleSave();
+  };
+  bar.appendChild(addSeq);
 }
 if ($('dirSceneTabs')) renderDirSceneTabs();
 

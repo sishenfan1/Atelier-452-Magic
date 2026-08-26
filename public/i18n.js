@@ -665,10 +665,23 @@ const I18N = {
   // ===== 2026-08-25 主工作区（REFERENCES TOOL 升主力） =====
   '主工作区': ['Main Workspace', 'メイン作業区'],
   '参考驱动 · CUT 分镜 · 2.5': ['Reference-driven · CUT board · 2.5', '参照駆動 · CUT 分鏡 · 2.5'],
+  // ===== 2026-08-25 场景改名显性入口 + 序列文件夹 =====
+  '＋ 新序列': ['+ New sequence', '＋ 新シーケンス'],
+  '＋ 新序列…': ['+ New sequence…', '＋ 新シーケンス…'],
+  '⬆ 移出序列': ['⬆ Remove from sequence', '⬆ シーケンスから外す'],
+  '重命名场景': ['Rename scene', 'シーン名を変更'],
+  '移入/移出序列（纯组织用，不影响生成）': ['Move into / out of a sequence (organization only — never affects generation)', 'シーケンスへ移動/解除（整理専用 — 生成には影響なし）'],
+  '单击展开/收起 · 双击改名 · ✕ 解散序列（场景不会被删除）': ['Click to expand/collapse · double-click to rename · ✕ dissolves the sequence (scenes are kept)', 'クリックで開閉 · ダブルクリックで改名 · ✕ で解散（シーンは残る）'],
+  '解散这个序列（场景不会被删除，只是移出）': ['Dissolve this sequence (scenes are kept, just ungrouped)', 'このシーケンスを解散（シーンは削除されず外れるだけ）'],
+  '建一个序列文件夹装场景（纯组织用）— 场景标签上的 📁 按钮把场景移进来': ['Create a sequence folder for scenes (organization only) — use the 📁 button on a scene tab to move it in', 'シーンをまとめるシーケンスフォルダを作成（整理専用）— シーンタブの 📁 で移動'],
+  '序列名称：': ['Sequence name:', 'シーケンス名：'],
+  '场景名称：': ['Scene name:', 'シーン名：'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]
 const I18N_RULES = [
+  [/^已把「(.+)」移入序列「(.+)」✓（纯组织，不影响生成）$/, 'Moved "$1" into sequence "$2" ✓ (organization only — generation untouched)', '「$1」をシーケンス「$2」へ移動 ✓（整理専用）'],
+  [/^已把「(.+)」移出序列 ✓$/, 'Moved "$1" out of its sequence ✓', '「$1」をシーケンスから外しました ✓'],
   [/^复合运镜第 (\d+) 段——与前段连贯衔接一次完成$/, 'Composite move segment $1 — flows seamlessly from the previous segment', '複合ムーブ第 $1 区間 — 前の区間から途切れず連続実行'],
   [/^已复制「(.+)」✓ (\d+) 字符$/, 'Copied "$1" ✓ $2 chars', '「$1」をコピー ✓ $2 文字'],
   [/^「(.+)」是空的 — 没有可复制的内容$/, '"$1" is empty — nothing to copy', '「$1」は空です — コピーする内容がありません'],
