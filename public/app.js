@@ -7959,6 +7959,66 @@ let dirSeqMenuEl = null;
 function dirSeqMenuHide() {
   if (dirSeqMenuEl) { dirSeqMenuEl.remove(); dirSeqMenuEl = null; }
 }
+/** 浮层菜单通用呈现：贴 anchor 下方 + 点外即关（📁 移入菜单与序列下拉共用） */
+let dirMenuClosedInfo = null; // {key,t}：点外关闭的瞬间记录 — chip 再点一下= toggle 关，不是关了又开
+function dirMenuOpen(menu, anchor) {
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.min(r.left, Math.max(6, window.innerWidth - menu.offsetWidth - 6)) + 'px';
+  menu.style.top = (r.bottom + 6) + 'px';
+  dirSeqMenuEl = menu;
+  setTimeout(() => {
+    const close = (e) => {
+      if (menu.contains(e.target)) return;
+      dirMenuClosedInfo = { key: menu.dataset.forSeq || '', t: Date.now() };
+      dirSeqMenuHide();
+      document.removeEventListener('pointerdown', close, true);
+    };
+    document.addEventListener('pointerdown', close, true);
+  }, 0);
+}
+/** 在指定序列里开新空白场景（序列下拉里的 ＋ 行） */
+function dirSceneAddToSeq(seqId) {
+  ensureDirScenes();
+  state.dirScenes[state.dirSceneActive].data = captureDirectorLive();
+  const n = state.dirScenes.length + 1;
+  state.dirScenes.push({ id: 'sc-' + Date.now().toString(36), name: `场景 ${n}`, data: null, seq: seqId || undefined });
+  state.dirSceneActive = state.dirScenes.length - 1;
+  applyDirectorData({ evergreen: '' });
+  dirSceneRerender();
+  renderDirSceneTabs();
+  scheduleSave();
+  setDirStatus('已在序列内开新空白场景 ✓ — 原场景完好保存');
+}
+/** 序列 chip 的下拉：本序列全部场景（点选即切换）+ 在此序列开新场景 */
+function dirSeqDropShow(anchor, q, items) {
+  dirSeqMenuHide();
+  const menu = document.createElement('div');
+  menu.className = 'dir-seq-menu';
+  if (!items.length) {
+    const empty = document.createElement('button');
+    empty.type = 'button';
+    empty.disabled = true;
+    empty.textContent = '（空序列）';
+    menu.appendChild(empty);
+  }
+  for (const i of items) {
+    const sc = state.dirScenes[i];
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = (i === state.dirSceneActive ? '● ' : '') + (sc.name || `场景 ${i + 1}`);
+    if (i === state.dirSceneActive) b.classList.add('cur');
+    b.onclick = (e) => { e.stopPropagation(); dirSeqMenuHide(); dirSceneSwitch(i); };
+    menu.appendChild(b);
+  }
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'add';
+  add.textContent = '＋ 在此序列开新场景';
+  add.onclick = (e) => { e.stopPropagation(); dirSeqMenuHide(); dirSceneAddToSeq(q.id); };
+  menu.appendChild(add);
+  dirMenuOpen(menu, anchor);
+}
 /** 📁 菜单：把场景 i 移入某序列 / 新建序列 / 移出 */
 function dirSeqMenuShow(anchor, i) {
   dirSeqMenuHide();
@@ -7984,15 +8044,7 @@ function dirSeqMenuShow(anchor, i) {
     dirSeqStartRename(q.id);
   });
   if (sc.seq) mkItem('⬆ 移出序列', false, () => dirSceneMoveToSeq(i, null));
-  document.body.appendChild(menu);
-  const r = anchor.getBoundingClientRect();
-  menu.style.left = Math.min(r.left, Math.max(6, window.innerWidth - menu.offsetWidth - 6)) + 'px';
-  menu.style.top = (r.bottom + 6) + 'px';
-  dirSeqMenuEl = menu;
-  setTimeout(() => {
-    const close = (e) => { if (!menu.contains(e.target)) { dirSeqMenuHide(); document.removeEventListener('pointerdown', close, true); } };
-    document.addEventListener('pointerdown', close, true);
-  }, 0);
+  dirMenuOpen(menu, anchor);
 }
 
 function renderDirSceneTabs() {
@@ -8056,12 +8108,12 @@ function renderDirSceneTabs() {
     const containsActive = items.includes(state.dirSceneActive);
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = 'dir-seq-chip' + (q.collapsed ? ' collapsed' : '') + (containsActive ? ' has-active' : '');
+    chip.className = 'dir-seq-chip' + (containsActive ? ' has-active' : '');
     chip.dataset.seqId = q.id;
-    chip.title = '单击展开/收起 · ✏/双击改名 · ✕ 解散序列（场景不会被删除）';
+    chip.title = '单击打开场景下拉清单 · ✏/双击改名 · ✕ 解散序列（场景不会被删除）';
     const icon = document.createElement('span');
     icon.className = 'dir-seq-icon';
-    icon.textContent = q.collapsed ? '📁' : '📂';
+    icon.textContent = '📁';
     chip.appendChild(icon);
     const lb = document.createElement('span');
     lb.className = 'dir-seq-name';
@@ -8070,12 +8122,17 @@ function renderDirSceneTabs() {
     const cnt = document.createElement('b');
     cnt.textContent = String(items.length);
     chip.appendChild(cnt);
+    const caret = document.createElement('span');
+    caret.className = 'dir-seq-caret';
+    caret.textContent = '▾';
+    chip.appendChild(caret);
     const rn = document.createElement('span');
     rn.className = 'dir-scene-mini';
     rn.textContent = '✏';
     rn.title = '重命名序列';
     rn.onclick = (e) => {
       e.stopPropagation();
+      dirSeqMenuHide();
       dirInlineEdit(lb, q.name || '', (v) => { q.name = v; renderDirSceneTabs(); scheduleSave(); });
     };
     chip.appendChild(rn);
@@ -8092,13 +8149,23 @@ function renderDirSceneTabs() {
       scheduleSave();
     };
     chip.appendChild(x);
-    chip.onclick = () => { q.collapsed = !q.collapsed; renderDirSceneTabs(); scheduleSave(); };
+    chip.onclick = () => {
+      // 序列 = 下拉菜单：点 chip 弹出本序列全部场景（点选切换）；再点同一 chip = 收起
+      if (dirMenuClosedInfo && dirMenuClosedInfo.key === q.id && Date.now() - dirMenuClosedInfo.t < 350) {
+        dirMenuClosedInfo = null;
+        return; // 这次点击就是「关掉刚才那个下拉」——不要再弹回来
+      }
+      dirSeqDropShow(chip, q, items);
+      if (dirSeqMenuEl) dirSeqMenuEl.dataset.forSeq = q.id;
+    };
     chip.ondblclick = (e) => {
       e.preventDefault();
+      dirSeqMenuHide();
       dirInlineEdit(lb, q.name || '', (v) => { q.name = v; renderDirSceneTabs(); scheduleSave(); });
     };
     bar.appendChild(chip);
-    if (!q.collapsed) items.forEach((i) => bar.appendChild(mkSceneTab(i, true)));
+    // 序列内场景不再平铺占位——只有活场景以标签形式钉在 chip 旁（改名/📁/删除入口都在）
+    if (containsActive) bar.appendChild(mkSceneTab(state.dirSceneActive, true));
   }
   loose.forEach((i) => bar.appendChild(mkSceneTab(i, false)));
   const add = document.createElement('button');

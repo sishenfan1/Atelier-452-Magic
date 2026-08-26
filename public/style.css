@@ -1359,6 +1359,9 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 }
 .dir-seq-menu button:hover { background: rgba(167, 139, 250, .16); }
 .dir-seq-menu button.cur { color: var(--accent2, #f6c66d); font-weight: 700; }
+.dir-seq-menu button:disabled { opacity: .5; cursor: default; }
+.dir-seq-menu button.add { color: var(--accent2, #f6c66d); border-top: 1px solid rgba(120, 140, 255, .22); border-radius: 0; margin-top: 3px; padding-top: 8px; }
+.dir-seq-caret { font-size: 10px; opacity: .75; }
 
 /* 📥 提示词导入 */
 .ingest-dialog { width: min(780px, 94vw); }

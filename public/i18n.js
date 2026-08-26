@@ -676,6 +676,12 @@ const I18N = {
   '建一个序列文件夹装场景（纯组织用）— 场景标签上的 📁 按钮把场景移进来': ['Create a sequence folder for scenes (organization only) — use the 📁 button on a scene tab to move it in', 'シーンをまとめるシーケンスフォルダを作成（整理専用）— シーンタブの 📁 で移動'],
   '序列名称：': ['Sequence name:', 'シーケンス名：'],
   '场景名称：': ['Scene name:', 'シーン名：'],
+  // ===== 2026-08-26 序列改为下拉菜单 =====
+  '单击打开场景下拉清单 · ✏/双击改名 · ✕ 解散序列（场景不会被删除）': ['Click to open the scene dropdown · ✏/double-click to rename · ✕ dissolves the sequence (scenes are kept)', 'クリックでシーン一覧を開く · ✏/ダブルクリックで改名 · ✕ で解散（シーンは残る）'],
+  '＋ 在此序列开新场景': ['+ New scene in this sequence', '＋ このシーケンスに新シーン'],
+  '（空序列）': ['(empty sequence)', '（空のシーケンス）'],
+  '已在序列内开新空白场景 ✓ — 原场景完好保存': ['Opened a fresh blank scene inside the sequence ✓ — previous scene safely kept', 'シーケンス内に新しい空シーンを作成 ✓ — 元のシーンは保持'],
+  '重命名序列': ['Rename sequence', 'シーケンス名を変更'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]
