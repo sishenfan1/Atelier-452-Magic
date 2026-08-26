@@ -1047,7 +1047,8 @@ const pm = require(path.join(__dirname, 'public-mode.js')).install(app, { DATA_D
 const filesApp = express();
 filesApp.use('/videos', express.static(VIDEO_DIR));
 filesApp.use('/assets', express.static(ASSET_DIR));
-filesApp.listen(FILES_PORT).on('error', (e) => {
+// 只绑回环：cloudflared 隧道走 127.0.0.1 回源，绑 0.0.0.0 只会招来 Windows 防火墙的管理员弹窗
+filesApp.listen(FILES_PORT, '127.0.0.1').on('error', (e) => {
   console.warn('只读文件端口未启动（可能已有实例在跑）:', e.code);
 });
 
@@ -3110,7 +3111,8 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5893;
-app.listen(PORT, () => {
+// 只绑回环（浏览器/Chrome 扩展/平台窗口全走 localhost）：不暴露局域网，也永远不触发防火墙管理员弹窗
+app.listen(PORT, '127.0.0.1', () => {
   const cfg = loadConfig();
   console.log(`Atelier452 Magic http://localhost:${PORT}`);
   console.log(`数据目录: ${BASE}`);
