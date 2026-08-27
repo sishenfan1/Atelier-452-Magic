@@ -68,6 +68,7 @@
       <button data-lang="zh">中</button><button data-lang="en">EN</button><button data-lang="ja">日</button>
     </span>
     <button id="btnKeychain" class="btn ghost" title="API Key 钥匙串：按平台管理多个账号的 Key，随时切换当前生效的那把">🔑</button>
+    <button id="btnLlmPortal" class="btn ghost" title="LLM 门户：选择增强/翻译用的大模型通道 — Hermes 本机零 Key / Ollama / LM Studio / OpenRouter / 任意 OpenAI 兼容端点">🧠</button>
     <button id="btnSettings" class="btn ghost">⚙ API 设置</button>
   </div>
 </header>
@@ -845,12 +846,55 @@
       <li><b>🎬 导演生成</b> — 组装全部输入出片；点击瞬间快照原文，历史可完全复现 · <i>generate; snapshotted, fully reproducible</i></li>
       <li><b>SIMULATE GEN</b> — 零 API 消耗拿到最终提示词+编号素材包 · <i>free dry-run with asset bundle</i></li>
       <li><b>📥 导入 / 📋 复制全部</b> — 模板格式无损往返（SHOT/CUT 标题进 CUT，其余进 CONTEXT）· <i>lossless template import/export</i></li>
+      <li><b>🧠 LLM 门户</b>（顶栏）— ✨增强/翻译走哪个大模型：Hermes 本机零 Key、Ollama/LM Studio/OpenRouter 或任意自定义端点 · <i>pick the LLM behind enhance/translate; local Hermes needs zero keys</i></li>
       <li><b>历史卡</b> — 悬停即播；↩ 复用提示词把当时的全部输入装回 · <i>hover to play, reuse restores all inputs</i></li>
     </ul>
   </div>
   <div class="dialog-actions">
     <button id="tutClose" class="btn primary">开始干活 · Let's go</button>
   </div>
+</dialog>
+
+<!-- 🧠 LLM 门户：Hermes 本机零 Key / 任意 OpenAI 兼容端点（Ollama / LM Studio / OpenRouter / 自定义） -->
+<dialog id="llmDialog" class="llm-dialog">
+  <h3>🧠 LLM 门户 <span class="hint">— 供 ✨增强 / 出站翻译 / 剧本解析使用的大模型通道</span></h3>
+  <div class="field">
+    <label>当前通道</label>
+    <select id="llmProviderSel">
+      <option value="auto">自动（Claude → OpenAI 兼容 → 方舟）</option>
+      <option value="hermes">🧠 Hermes 门户（本机零 Key）</option>
+      <option value="openai">OpenAI 兼容（自定义 / BYO-LLM）</option>
+      <option value="anthropic">Anthropic Claude（$20 硬顶账本）</option>
+      <option value="ark">方舟 Ark</option>
+    </select>
+  </div>
+  <div id="llmHermesRow" class="llm-block">
+    <div class="llm-status-row"><b>Hermes：</b><span id="llmHermesStatus">…</span>
+      <button id="llmHermesStart" class="btn small" type="button">▶ 启动门户</button></div>
+    <div class="field"><label>Hermes 模型 <span class="hint">留空 = 自动取门户第一项</span></label>
+      <input id="llmHermesModel" list="llmHermesModels" placeholder="自动"><datalist id="llmHermesModels"></datalist></div>
+  </div>
+  <div id="llmCustomRow" class="llm-block">
+    <div class="llm-presets">
+      <span class="hint">一键预设：</span>
+      <button type="button" class="btn small" data-preset="ollama">🦙 Ollama</button>
+      <button type="button" class="btn small" data-preset="lmstudio">🎛 LM Studio</button>
+      <button type="button" class="btn small" data-preset="openrouter">🌐 OpenRouter</button>
+    </div>
+    <div class="field"><label>Base URL <span class="hint">不带 /v1，如 http://127.0.0.1:11434</span></label>
+      <input id="llmBase" placeholder="https://api.openai.com"></div>
+    <div class="field"><label>API Key <span class="hint">本机端点可留空；留空不改动已存 Key</span></label>
+      <input id="llmKey" type="password" placeholder="sk-…"></div>
+    <div class="field"><label>模型 <span class="hint">点 🔄 从端点拉清单</span></label>
+      <div class="llm-model-row"><input id="llmModelInp" list="llmModels" placeholder="gpt-5.6-sol"><datalist id="llmModels"></datalist>
+        <button id="llmModelsRefresh" class="btn small" type="button">🔄</button></div></div>
+  </div>
+  <div class="dialog-actions">
+    <button id="llmTest" class="btn" type="button">✅ 测试当前通道</button>
+    <button id="llmSave" class="btn primary" type="button">保存</button>
+    <button id="llmClose" class="btn ghost" type="button">关闭</button>
+  </div>
+  <div id="llmStatus" class="hint accent"></div>
 </dialog>
 
 <dialog id="settingsDialog">

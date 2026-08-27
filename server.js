@@ -75,9 +75,12 @@ const DEFAULT_CONFIG = {
   openaiKey: '',
   openaiImgModel: 'gpt-image-2',
   // 剧本解析智能体（PDF 导入 → 分场/镜头/提示词）
-  llmProvider: 'auto',   // 'auto' | 'anthropic' | 'openai' | 'ark'
+  llmProvider: 'auto',   // 'auto' | 'anthropic' | 'openai' | 'ark' | 'hermes'
   anthropicKey: '',
   llmModel: '',          // 留空则按提供商用默认：claude-fable-5 / gpt-5.6-sol / doubao-seed-1-6-250615
+  // 🧠 Hermes 门户：本机 `hermes proxy`（OpenAI 兼容，走用户自己的 OAuth 订阅，零 API Key）
+  hermesBase: 'http://127.0.0.1:8645',
+  hermesModel: '',       // 留空 = 自动取门户 /v1/models 第一项
   // Claude 用量硬顶：累计成本达到 capUsd 后拒绝再调用 Claude，需人工确认充值后重置
   llmSpend: { usd: 0, capUsd: 20 },
   resolution: '720p',
@@ -1386,6 +1389,9 @@ app.post('/api/config', (req, res) => {
   const { preferredProvider } = req.body || {};
   if (preferredProvider === 'artcraft' || preferredProvider === 'ark') cur.preferredProvider = preferredProvider;
   if (llmModel !== undefined) cur.llmModel = llmModel;
+  const { hermesBase, hermesModel } = req.body || {};
+  if (hermesBase !== undefined && hermesBase !== '') cur.hermesBase = String(hermesBase).replace(/\/+$/, '');
+  if (hermesModel !== undefined) cur.hermesModel = hermesModel;
   // 用量重置：仅在用户确认已充值后调用（新的 $20 周期）
   if (llmSpendReset === true) {
     const s = cur.llmSpend && typeof cur.llmSpend === 'object' ? cur.llmSpend : {};
@@ -1607,6 +1613,120 @@ function validScriptAnalysis(a) {
 }
 
 /** 单轮 LLM 补全（三提供商统一入口），返回纯文本。system 可覆盖（默认剧本智能体） */
+// ---------------- 🧠 Hermes 门户：本机 OpenAI 兼容代理（hermes proxy），零 Key 走用户 OAuth ----------------
+let hermesProc = null;          // 本服务拉起的 proxy 子进程（已在跑的外部实例则不接管）
+let hermesModelsCache = { at: 0, models: [] };
+function findHermesExe() {
+  const cands = [
+    'hermes',
+    path.join(process.env.LOCALAPPDATA || '', 'hermes', 'bin', 'hermes.exe'),
+    path.join(os.homedir(), '.local', 'bin', 'hermes'),
+  ];
+  for (const c of cands) {
+    try { if (spawnSync(c, ['--version'], { timeout: 8000, shell: false }).status === 0) return c; } catch {}
+  }
+  return null;
+}
+async function hermesFetchModels(cfg, timeoutMs) {
+  const base = (cfg.hermesBase || 'http://127.0.0.1:8645').replace(/\/+$/, '');
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs || 2500);
+  try {
+    const r = await fetch(base + '/v1/models', { headers: { Authorization: 'Bearer atelier-local' }, signal: ctl.signal });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return null;
+    const models = (j.data || []).map((m) => m.id).filter(Boolean);
+    hermesModelsCache = { at: Date.now(), models };
+    return models;
+  } catch { return null; } finally { clearTimeout(t); }
+}
+/** 门户不在线时自动拉起 `hermes proxy start`（绑本机端口，跟随本服务生命周期）；已在线则直接复用 */
+async function ensureHermesProxy(cfg) {
+  let models = await hermesFetchModels(cfg, 1800);
+  if (models) return { ok: true, started: false, models };
+  const exe = findHermesExe();
+  if (!exe) return { ok: false, error: '未找到 Hermes（先安装 Hermes Agent 桌面版，或改用「OpenAI 兼容」通道填自己的 LLM）' };
+  const port = Number(new URL(cfg.hermesBase || 'http://127.0.0.1:8645').port || 8645);
+  if (!hermesProc || hermesProc.exitCode !== null) {
+    hermesProc = spawn(exe, ['proxy', 'start', '--host', '127.0.0.1', '--port', String(port)], { stdio: 'ignore' });
+    hermesProc.on('error', () => {});
+    const kill = () => { try { hermesProc && hermesProc.kill(); } catch {} };
+    process.once('exit', kill);
+  }
+  for (let i = 0; i < 12; i++) {
+    await new Promise((r) => setTimeout(r, 700));
+    models = await hermesFetchModels(cfg, 1500);
+    if (models) return { ok: true, started: true, models };
+  }
+  return { ok: false, error: 'Hermes 门户启动超时（手动运行 hermes proxy start 看报错；上游需已登录，见 hermes proxy status）' };
+}
+async function hermesResolveModel(cfg) {
+  if (cfg.hermesModel) return cfg.hermesModel;
+  const models = (Date.now() - hermesModelsCache.at < 60000 && hermesModelsCache.models.length)
+    ? hermesModelsCache.models
+    : (await hermesFetchModels(cfg, 2500)) || [];
+  if (!models.length) throw new Error('Hermes 门户无可用模型（proxy 未就绪或上游未登录）');
+  // 懒人包默认：优先 :free 模型（零余额也能跑），没有才用清单第一项
+  return models.find((m) => m.includes(':free')) || models[0];
+}
+
+// 🧠 LLM 门户面板：状态 / 配置 / 一键启动 Hermes / 连通性测试 / 任意 OpenAI 兼容端点拉模型清单
+app.get('/api/llm/portal', async (req, res) => {
+  const cfg = loadConfig();
+  const models = await hermesFetchModels(cfg, 1500);
+  res.json({
+    llmProvider: cfg.llmProvider || 'auto',
+    llmModel: cfg.llmModel || '',
+    openaiBase: cfg.openaiBase || '',
+    hasOpenaiKey: !!cfg.openaiKey,
+    hasAnthropicKey: !!cfg.anthropicKey,
+    hasArkKey: !!cfg.apiKey,
+    hermesBase: cfg.hermesBase || 'http://127.0.0.1:8645',
+    hermesModel: cfg.hermesModel || '',
+    hermesInstalled: !!findHermesExe(),
+    hermesRunning: !!models,
+    hermesModels: models || [],
+    llmSpend: cfg.llmSpend || { usd: 0, capUsd: 20 },
+  });
+});
+app.post('/api/llm/portal/hermes/start', async (req, res) => {
+  const r = await ensureHermesProxy(loadConfig());
+  res.status(r.ok ? 200 : 502).json(r);
+});
+app.post('/api/llm/portal/models', async (req, res) => {
+  // 拉任意 OpenAI 兼容端点的模型清单（BYO 门户选模型用）
+  const base = String((req.body && req.body.base) || '').replace(/\/+$/, '');
+  const key = String((req.body && req.body.key) || '') || (loadConfig().openaiKey || '');
+  if (!/^https?:\/\//.test(base)) return res.status(400).json({ error: 'base 需为 http(s) 地址' });
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 6000);
+  try {
+    const r = await fetch(base + '/v1/models', { headers: key ? { Authorization: 'Bearer ' + key } : {}, signal: ctl.signal });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(502).json({ error: `HTTP ${r.status}: ${JSON.stringify(j).slice(0, 160)}` });
+    res.json({ models: (j.data || []).map((m) => m.id).filter(Boolean) });
+  } catch (e) {
+    res.status(502).json({ error: '连不上：' + String(e && e.message || e).slice(0, 120) });
+  } finally { clearTimeout(t); }
+});
+app.post('/api/llm/portal/test', async (req, res) => {
+  // 连通性测试：一条最小补全（分钱级），证明所选通道真的能出字
+  const cfg = loadConfig();
+  let provider = (req.body && req.body.provider) || cfg.llmProvider || 'auto';
+  if (provider === 'auto') {
+    provider = cfg.anthropicKey ? 'anthropic' : cfg.openaiKey ? 'openai' : cfg.apiKey ? 'ark' : 'none';
+  }
+  if (provider === 'none') return res.status(400).json({ error: '没有可用通道：先选通道或填 Key（Hermes 通道零 Key）' });
+  const t0 = Date.now();
+  try {
+    const reply = await llmComplete(cfg, provider, [{ role: 'user', content: '连通性测试。只回复两个字：就绪' }],
+      '你是连通性探针，只回复"就绪"两个字，不要多话。');
+    res.json({ ok: true, provider, reply: String(reply).trim().slice(0, 60), ms: Date.now() - t0 });
+  } catch (e) {
+    res.status(502).json({ ok: false, provider, error: String(e && e.message || e).slice(0, 300), ms: Date.now() - t0 });
+  }
+});
+
 async function llmComplete(cfg, provider, messages, systemPrompt) {
   const sys = systemPrompt || SCRIPT_AGENT_SYS;
   if (provider === 'anthropic') {
@@ -1636,10 +1756,17 @@ async function llmComplete(cfg, provider, messages, systemPrompt) {
     if (j.stop_reason === 'refusal') throw new Error(`Claude (${model}) declined the request (refusal)`);
     return (j.content || []).map((b) => b.text || '').join('');
   }
-  // openai 兼容 与 ark 同为 chat/completions 形状
-  const base = provider === 'openai' ? (cfg.openaiBase || 'https://api.openai.com') + '/v1' : cfg.endpoint;
-  const key = provider === 'openai' ? cfg.openaiKey : cfg.apiKey;
-  const model = cfg.llmModel || (provider === 'openai' ? 'gpt-5.6-sol' : 'doubao-seed-1-6-250615');
+  // openai 兼容 / hermes 门户 / ark 同为 chat/completions 形状
+  if (provider === 'hermes') {
+    const r0 = await ensureHermesProxy(cfg); // 懒人包：没在跑就当场拉起
+    if (!r0.ok) throw new Error(r0.error);
+  }
+  const base = provider === 'openai' ? (cfg.openaiBase || 'https://api.openai.com') + '/v1'
+    : provider === 'hermes' ? (cfg.hermesBase || 'http://127.0.0.1:8645').replace(/\/+$/, '') + '/v1'
+    : cfg.endpoint;
+  const key = provider === 'openai' ? cfg.openaiKey : provider === 'hermes' ? 'atelier-local' : cfg.apiKey;
+  const model = provider === 'hermes' ? await hermesResolveModel(cfg)
+    : cfg.llmModel || (provider === 'openai' ? 'gpt-5.6-sol' : 'doubao-seed-1-6-250615');
   const r = await fetch(base + '/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },

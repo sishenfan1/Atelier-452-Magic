@@ -6043,12 +6043,109 @@ function buildCutCineRow(cut) {
   inserter.dataset.jargon = 'move';
   movesWrap.appendChild(inserter);
   row.appendChild(movesWrap);
+  // 🔎 一框搜遍三类术语：中英文/度数/解释全文匹配，回车或点选即应用（景别=选中，机位/运镜=插入）
+  const search = document.createElement('input');
+  search.type = 'text';
+  search.className = 'cine-search';
+  search.placeholder = '🔎 搜术语…';
+  search.title = '搜景别/机位/运镜任意术语（中英皆可，如 orbit / 俯 / 45 / vertigo）——↑↓选择，回车或点选即应用';
+  attachCineSearch(search, cut);
+  row.appendChild(search);
   return row;
 }
 /** 运镜插入行模板：「作用时段」是显式可编辑槽位（整个镜头 → 改成如「第0.0–1.5秒，随后停稳」） */
 function cineMoveSnippet(term) {
   return `【运镜】${term}｜作用时段：整个镜头`;
 }
+// ---------------- 🔎 术语搜索：一个框搜遍 景别/机位/运镜（中英/度数/解释全文匹配） ----------------
+const CINE_KIND_META = {
+  shot: { badge: '景别', apply: (cut, id) => { cut.shot = id; } },
+  angle: { badge: '机位', apply: (cut, id) => { const t = cineTermOf(DIR_ANGLE_GROUPS, id); if (t) cineAngleInsert(cut, t); } },
+  move: {
+    badge: '运镜',
+    apply: (cut, id) => {
+      const t = cineTermOf(DIR_MOVE_GROUPS, id);
+      if (!t) return;
+      cut.text = (cut.text ? String(cut.text).replace(/\s+$/, '') + '\n' : '') + cineMoveSnippet(t);
+      if (cut.fixedCam) cut.fixedCam = false;
+    },
+  },
+};
+function cineSearchMatches(q) {
+  q = q.trim().toLowerCase();
+  if (!q) return [];
+  const out = [];
+  const scan = (groups, kind) => {
+    for (const g of groups) {
+      for (const it of g.items) {
+        const hay = (it[1] + ' ' + (it[2] || '') + ' ' + (DIR_JARGON_EN[it[0]] || '') + ' ' + it[0]).toLowerCase();
+        if (hay.includes(q)) out.push({ kind, id: it[0], label: it[1], zh: it[2] || '' });
+      }
+    }
+  };
+  scan(DIR_SHOT_GROUPS, 'shot');
+  scan(DIR_ANGLE_GROUPS, 'angle');
+  scan(DIR_MOVE_GROUPS, 'move');
+  return out.slice(0, 14);
+}
+let cineSearchMenuEl = null;
+function cineSearchMenuHide() {
+  if (cineSearchMenuEl) { cineSearchMenuEl.remove(); cineSearchMenuEl = null; }
+}
+function attachCineSearch(input, cut) {
+  let items = [];
+  let active = -1;
+  const pick = (m) => {
+    if (!m) return;
+    CINE_KIND_META[m.kind].apply(cut, m.id);
+    cineSearchMenuHide();
+    input.value = '';
+    const idx = state.director.cuts.indexOf(cut);
+    renderDirCuts();
+    renderMentionPreview();
+    scheduleSave();
+    const box2 = document.querySelectorAll('#dirCuts .cut-box')[idx];
+    if (m.kind === 'shot') {
+      // 景别是持久下拉：搜完把焦点还给搜索框继续搜
+      const s2 = box2?.querySelector('.cine-search');
+      if (s2) s2.focus();
+    } else {
+      const ta2 = box2?.querySelector('textarea');
+      if (ta2) { ta2.focus(); ta2.selectionStart = ta2.selectionEnd = ta2.value.length; }
+    }
+  };
+  const render = () => {
+    cineSearchMenuHide();
+    if (!items.length) return;
+    const menu = document.createElement('div');
+    menu.className = 'dir-seq-menu cine-search-menu i18n-skip';
+    items.forEach((m, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.innerHTML = `<span class="csm-badge ${m.kind}">${CINE_KIND_META[m.kind].badge}</span>${escapeHtml(m.label)}`;
+      b.title = (m.zh || '') + (DIR_JARGON_EN[m.id] ? '\n' + DIR_JARGON_EN[m.id] : '');
+      if (i === active) b.classList.add('cur');
+      b.onmousedown = (e) => e.preventDefault(); // 保住输入框焦点，click 再选
+      b.onclick = (e) => { e.stopPropagation(); pick(m); };
+      menu.appendChild(b);
+    });
+    document.body.appendChild(menu);
+    const r = input.getBoundingClientRect();
+    menu.style.left = Math.min(r.left, Math.max(6, window.innerWidth - menu.offsetWidth - 6)) + 'px';
+    menu.style.top = (r.bottom + 4) + 'px';
+    cineSearchMenuEl = menu;
+  };
+  input.oninput = () => { items = cineSearchMatches(input.value); active = items.length ? 0 : -1; render(); };
+  input.onkeydown = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); if (items.length) { active = (active + 1) % items.length; render(); } }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); if (items.length) { active = (active - 1 + items.length) % items.length; render(); } }
+    else if (e.key === 'Enter') { e.preventDefault(); pick(items[active] || items[0]); }
+    else if (e.key === 'Escape') { e.preventDefault(); cineSearchMenuHide(); input.blur(); }
+    e.stopPropagation();
+  };
+  input.onblur = () => setTimeout(cineSearchMenuHide, 150);
+}
+
 /** 机位插入：末行已是【机位】行 → 用「＋」续接成复合机位；否则另起一行 */
 function cineAngleInsert(cut, term) {
   const txt = String(cut.text || '').replace(/\s+$/, '');
@@ -8538,6 +8635,104 @@ if ($('tutClose')) $('tutClose').onclick = () => $('tutDialog').close();
     try { localStorage.setItem('a452TutSeen', '1'); } catch {}
     tip.remove();
   };
+})();
+
+// ---------------- 🧠 LLM 门户面板：Hermes 本机零 Key / 任意 OpenAI 兼容端点（BYO-LLM） ----------------
+const LLM_PRESETS = {
+  ollama: { base: 'http://127.0.0.1:11434', key: 'ollama' },
+  lmstudio: { base: 'http://127.0.0.1:1234', key: 'lm-studio' },
+  openrouter: { base: 'https://openrouter.ai/api', key: '' },
+};
+function llmPortalSync() {
+  const p = $('llmProviderSel').value;
+  $('llmHermesRow').hidden = p !== 'hermes';
+  $('llmCustomRow').hidden = p !== 'openai';
+}
+async function llmPortalLoad() {
+  try {
+    const j = await (await fetch('/api/llm/portal')).json();
+    $('llmProviderSel').value = j.llmProvider || 'auto';
+    $('llmBase').value = j.openaiBase || '';
+    $('llmKey').value = '';
+    $('llmKey').placeholder = j.hasOpenaiKey ? '已存 Key（留空不改）' : 'sk-…（本机端点可留空）';
+    $('llmModelInp').value = j.llmModel || '';
+    $('llmHermesModel').value = j.hermesModel || '';
+    $('llmHermesModels').innerHTML = (j.hermesModels || []).map((m) => `<option value="${escapeHtml(m)}">`).join('');
+    $('llmHermesStatus').textContent = !j.hermesInstalled
+      ? '未安装（装 Hermes Agent 桌面版才有本通道）'
+      : j.hermesRunning ? `就绪 ✓（${(j.hermesModels || []).length} 个模型）` : '已安装，门户未启动（选本通道后自动拉起，或点 ▶）';
+    llmPortalSync();
+  } catch (e) {
+    $('llmHermesStatus').textContent = '状态读取失败: ' + errMsg(e);
+  }
+}
+async function llmPortalSave(silent) {
+  const body = {
+    llmProvider: $('llmProviderSel').value,
+    openaiBase: $('llmBase').value.trim() || undefined,
+    llmModel: $('llmModelInp').value.trim(),
+    hermesModel: $('llmHermesModel').value.trim(),
+  };
+  const k = $('llmKey').value.trim();
+  if (k) body.openaiKey = k;
+  const r = await fetch('/api/config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  if (!silent) $('llmStatus').textContent = '已保存 ✓ — ✨增强 / 翻译 / 剧本解析即刻走此通道';
+}
+(() => {
+  const btn = $('btnLlmPortal');
+  if (!btn) return;
+  btn.onclick = () => { $('llmDialog').showModal(); llmPortalLoad(); };
+  $('llmClose').onclick = () => $('llmDialog').close();
+  $('llmProviderSel').onchange = llmPortalSync;
+  document.querySelectorAll('#llmDialog .llm-presets button[data-preset]').forEach((b) => {
+    b.onclick = () => {
+      const p = LLM_PRESETS[b.dataset.preset];
+      if (!p) return;
+      $('llmBase').value = p.base;
+      if (p.key) $('llmKey').value = p.key;
+      $('llmStatus').textContent = `已填入 ${b.textContent.trim()} 预设 — 点 🔄 拉模型清单，再点保存`;
+    };
+  });
+  $('llmModelsRefresh').onclick = async () => {
+    $('llmStatus').textContent = '拉取模型清单…';
+    try {
+      const r = await fetch('/api/llm/portal/models', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base: $('llmBase').value.trim(), key: $('llmKey').value.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      $('llmModels').innerHTML = (j.models || []).map((m) => `<option value="${escapeHtml(m)}">`).join('');
+      $('llmStatus').textContent = `拉到 ${(j.models || []).length} 个模型 ✓ — 模型框点开即选`;
+    } catch (e) { $('llmStatus').textContent = '拉取失败: ' + errMsg(e); }
+  };
+  $('llmHermesStart').onclick = async () => {
+    $('llmHermesStatus').textContent = '启动中…（首次约几秒）';
+    try {
+      const r = await fetch('/api/llm/portal/hermes/start', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      $('llmHermesStatus').textContent = `就绪 ✓（${(j.models || []).length} 个模型）`;
+      $('llmHermesModels').innerHTML = (j.models || []).map((m) => `<option value="${escapeHtml(m)}">`).join('');
+    } catch (e) { $('llmHermesStatus').textContent = '启动失败: ' + errMsg(e); }
+  };
+  $('llmTest').onclick = async () => {
+    $('llmStatus').textContent = '测试中…（先静默保存当前设置）';
+    try {
+      await llmPortalSave(true);
+      const r = await fetch('/api/llm/portal/test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: $('llmProviderSel').value }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      $('llmStatus').textContent = `✅ ${j.provider} 通了（${j.ms}ms）：「${j.reply}」`;
+    } catch (e) { $('llmStatus').textContent = '❌ 测试失败: ' + errMsg(e); }
+  };
+  $('llmSave').onclick = () => llmPortalSave().catch((e) => { $('llmStatus').textContent = '保存失败: ' + errMsg(e); });
 })();
 
 // ---------------- 开机主工作区：REFERENCES TOOL（用户 2026-08-25 拍板为主力工具） ----------------
