@@ -691,6 +691,9 @@ const I18N = {
   '（此序列没有其它场景）': ['(no other scenes in this sequence)', '（このシーケンスに他のシーンなし）'],
   '（没有其它场景）': ['(no other scenes)', '（他のシーンなし）'],
   '打开 REFERENCES TOOL 教程（每个控件一行讲清）': ['Open the REFERENCES TOOL tour (one line per control)', 'REFERENCES TOOL チュートリアルを開く（各コントロール一行で）'],
+  // ===== 2026-08-26 机位插入器（复合机位 + 度数分档） =====
+  '📐 插入机位…': ['📐 Insert angle…', '📐 アングルを挿入…'],
+  '选一个机位 → 立即写入镜头框成可编辑提示词；连选多项自动用「＋」拼成复合机位（如 前侧45度＋齐腰＋微俯）': ['Pick an angle → written into the cut box as an editable prompt; pick several in a row and they chain with ＋ into one composite setup (e.g. 3/4 front 45° + hip level + slight high)', 'アングルを選ぶ → カット枠に編集可能プロンプトとして書き込み；連続選択で「＋」連結の複合アングルに（例：前側45°＋腰高＋微俯瞰）'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]

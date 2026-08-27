@@ -3417,12 +3417,18 @@ const DIR_ANGLE_GROUPS = [
   { g: '水平 | Level', items: [
     ['eye', '平视 · Eye Level', '平视机位（镜头与人物视线等高）'],
   ] },
-  { g: '拍摄方向 | Direction', items: [
-    ['front', '正面 · Frontal', '正面机位（正对人物面部拍摄）'],
-    ['front-34', '前侧 · 3/4 Front', '前侧面机位（与人物成45度的四分之三前侧）'],
-    ['side', '正侧 · Side Angle', '正侧面机位（与人物成90度正侧方）'],
-    ['back-34', '后侧 · 3/4 Back', '后侧面机位（人物斜后方45度）'],
-    ['rear', '背面 · Rear Angle', '背面机位（人物正后方拍摄）'],
+  { g: '拍摄方向 | Direction（按角度）', items: [
+    ['front', '正面 0° · Frontal', '正面机位（0度正对人物面部）'],
+    ['front-15', '微偏前 15° · Slightly Off-Front', '微偏前机位（偏离正面约15度，几乎正对但略带侧意）'],
+    ['front-30', '浅前侧 30° · Shallow 3/4', '浅前侧机位（与人物正面成约30度）'],
+    ['front-34', '前侧 45° · 3/4 Front', '前侧面机位（与人物成45度的标准四分之三前侧）'],
+    ['front-60', '深前侧 60° · Deep 3/4', '深前侧机位（与人物正面成约60度，偏向侧面的四分之三）'],
+    ['front-75', '近侧写 75° · Near-Profile', '近侧写机位（约75度，几乎正侧只差一点）'],
+    ['side', '正侧 90° · Profile', '正侧面机位（与人物成90度正侧方）'],
+    ['back-105', '过侧 105° · Past-Profile', '过侧机位（约105度，刚越过正侧偏向背后，见后颊与耳后）'],
+    ['back-34', '后侧 135° · 3/4 Back', '后侧面机位（人物斜后方约135度的四分之三背侧）'],
+    ['back-160', '近背面 165° · Near-Rear', '近背面机位（约165度，几乎正背影仅略见侧颊）'],
+    ['rear', '背面 180° · Rear', '背面机位（180度人物正后方拍摄）'],
   ] },
   { g: '俯角 | High Angles', items: [
     ['high-slight', '微俯 · Slight High', '微俯机位（略高于视线向下俯拍）'],
@@ -5941,7 +5947,7 @@ const DIR_MIN_CUTS = 4;
 function dirEnsureCuts() {
   if (!Array.isArray(state.director.cuts)) state.director.cuts = [];
   while (state.director.cuts.length < DIR_MIN_CUTS) state.director.cuts.push({ text: '', dur: 0 });
-  // 旧版「运镜下拉持久选择」→ 迁移为盒内可编辑提示词行（一次性；场景切换/历史复用带回旧数据时同样在此收编）
+  // 旧版「运镜/机位下拉持久选择」→ 迁移为盒内可编辑提示词行（一次性；场景切换/历史复用带回旧数据时同样在此收编）
   let migrated = false;
   for (const c of state.director.cuts) {
     if (Array.isArray(c.moves) && c.moves.length) {
@@ -5951,6 +5957,12 @@ function dirEnsureCuts() {
         c.text = (c.text ? String(c.text).replace(/\s+$/, '') + '\n' : '') + lines;
       }
       c.moves = [];
+      migrated = true;
+    }
+    if (c.angle) {
+      const t = cineTermOf(DIR_ANGLE_GROUPS, c.angle);
+      if (t) cineAngleInsert(c, t);
+      c.angle = '';
       migrated = true;
     }
   }
@@ -5989,8 +6001,20 @@ function buildCutCineRow(cut) {
     '本镜头的景别（拍多大）——注入中文行业术语', (v) => { cut.shot = v; scheduleSave(); });
   shotSel.dataset.jargon = 'shot';
   row.appendChild(shotSel);
-  const angleSel = mkSel(DIR_ANGLE_GROUPS, cut.angle || '', '📐 机位：无',
-    '本镜头的机位/角度（从哪拍）——注入中文行业术语', (v) => { cut.angle = v; scheduleSave(); });
+  // 机位 = 插入器：选一项写进镜头框；若末行已是【机位】行则用「＋」续接 = 复合机位（方向+高度+俯仰随意叠）
+  const angleSel = mkSel(DIR_ANGLE_GROUPS, '', '📐 插入机位…',
+    '选一个机位 → 立即写入镜头框成可编辑提示词；连选多项自动用「＋」拼成复合机位（如 前侧45度＋齐腰＋微俯）', (v) => {
+      if (!v) return;
+      const term = cineTermOf(DIR_ANGLE_GROUPS, v);
+      if (!term) return;
+      cineAngleInsert(cut, term);
+      const idx = state.director.cuts.indexOf(cut);
+      renderDirCuts();
+      renderMentionPreview();
+      scheduleSave();
+      const ta2 = document.querySelectorAll('#dirCuts .cut-box')[idx]?.querySelector('textarea');
+      if (ta2) { ta2.focus(); ta2.selectionStart = ta2.selectionEnd = ta2.value.length; }
+    });
   angleSel.dataset.jargon = 'angle';
   row.appendChild(angleSel);
   // 运镜 = 插入器：选一个运镜 → 立即写入镜头框成为可编辑提示词行（不再隐形注入）。
@@ -6024,6 +6048,17 @@ function buildCutCineRow(cut) {
 /** 运镜插入行模板：「作用时段」是显式可编辑槽位（整个镜头 → 改成如「第0.0–1.5秒，随后停稳」） */
 function cineMoveSnippet(term) {
   return `【运镜】${term}｜作用时段：整个镜头`;
+}
+/** 机位插入：末行已是【机位】行 → 用「＋」续接成复合机位；否则另起一行 */
+function cineAngleInsert(cut, term) {
+  const txt = String(cut.text || '').replace(/\s+$/, '');
+  const lines = txt ? txt.split('\n') : [];
+  if (lines.length && lines[lines.length - 1].startsWith('【机位】')) {
+    lines[lines.length - 1] += '＋' + term;
+    cut.text = lines.join('\n');
+  } else {
+    cut.text = (txt ? txt + '\n' : '') + '【机位】' + term;
+  }
 }
 
 // ---------------- 术语悬停解释（jargon tips）：悬停稍久 → 弹出解释卡 ----------------
@@ -6184,6 +6219,12 @@ const DIR_JARGON_EN = {
   'timelapse': "Camera stays fixed while time races forward — clouds stream, crowds blur, day flips to night in seconds.",
   'russian-arm': "A crane mounted on a speeding chase car swings the camera around a moving subject — the signature car-commercial move.",
   'cablecam': "Camera zips along a cable strung over the scene, flying fast and smooth above a stadium or set.",
+  'front-15': "Just 15° off dead-front — reads as facing you, with a whisper of depth on one cheek.",
+  'front-30': "A shallow 30° three-quarter — mostly front-facing, one side of the face clearly favored.",
+  'front-60': "A deep 60° three-quarter — leaning toward profile while both eyes still read.",
+  'front-75': "75°, almost a profile — the far eye is nearly gone, just a sliver of the far cheek left.",
+  'back-105': "Just past profile at 105° — you see the ear and the back of the jaw, face slipping away.",
+  'back-160': "165°, nearly a full back view — mostly the back of the head with a hint of cheek.",
 };
 const MOOD_EN = {
   explosive: 'Explosive: relentless fast aggressive energy — dense action, sparks and debris, zero calm beats.',
@@ -6229,9 +6270,9 @@ const JARGON_EXTRA = {
     en: 'How much of the subject fills the frame — from extreme wide to macro, plus framing and functional shot types. Hover an option for its meaning.',
   },
   angleDropdown: {
-    t: '📐 机位 · Camera Angle',
-    zh: '决定从哪拍：高度、俯仰、方向与倾斜；选中项以中文行业术语注入提示词。',
-    en: 'Where the camera sits — height, up/down tilt, direction and cant. Hover an option for its meaning.',
+    t: '📐 机位插入器 · Camera-Angle Inserter',
+    zh: '选一项立即写进镜头框成可编辑提示词；连选多项自动用「＋」拼成复合机位（方向按度数分档＋高度＋俯仰随意叠）。',
+    en: 'Picking an angle writes an editable prompt line; pick several in a row and they chain with ＋ into one composite camera setup (degree-precise directions + height + tilt).',
   },
   moodLock: {
     t: '情绪锁 · Scene-Mood Lock',
@@ -6558,15 +6599,11 @@ function buildDirCutsBlock(resolveFn) {
       compEmbed = `（构图章程 60/30/10：画面${parts.join('，')}；该占比在整个镜头内严格保持，不许漂移）`;
     }
     const moodEmbed = c.mood ? `（${moodPromptOf(c.mood)}）` : '';
-    // 景别/机位下拉 → 中文行业术语注入（运镜已改为盒内可编辑提示词行，不再在此隐形注入）
+    // 景别下拉 → 中文行业术语注入（运镜/机位已改为盒内可编辑提示词行，不再在此隐形注入）
     let cineEmbed = '';
     {
-      const cineParts = [];
       const shotT = cineTermOf(DIR_SHOT_GROUPS, c.shot);
-      const angleT = cineTermOf(DIR_ANGLE_GROUPS, c.angle);
-      if (shotT) cineParts.push(`景别——${shotT}`);
-      if (angleT) cineParts.push(`机位——${angleT}`);
-      if (cineParts.length) cineEmbed = `（镜头语言：${cineParts.join('；')}）`;
+      if (shotT) cineEmbed = `（镜头语言：景别——${shotT}）`;
     }
     const body = resolveFn(c.text)
       + cineEmbed
