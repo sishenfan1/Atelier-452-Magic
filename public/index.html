@@ -69,6 +69,7 @@
     </span>
     <button id="btnKeychain" class="btn ghost" title="API Key 钥匙串：按平台管理多个账号的 Key，随时切换当前生效的那把">🔑</button>
     <button id="btnLlmPortal" class="btn ghost" title="LLM 门户：选择增强/翻译用的大模型通道 — Hermes 本机零 Key / Ollama / LM Studio / OpenRouter / 任意 OpenAI 兼容端点">🧠</button>
+    <button id="btnLlmChat" class="btn ghost" title="与 LLM 对话（走 🧠 所选通道）— 可附带当前场景提示词一起聊，窗口可拖动、不挡工作">💬</button>
     <button id="btnSettings" class="btn ghost">⚙ API 设置</button>
   </div>
 </header>
@@ -896,6 +897,24 @@
   </div>
   <div id="llmStatus" class="hint accent"></div>
 </dialog>
+
+<!-- 💬 LLM 对话浮窗（非模态，可拖动，边工作边聊） -->
+<div id="chatWin" class="chat-win" hidden>
+  <div class="chat-head" id="chatHead">
+    <b>💬 LLM 副驾</b>
+    <span id="chatChannel" class="hint"></span>
+    <label class="chat-ctx-toggle" title="勾上 = 把当前场景的 CONTEXT / CUT / 负面一起发给模型作为工作上下文">
+      <input type="checkbox" id="chatCtx" checked> 🎬 附带场景
+    </label>
+    <button type="button" id="chatClear" title="清空对话">🗑</button>
+    <button type="button" id="chatClose" title="关闭（对话保留）">✕</button>
+  </div>
+  <div class="chat-msgs" id="chatMsgs"></div>
+  <div class="chat-input-row">
+    <textarea id="chatInput" rows="2" placeholder="问点什么…（Enter 发送 · Shift+Enter 换行）"></textarea>
+    <button type="button" id="chatSend" class="btn primary">发送</button>
+  </div>
+</div>
 
 <dialog id="settingsDialog">
   <h3>API 设置（火山方舟 · Seedance）</h3>

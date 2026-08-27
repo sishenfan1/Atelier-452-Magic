@@ -1709,6 +1709,33 @@ app.post('/api/llm/portal/models', async (req, res) => {
     res.status(502).json({ error: '连不上：' + String(e && e.message || e).slice(0, 120) });
   } finally { clearTimeout(t); }
 });
+// 💬 与所选 LLM 通道自由对话（多轮，非流式）；可附带当前场景提示词作为工作上下文
+const CHAT_SYS = '你是 Atelier 452 Director 内置的电影制作副驾，懂 Seedance/即梦等 AI 视频生成、分镜、提示词工程与电影语言（景别/机位/运镜）。'
+  + '回答务实简洁，用户用什么语言就用什么语言回答；给提示词建议时直接给可粘贴的成品文本。';
+app.post('/api/llm/chat', async (req, res) => {
+  const cfg = loadConfig();
+  let provider = (req.body && req.body.provider) || cfg.llmProvider || 'auto';
+  if (provider === 'auto') {
+    provider = cfg.anthropicKey ? 'anthropic' : cfg.openaiKey ? 'openai' : cfg.apiKey ? 'ark' : 'none';
+  }
+  if (provider === 'none') return res.status(400).json({ error: '没有可用 LLM 通道 — 点 🧠 选一个（Hermes 通道零 Key）' });
+  let messages = Array.isArray(req.body && req.body.messages) ? req.body.messages : [];
+  messages = messages
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    .slice(-24)
+    .map((m) => ({ role: m.role, content: m.content.slice(0, 24000) }));
+  if (!messages.length) return res.status(400).json({ error: 'messages 为空' });
+  const sceneCtx = String((req.body && req.body.sceneContext) || '').slice(0, 24000);
+  const sys = CHAT_SYS + (sceneCtx ? '\n\n【用户当前场景的工作内容（供参考）】\n' + sceneCtx : '');
+  const t0 = Date.now();
+  try {
+    const reply = await llmComplete(cfg, provider, messages, sys);
+    res.json({ reply, provider, ms: Date.now() - t0 });
+  } catch (e) {
+    res.status(502).json({ error: String(e && e.message || e).slice(0, 300), provider, ms: Date.now() - t0 });
+  }
+});
+
 app.post('/api/llm/portal/test', async (req, res) => {
   // 连通性测试：一条最小补全（分钱级），证明所选通道真的能出字
   const cfg = loadConfig();

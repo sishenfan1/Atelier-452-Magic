@@ -707,6 +707,8 @@ const I18N = {
   '本机端点可留空；留空不改动已存 Key': ['optional for local endpoints; blank keeps the stored key', 'ローカルは空欄可；空欄なら保存済みキーを維持'],
   '点 🔄 从端点拉清单': ['click 🔄 to fetch the model list', '🔄 でモデル一覧取得'],
   '留空 = 自动取门户第一项': ['blank = first model on the portal', '空欄＝ポータル先頭モデル'],
+  // ===== 2026-08-27 💬 LLM 对话 =====
+  '与 LLM 对话（走 🧠 所选通道）— 可附带当前场景提示词一起聊，窗口可拖动、不挡工作': ['Chat with the LLM (uses the 🧠 channel) — can carry your current scene prompts as context; draggable window, never blocks your work', 'LLM とチャット（🧠 の経路を使用）— 現在のシーンのプロンプトを文脈として同送可。ドラッグ可能で作業を妨げない'],
   // ===== 2026-08-27 🔎 术语搜索 =====
   '🔎 搜术语…': ['🔎 Search terms…', '🔎 用語検索…'],
   '搜景别/机位/运镜任意术语（中英皆可，如 orbit / 俯 / 45 / vertigo）——↑↓选择，回车或点选即应用': ['Search any shot/angle/move term (Chinese or English, e.g. orbit / 俯 / 45 / vertigo) — ↑↓ to choose, Enter or click applies', 'ショット/アングル/ムーブ用語を検索（中英どちらでも。例 orbit / 俯 / 45 / vertigo）— ↑↓で選択、Enter/クリックで適用'],

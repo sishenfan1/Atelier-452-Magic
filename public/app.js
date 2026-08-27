@@ -8735,6 +8735,128 @@ async function llmPortalSave(silent) {
   $('llmSave').onclick = () => llmPortalSave().catch((e) => { $('llmStatus').textContent = '保存失败: ' + errMsg(e); });
 })();
 
+// ---------------- 💬 LLM 对话浮窗：走 🧠 所选通道，多轮，可附带当前场景上下文 ----------------
+const chatState = { msgs: [], busy: false };
+function chatSceneContext() {
+  if (!$('chatCtx').checked) return '';
+  const parts = [];
+  const ctx = $('dirPrompt') ? $('dirPrompt').value.trim() : '';
+  if (ctx) parts.push('CONTEXT:\n' + ctx);
+  (state.director.cuts || []).forEach((c, i) => {
+    const t = String(c.text || '').trim();
+    if (t) parts.push(`CUT ${i + 1}:\n` + t);
+  });
+  const neg = $('dirNegative') ? $('dirNegative').value.trim() : '';
+  if (neg) parts.push('NEGATIVE:\n' + neg);
+  return parts.join('\n\n').slice(0, 20000);
+}
+function chatRender() {
+  const box = $('chatMsgs');
+  box.innerHTML = '';
+  for (const m of chatState.msgs) {
+    const div = document.createElement('div');
+    div.className = 'chat-msg ' + m.role + (m.error ? ' err' : '');
+    const body = document.createElement('div');
+    body.className = 'chat-body';
+    body.textContent = m.content;
+    div.appendChild(body);
+    if (m.role === 'assistant' && !m.error) {
+      const cp = document.createElement('button');
+      cp.type = 'button';
+      cp.className = 'chat-copy';
+      cp.textContent = '📋';
+      cp.title = '复制这条回复';
+      cp.onclick = () => copyBoxText(m.content, 'LLM 回复');
+      div.appendChild(cp);
+    }
+    box.appendChild(div);
+  }
+  if (chatState.busy) {
+    const t = document.createElement('div');
+    t.className = 'chat-msg assistant thinking';
+    t.textContent = '…思考中';
+    box.appendChild(t);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+async function chatSend() {
+  const inp = $('chatInput');
+  const text = inp.value.trim();
+  if (!text || chatState.busy) return;
+  inp.value = '';
+  chatState.msgs.push({ role: 'user', content: text });
+  chatState.busy = true;
+  chatRender();
+  try {
+    const r = await fetch('/api/llm/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: chatState.msgs.filter((m) => !m.error).map((m) => ({ role: m.role, content: m.content })),
+        sceneContext: chatSceneContext(),
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+    chatState.msgs.push({ role: 'assistant', content: String(j.reply || '').trim() || '（空回复）' });
+    $('chatChannel').textContent = `${j.provider} · ${j.ms}ms`;
+  } catch (e) {
+    chatState.msgs.push({ role: 'assistant', content: '❌ ' + errMsg(e) + '\n（点 🧠 检查通道，Hermes 通道零 Key 即开即用）', error: true });
+  }
+  chatState.busy = false;
+  chatRender();
+  inp.focus();
+}
+(() => {
+  const win = $('chatWin');
+  const btn = $('btnLlmChat');
+  if (!win || !btn) return;
+  win.classList.add('i18n-skip'); // 对话内容双向原文，不给 i18n 观察器碰
+  // 位置记忆 + 头部拖动
+  try {
+    const p = JSON.parse(localStorage.getItem('a452ChatPos') || 'null');
+    if (p && p.x >= 0 && p.y >= 0) { win.style.left = p.x + 'px'; win.style.top = p.y + 'px'; win.style.right = 'auto'; win.style.bottom = 'auto'; }
+  } catch {}
+  const head = $('chatHead');
+  head.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button') || e.target.closest('label')) return;
+    const r = win.getBoundingClientRect();
+    const dx = e.clientX - r.left, dy = e.clientY - r.top;
+    const move = (ev) => {
+      const x = Math.min(Math.max(0, ev.clientX - dx), window.innerWidth - 80);
+      const y = Math.min(Math.max(0, ev.clientY - dy), window.innerHeight - 60);
+      win.style.left = x + 'px'; win.style.top = y + 'px'; win.style.right = 'auto'; win.style.bottom = 'auto';
+    };
+    const up = () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      const r2 = win.getBoundingClientRect();
+      try { localStorage.setItem('a452ChatPos', JSON.stringify({ x: r2.left, y: r2.top })); } catch {}
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+  });
+  btn.onclick = async () => {
+    win.hidden = !win.hidden;
+    if (!win.hidden) {
+      chatRender();
+      $('chatInput').focus();
+      try {
+        const j = await (await fetch('/api/llm/portal')).json();
+        const name = j.llmProvider === 'hermes' ? ('🧠 Hermes' + (j.hermesModel ? ' · ' + j.hermesModel : ' · 自动免费模型'))
+          : j.llmProvider === 'auto' ? '自动通道' : j.llmProvider;
+        $('chatChannel').textContent = name;
+      } catch {}
+    }
+  };
+  $('chatClose').onclick = () => { win.hidden = true; };
+  $('chatClear').onclick = () => { chatState.msgs = []; chatRender(); };
+  $('chatSend').onclick = chatSend;
+  $('chatInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); chatSend(); }
+    e.stopPropagation();
+  });
+})();
+
 // ---------------- 开机主工作区：REFERENCES TOOL（用户 2026-08-25 拍板为主力工具） ----------------
 // index.html 初始 DOM 已直接以 director 可见防闪烁；这里再跑一次 switchMode 让
 // 徽章/自愈/浮层收起等全套切换逻辑生效。放全文件末尾 = 所有函数与状态先就位（TDZ 安全）。
