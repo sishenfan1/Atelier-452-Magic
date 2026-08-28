@@ -623,6 +623,14 @@
       <button id="btnDirectorGen" class="btn primary dir-gen-mega">🎬<br>导 演 生 成</button>
       <button id="btnSimulateGen" class="btn dir-sim-mega" type="button"
         title="不调用生成 API：产出与真实生成完全一致的最终提示词（含全部注入）+ 把参考素材按编号打包进文件夹，直接搬去其它平台">📋 SIMULATE GEN · 模拟出片</button>
+      <div class="comfy-block" id="comfyBlock">
+        <div class="comfy-head">🧩 ComfyUI · MiniMax H3 <span class="hint">本机免开 UI 出片</span>
+          <button id="comfyOpenGens" type="button" title="打开成片文件夹 D:\MINIMAX H3 GENS">📂</button></div>
+        <select id="comfyWf" title="选 ComfyUI 里存的工作流（Aiden-H3 的 FL2VA 系已直连；Ref2VA 后续）"></select>
+        <button id="comfyRun" class="btn wide" type="button"
+          title="用当前场景组装出的完整提示词，在本机 ComfyUI 无头跑 MiniMax H3；没开 ComfyUI 会自动拉起；成片自动存 D:\MINIMAX H3 GENS 并在上方播放器可看">🧩 本机出片（ComfyUI 自动运行）</button>
+        <div id="comfyStatus" class="dir-go-status"></div>
+      </div>
       <div class="dir-go-meta">
         <select id="dirGoModel" class="dir-go-model" title="当前生效模型 — 点击直接切换模型与 provider（与左侧 ⚡ 生成面板联动，切档自动换参考集）"></select>
         <div id="dirGoStatus" class="dir-go-status"></div>
@@ -847,6 +855,7 @@
       <li><b>模型下拉</b> — 跟随全局档位或本场景指定 · <i>per-scene model override</i></li>
       <li><b>🎬 导演生成</b> — 组装全部输入出片；点击瞬间快照原文，历史可完全复现 · <i>generate; snapshotted, fully reproducible</i></li>
       <li><b>SIMULATE GEN</b> — 零 API 消耗拿到最终提示词+编号素材包 · <i>free dry-run with asset bundle</i></li>
+      <li><b>🧩 ComfyUI 本机出片</b> — 免开 ComfyUI 无头跑 MiniMax H3 工作流，成片自动存 D:\MINIMAX H3 GENS · <i>headless local MiniMax H3, auto-saved</i></li>
       <li><b>📥 导入 / 📋 复制全部</b> — 模板格式无损往返（SHOT/CUT 标题进 CUT，其余进 CONTEXT）· <i>lossless template import/export</i></li>
       <li><b>🧠 LLM 门户</b>（顶栏）— ✨增强/翻译走哪个大模型：Hermes 本机零 Key、Ollama/LM Studio/OpenRouter 或任意自定义端点 · <i>pick the LLM behind enhance/translate; local Hermes needs zero keys</i></li>
       <li><b>📱 手机遥控</b>（顶栏）— 开隧道扫码，用 iPhone/iPad 在浏览器里操作整个应用（链接=完整控制权，别转发）· <i>scan the QR, drive the whole app from your phone</i></li>

@@ -1754,6 +1754,229 @@ app.get('/api/remote/status', (req, res) => {
   res.json({ on, url: on ? remoteCtl.url : '', isRemote: isRemoteReq(req) });
 });
 
+// ---------------- 🧩 ComfyUI · MiniMax H3：免开 UI 本机出片，成片自动存 D:\MINIMAX H3 GENS ----------------
+// ComfyUI 存的是 UI 格式工作流（nodes/links）；POST /prompt 要 API 格式 —— 这里用 /object_info
+// 的节点 schema 做服务端转换（widgets_values 按 schema 顺序含已转输入的占位槽，见 04/05 记录）。
+const comfyCtl = { proc: null, objectInfo: null, jobs: {} };
+function comfyCfg(cfg) {
+  return {
+    base: (cfg.comfyBase || 'http://127.0.0.1:8188').replace(/\/+$/, ''),
+    dir: cfg.comfyDir || 'D:\\ComfyUI',
+    saveDir: cfg.comfySaveDir || 'D:\\MINIMAX H3 GENS',
+  };
+}
+async function comfyAlive(cc, timeoutMs) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs || 1500);
+  try { const r = await fetch(cc.base + '/system_stats', { signal: ctl.signal }); return r.ok; }
+  catch { return false; } finally { clearTimeout(t); }
+}
+/** 没在跑就用 .venv 的 python 无头拉起（run_comfyui.ps1 同款参数），跟随本服务生命周期 */
+async function ensureComfy(cc) {
+  if (await comfyAlive(cc, 1500)) return { ok: true, started: false };
+  const py = path.join(cc.dir, '.venv', 'Scripts', 'python.exe');
+  if (!fs.existsSync(py)) return { ok: false, error: `未找到 ComfyUI venv（${py}）— 检查 comfyDir 配置` };
+  if (!comfyCtl.proc || comfyCtl.proc.exitCode !== null) {
+    const port = Number(new URL(cc.base).port || 8188);
+    comfyCtl.proc = spawn(py, ['main.py', '--listen', '127.0.0.1', '--port', String(port)], {
+      cwd: cc.dir,
+      stdio: 'ignore',
+      // Windows 下无终端 spawn 的 Python 默认 cp1252，自定义节点启动横幅里的 emoji 直接把进程炸死 —— 强制 UTF-8
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+    });
+    comfyCtl.proc.on('error', () => {});
+    const kill = () => { try { comfyCtl.proc && comfyCtl.proc.kill(); } catch {} };
+    process.once('exit', kill);
+  }
+  for (let i = 0; i < 60; i++) { // 首启含节点加载，宽限 90s
+    await new Promise((r) => setTimeout(r, 1500));
+    if (await comfyAlive(cc, 1500)) return { ok: true, started: true };
+    if (comfyCtl.proc && comfyCtl.proc.exitCode !== null) return { ok: false, error: 'ComfyUI 启动即退出 — 手动跑 run_comfyui.ps1 看报错' };
+  }
+  return { ok: false, error: 'ComfyUI 启动超时（90s）' };
+}
+async function comfyObjectInfo(cc) {
+  if (comfyCtl.objectInfo) return comfyCtl.objectInfo;
+  const r = await fetch(cc.base + '/object_info');
+  if (!r.ok) throw new Error('object_info HTTP ' + r.status);
+  comfyCtl.objectInfo = await r.json();
+  return comfyCtl.objectInfo;
+}
+const COMFY_PRIMS = new Set(['INT', 'FLOAT', 'STRING', 'BOOLEAN']);
+function comfyWidgetNames(info) {
+  // schema 顺序里的 widget 形参（连线专用类型不占 widgets_values 槽；seed 类后面跟一个 control 占位）
+  const names = [];
+  const seedish = new Set();
+  for (const sect of ['required', 'optional']) {
+    const specs = (info && info.input && info.input[sect]) || {};
+    for (const [name, spec] of Object.entries(specs)) {
+      const t = Array.isArray(spec) ? spec[0] : spec;
+      const opts = (Array.isArray(spec) && spec[1]) || {};
+      // combo 各种写法都算 widget：旧式 = 选项数组本体；新式 = 'COMBO' / 'COMFY_DYNAMICCOMBO_V3' 等含 COMBO 的类型名
+      const isWidget = Array.isArray(t) || COMFY_PRIMS.has(t) || (typeof t === 'string' && t.includes('COMBO'));
+      if (!isWidget || opts.forceInput) continue;
+      names.push(name);
+      if (name === 'seed' || name === 'noise_seed' || opts.control_after_generate) seedish.add(name);
+    }
+  }
+  return { names, seedish };
+}
+/** UI 工作流 → API prompt。暂不支持 GetNode/SetNode/Reroute（Ref2VA 后续再接） */
+function comfyConvert(ui, objectInfo) {
+  const unsupported = (ui.nodes || []).filter((n) => ['GetNode', 'SetNode', 'Reroute'].includes(n.type) && n.mode === 0);
+  if (unsupported.length) throw new Error('该工作流用了 GetNode/SetNode/Reroute 虚拟节点，暂只支持 FL2VA 系（Turbo/Quality6/LowVRAM）');
+  const linkSrc = {}; // linkId -> [srcNodeId, srcSlot]
+  for (const l of ui.links || []) linkSrc[l[0]] = [String(l[1]), l[2]];
+  const api = {};
+  for (const n of ui.nodes || []) {
+    if (['Note', 'MarkdownNote'].includes(n.type)) continue;
+    if (n.mode === 2 || n.mode === 4) throw new Error(`节点 ${n.id}(${n.type}) 处于静音/旁路状态 — 请在 ComfyUI 里存一份全启用的版本`);
+    const info = objectInfo[n.type];
+    if (!info) throw new Error(`ComfyUI 缺节点 ${n.type} — 对应自定义节点包没装或没加载成功`);
+    const inputs = {};
+    for (const inp of n.inputs || []) {
+      if (inp.link != null && linkSrc[inp.link]) inputs[inp.name] = linkSrc[inp.link];
+    }
+    const { names, seedish } = comfyWidgetNames(info);
+    const wv = n.widgets_values || [];
+    let wi = 0;
+    for (const name of names) {
+      if (wi >= wv.length) break;
+      const val = wv[wi++];
+      if (seedish.has(name) && wi < wv.length && typeof wv[wi] === 'string'
+        && ['fixed', 'increment', 'decrement', 'randomize'].includes(wv[wi])) wi++;
+      if (!(name in inputs)) inputs[name] = val;
+    }
+    api[String(n.id)] = { class_type: n.type, inputs };
+  }
+  return api;
+}
+const COMFY_WF_ROOT = () => path.join(comfyCfg(loadConfig()).dir, 'user', 'default', 'workflows');
+app.get('/api/comfy/workflows', (req, res) => {
+  const root = COMFY_WF_ROOT();
+  const out = [];
+  const walk = (d, rel) => {
+    let ents = [];
+    try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      if (e.isDirectory()) walk(path.join(d, e.name), rel ? rel + '/' + e.name : e.name);
+      else if (/\.json$/i.test(e.name)) out.push(rel ? rel + '/' + e.name : e.name);
+    }
+  };
+  walk(root, '');
+  // Aiden-H3 优先 + FL2VA 排前（当前唯一支持的家族）
+  out.sort((a, b) => (b.startsWith('Aiden-H3/') - a.startsWith('Aiden-H3/')) || a.localeCompare(b));
+  res.json({ workflows: out });
+});
+app.post('/api/comfy/run', async (req, res) => {
+  const cfg = loadConfig();
+  const cc = comfyCfg(cfg);
+  const wfRel = String((req.body && req.body.workflow) || '');
+  const promptText = String((req.body && req.body.prompt) || '').trim();
+  const durationSec = Number((req.body && req.body.duration) || 0);
+  if (!wfRel || !promptText) return res.status(400).json({ error: 'workflow 与 prompt 必填' });
+  const wfPath = path.resolve(COMFY_WF_ROOT(), wfRel);
+  if (!wfPath.startsWith(path.resolve(COMFY_WF_ROOT())) || !fs.existsSync(wfPath)) {
+    return res.status(400).json({ error: '工作流不存在: ' + wfRel });
+  }
+  try {
+    const up = await ensureComfy(cc);
+    if (!up.ok) return res.status(502).json({ error: up.error });
+    const objectInfo = await comfyObjectInfo(cc);
+    const ui = JSON.parse(fs.readFileSync(wfPath, 'utf8'));
+    const api = comfyConvert(ui, objectInfo);
+    // 注入：提示词 → MiniMaxH3* 节点的首个 STRING widget；时长 → 喂给数学节点的 PrimitiveFloat；种子随机
+    let injected = false;
+    for (const [id, node] of Object.entries(api)) {
+      if (/^MiniMaxH3(ImageToVideo|ReferenceToVideo)$/.test(node.class_type)) {
+        const { names } = comfyWidgetNames(objectInfo[node.class_type]);
+        const strName = names.find((nm) => {
+          const v = node.inputs[nm];
+          return typeof v === 'string';
+        });
+        if (strName) { node.inputs[strName] = promptText; injected = true; }
+      }
+      if (node.class_type === 'RandomNoise' && typeof node.inputs.noise_seed === 'number') {
+        node.inputs.noise_seed = Math.floor(Math.random() * 1e15);
+      }
+    }
+    if (!injected) return res.status(400).json({ error: '工作流里没找到 MiniMaxH3 视频节点的提示词入口' });
+    if (durationSec > 0) {
+      for (const node of Object.values(api)) {
+        if (node.class_type === 'PrimitiveFloat' && typeof node.inputs.value === 'number') node.inputs.value = durationSec;
+      }
+    }
+    const r = await fetch(cc.base + '/prompt', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: api, client_id: 'atelier452' }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(502).json({ error: 'ComfyUI 拒绝工作流: ' + JSON.stringify(j.node_errors || j.error || j).slice(0, 500) });
+    comfyCtl.jobs[j.prompt_id] = { workflow: wfRel, at: Date.now() };
+    res.json({ promptId: j.prompt_id, started: up.started });
+  } catch (e) {
+    res.status(502).json({ error: String(e && e.message || e).slice(0, 400) });
+  }
+});
+app.get('/api/comfy/status/:id', async (req, res) => {
+  const cfg = loadConfig();
+  const cc = comfyCfg(cfg);
+  const id = req.params.id;
+  try {
+    const h = await (await fetch(cc.base + '/history/' + id)).json();
+    if (!h[id]) {
+      const q = await (await fetch(cc.base + '/queue')).json();
+      const inRun = (q.queue_running || []).some((x) => x[1] === id);
+      const pos = (q.queue_pending || []).findIndex((x) => x[1] === id);
+      return res.json({ done: false, running: inRun, queuePos: pos >= 0 ? pos + 1 : null });
+    }
+    const entry = h[id];
+    if (entry.status && entry.status.status_str === 'error') {
+      const msg = JSON.stringify((entry.status.messages || []).slice(-2)).slice(0, 400);
+      return res.json({ done: true, ok: false, error: 'ComfyUI 执行失败: ' + msg });
+    }
+    // 收集视频产物 → 拷到 D:\MINIMAX H3 GENS + 应用视频库（可直接在历史播放器看）
+    const files = [];
+    for (const out of Object.values(entry.outputs || {})) {
+      for (const arr of Object.values(out)) {
+        if (!Array.isArray(arr)) continue;
+        for (const f of arr) {
+          if (f && f.filename && /\.(mp4|webm|mov|avi|mkv)$/i.test(f.filename)) files.push(f);
+        }
+      }
+    }
+    if (!files.length) return res.json({ done: true, ok: false, error: '执行完成但没找到视频产物' });
+    fs.mkdirSync(cc.saveDir, { recursive: true });
+    const job = comfyCtl.jobs[id] || {};
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+    const saved = [];
+    let appUrl = '';
+    for (const f of files) {
+      const src = path.join(cc.dir, 'output', f.subfolder || '', f.filename);
+      if (!fs.existsSync(src)) continue;
+      const base = 'MiniMaxH3_' + String(job.workflow || 'gen').replace(/.*\//, '').replace(/\.json$/i, '') + '_' + stamp + path.extname(f.filename);
+      const dst = path.join(cc.saveDir, base);
+      fs.copyFileSync(src, dst);
+      saved.push(dst);
+      try {
+        fs.mkdirSync(VIDEO_DIR, { recursive: true });
+        fs.copyFileSync(src, path.join(VIDEO_DIR, base));
+        if (!appUrl) appUrl = '/videos/' + base;
+      } catch {}
+    }
+    if (!saved.length) return res.json({ done: true, ok: false, error: '产物文件不在 ComfyUI output 目录（检查 SaveVideo 设置）' });
+    res.json({ done: true, ok: true, saved, url: appUrl });
+  } catch (e) {
+    res.status(502).json({ error: String(e && e.message || e).slice(0, 300) });
+  }
+});
+app.post('/api/comfy/open-gens', (req, res) => {
+  const cc = comfyCfg(loadConfig());
+  try { fs.mkdirSync(cc.saveDir, { recursive: true }); } catch {}
+  openFolderNative(cc.saveDir);
+  res.json({ ok: true });
+});
+
 // 🧠 LLM 门户面板：状态 / 配置 / 一键启动 Hermes / 连通性测试 / 任意 OpenAI 兼容端点拉模型清单
 app.get('/api/llm/portal', async (req, res) => {
   const cfg = loadConfig();

@@ -8793,6 +8793,67 @@ async function llmPortalSave(silent) {
   $('llmSave').onclick = () => llmPortalSave().catch((e) => { $('llmStatus').textContent = '保存失败: ' + errMsg(e); });
 })();
 
+// ---------------- 🧩 ComfyUI · MiniMax H3：本机无头出片，成片自动落 D:\MINIMAX H3 GENS ----------------
+let comfyPoll = null;
+async function comfyLoadWorkflows() {
+  try {
+    const j = await (await fetch('/api/comfy/workflows')).json();
+    const sel = $('comfyWf');
+    if (!sel) return;
+    sel.innerHTML = (j.workflows || []).map((w) => `<option value="${escapeHtml(w)}">${escapeHtml(w.replace(/\.json$/i, ''))}</option>`).join('');
+    // 默认选第一个 Aiden-H3 FL2VA（当前直连家族）
+    const pref = (j.workflows || []).find((w) => /Aiden-H3\/.*FL2VA/i.test(w)) || (j.workflows || [])[0];
+    if (pref) sel.value = pref;
+  } catch {}
+}
+(() => {
+  const btn = $('comfyRun');
+  if (!btn) return;
+  comfyLoadWorkflows();
+  $('comfyOpenGens').onclick = () => fetch('/api/comfy/open-gens', { method: 'POST' }).catch(() => {});
+  btn.onclick = async () => {
+    const reqData = assembleDirectorRequest(); // 与导演生成同一条组装管线（含悬空引用拦截）
+    if (!reqData) return;
+    const wf = $('comfyWf').value;
+    if (!wf) { $('comfyStatus').textContent = '没找到工作流 — 确认 D:\\ComfyUI 的 workflows 目录'; return; }
+    btn.disabled = true;
+    $('comfyStatus').textContent = '⏳ 连接 ComfyUI…（未启动会自动拉起，首次约 20–60s）';
+    try {
+      const r = await fetch('/api/comfy/run', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workflow: wf, prompt: reqData.prompt, duration: reqData.duration }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      $('comfyStatus').textContent = '🧩 已进 ComfyUI 队列，本机渲染中…';
+      const t0 = Date.now();
+      clearInterval(comfyPoll);
+      comfyPoll = setInterval(async () => {
+        try {
+          const s = await (await fetch('/api/comfy/status/' + j.promptId)).json();
+          if (!s.done) {
+            const mins = ((Date.now() - t0) / 60000).toFixed(1);
+            $('comfyStatus').textContent = s.running ? `🧩 渲染中… ${mins} 分钟` : (s.queuePos ? `🧩 排队第 ${s.queuePos} 位` : `🧩 处理中… ${mins} 分钟`);
+            return;
+          }
+          clearInterval(comfyPoll);
+          btn.disabled = false;
+          if (!s.ok) { $('comfyStatus').textContent = '❌ ' + (s.error || '失败'); return; }
+          $('comfyStatus').textContent = `✅ 出片完成 → 已存 D:\\MINIMAX H3 GENS（${s.saved.length} 个文件）`;
+          if (s.url) { // 直接在结果播放器里放出来
+            const v = $('dirResult');
+            if (v) { v.src = s.url; v.hidden = false; try { v.play(); } catch {} }
+            if ($('dirResultEmpty')) $('dirResultEmpty').hidden = true;
+          }
+        } catch {}
+      }, 3000);
+    } catch (e) {
+      btn.disabled = false;
+      $('comfyStatus').textContent = '❌ ' + errMsg(e);
+    }
+  };
+})();
+
 // ---------------- 📱 手机遥控面板：开隧道 → 二维码扫码直达（令牌每次轮换） ----------------
 (() => {
   const btn = $('btnRemote');
