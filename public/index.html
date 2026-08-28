@@ -70,6 +70,7 @@
     <button id="btnKeychain" class="btn ghost" title="API Key 钥匙串：按平台管理多个账号的 Key，随时切换当前生效的那把">🔑</button>
     <button id="btnLlmPortal" class="btn ghost" title="LLM 门户：选择增强/翻译用的大模型通道 — Hermes 本机零 Key / Ollama / LM Studio / OpenRouter / 任意 OpenAI 兼容端点">🧠</button>
     <button id="btnLlmChat" class="btn ghost" title="与 LLM 对话（走 🧠 所选通道）— 可附带当前场景提示词一起聊，窗口可拖动、不挡工作">💬</button>
+    <button id="btnRemote" class="btn ghost" title="手机遥控：开一条加密隧道，用 iPhone/iPad 扫码即可在浏览器里操作这台电脑上的完整应用">📱</button>
     <button id="btnSettings" class="btn ghost">⚙ API 设置</button>
   </div>
 </header>
@@ -848,6 +849,7 @@
       <li><b>SIMULATE GEN</b> — 零 API 消耗拿到最终提示词+编号素材包 · <i>free dry-run with asset bundle</i></li>
       <li><b>📥 导入 / 📋 复制全部</b> — 模板格式无损往返（SHOT/CUT 标题进 CUT，其余进 CONTEXT）· <i>lossless template import/export</i></li>
       <li><b>🧠 LLM 门户</b>（顶栏）— ✨增强/翻译走哪个大模型：Hermes 本机零 Key、Ollama/LM Studio/OpenRouter 或任意自定义端点 · <i>pick the LLM behind enhance/translate; local Hermes needs zero keys</i></li>
+      <li><b>📱 手机遥控</b>（顶栏）— 开隧道扫码，用 iPhone/iPad 在浏览器里操作整个应用（链接=完整控制权，别转发）· <i>scan the QR, drive the whole app from your phone</i></li>
       <li><b>历史卡</b> — 悬停即播；↩ 复用提示词把当时的全部输入装回 · <i>hover to play, reuse restores all inputs</i></li>
     </ul>
   </div>
@@ -896,6 +898,28 @@
     <button id="llmClose" class="btn ghost" type="button">关闭</button>
   </div>
   <div id="llmStatus" class="hint accent"></div>
+</dialog>
+
+<!-- 📱 手机遥控：隧道 + 令牌门 + 扫码直达 -->
+<dialog id="remoteDialog" class="remote-dialog">
+  <h3>📱 手机遥控 <span class="hint">— iPhone/iPad 扫码，在手机浏览器里操作这台电脑上的完整应用</span></h3>
+  <div id="remoteOff">
+    <p class="hint">点「开启」后生成一条加密隧道 + 一次性访问令牌（每次开启都轮换）。手机相机扫码 → Safari 打开你的工作台。
+      电脑要保持开机运行；关掉应用或点「停止」链接立刻失效。</p>
+    <button id="remoteStart" class="btn primary" type="button">▶ 开启手机访问</button>
+  </div>
+  <div id="remoteOn" hidden>
+    <div class="remote-qr-wrap"><img id="remoteQr" alt="QR"></div>
+    <div class="remote-link-row">
+      <input id="remoteLink" readonly>
+      <button id="remoteCopy" class="btn small" type="button">📋</button>
+    </div>
+    <p class="hint">⚠ 这条链接 = 这台电脑上应用的完整控制权（含文件浏览与你的 API Key）。只给你自己的设备，<b>绝不转发给别人</b>。
+      iOS 小技巧：Safari 打开后「分享 → 添加到主屏幕」，就有了全屏 App 图标。</p>
+    <button id="remoteStop" class="btn" type="button">⏹ 停止远程访问</button>
+  </div>
+  <div class="dialog-actions"><button id="remoteClose" class="btn ghost" type="button">关闭</button></div>
+  <div id="remoteStatus" class="hint accent"></div>
 </dialog>
 
 <!-- 💬 LLM 对话浮窗（非模态，可拖动，边工作边聊） -->
@@ -1108,6 +1132,7 @@
 </div>
 
 <script src="i18n.js"></script>
+<script src="qr.js"></script>
 <script src="saas.js"></script>
 <script src="app.js"></script>
 </body>

@@ -8793,6 +8793,57 @@ async function llmPortalSave(silent) {
   $('llmSave').onclick = () => llmPortalSave().catch((e) => { $('llmStatus').textContent = '保存失败: ' + errMsg(e); });
 })();
 
+// ---------------- 📱 手机遥控面板：开隧道 → 二维码扫码直达（令牌每次轮换） ----------------
+(() => {
+  const btn = $('btnRemote');
+  if (!btn) return;
+  const setOn = (link) => {
+    $('remoteOff').hidden = true;
+    $('remoteOn').hidden = false;
+    $('remoteLink').value = link;
+    try {
+      const qr = qrcode(0, 'M');
+      qr.addData(link);
+      qr.make();
+      $('remoteQr').src = qr.createDataURL(6, 12);
+    } catch (e) { $('remoteStatus').textContent = '二维码生成失败（链接仍可复制）: ' + errMsg(e); }
+  };
+  const setOff = () => {
+    $('remoteOff').hidden = false;
+    $('remoteOn').hidden = true;
+    $('remoteLink').value = '';
+    $('remoteQr').removeAttribute('src');
+  };
+  btn.onclick = async () => {
+    $('remoteDialog').showModal();
+    $('remoteStatus').textContent = '';
+    try {
+      const j = await (await fetch('/api/remote/status')).json();
+      if (!j.on) setOff();
+      else { $('remoteOff').hidden = true; $('remoteOn').hidden = false; $('remoteStatus').textContent = '远程访问运行中 — 令牌只在开启那一刻发放；要新二维码就先停止再开启'; }
+    } catch { setOff(); }
+  };
+  $('remoteStart').onclick = async () => {
+    $('remoteStatus').textContent = '建立隧道中…（约 3–10 秒）';
+    $('remoteStart').disabled = true;
+    try {
+      const r = await fetch('/api/remote/start', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      setOn(j.link);
+      $('remoteStatus').textContent = '已开启 ✓ 手机相机对准二维码 → 打开链接';
+    } catch (e) { $('remoteStatus').textContent = '开启失败: ' + errMsg(e); }
+    $('remoteStart').disabled = false;
+  };
+  $('remoteStop').onclick = async () => {
+    try { await fetch('/api/remote/stop', { method: 'POST' }); } catch {}
+    setOff();
+    $('remoteStatus').textContent = '已停止 — 旧链接与二维码全部失效 ✓';
+  };
+  $('remoteCopy').onclick = () => copyBoxText($('remoteLink').value, '手机访问链接');
+  $('remoteClose').onclick = () => $('remoteDialog').close();
+})();
+
 // ---------------- 💬 LLM 对话浮窗：走 🧠 所选通道，多轮，可附带当前场景上下文 ----------------
 const chatState = { msgs: [], busy: false };
 function chatSceneContext() {

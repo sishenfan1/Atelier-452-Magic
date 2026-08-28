@@ -1020,6 +1020,34 @@ app.use(express.json({
   limit: '300mb',
   verify: (req, _res, buf) => { if (req.originalUrl === '/api/pay/webhook') req.rawBody = buf; },
 }));
+
+// ---------------- 📱 手机遥控：cloudflared 隧道（指向 5893 全应用）+ 轮换访问令牌门 ----------------
+// 与 5894 文件隧道互不相干。门在 static 之前 = 覆盖一切请求；本机访问零影响。
+// 令牌语义：这条链接 = 你电脑上这套应用的完整控制权（含文件浏览/密钥使用），只给自己的手机，绝不转发。
+const remoteCtl = { proc: null, url: '', token: '' };
+function isRemoteReq(req) {
+  const host = String(req.headers.host || '').toLowerCase();
+  return host.endsWith('.trycloudflare.com') || !!req.headers['cf-ray'];
+}
+function remoteCookie(req) {
+  const m = /(?:^|;\s*)a452r=([^;]+)/.exec(String(req.headers.cookie || ''));
+  return m ? decodeURIComponent(m[1]) : '';
+}
+app.use((req, res, next) => {
+  if (!isRemoteReq(req)) return next();
+  if (!remoteCtl.token) return res.status(403).send('<h3 style="font-family:sans-serif">📱 远程访问未开启</h3>');
+  const q = req.query ? req.query.key : '';
+  if (q) {
+    if (q === remoteCtl.token) {
+      res.setHeader('Set-Cookie', 'a452r=' + remoteCtl.token + '; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400');
+      return res.redirect('/');
+    }
+    return res.status(403).send('<h3 style="font-family:sans-serif">令牌不对 — 用电脑上最新的二维码/链接重新打开</h3>');
+  }
+  if (remoteCookie(req) === remoteCtl.token) return next();
+  return res.status(403).send('<h3 style="font-family:sans-serif">需要访问令牌 — 在电脑上点 📱 扫最新二维码打开</h3>');
+});
+
 app.use(express.static(path.join(ROOT, 'public')));
 app.use('/videos', express.static(VIDEO_DIR));
 app.use('/assets', express.static(ASSET_DIR));
@@ -1669,6 +1697,62 @@ async function hermesResolveModel(cfg) {
   // 懒人包默认：优先 :free 模型（零余额也能跑），没有才用清单第一项
   return models.find((m) => m.includes(':free')) || models[0];
 }
+
+// 📱 手机遥控开关（只许本机操作；status 双端可查）
+app.post('/api/remote/start', async (req, res) => {
+  if (isRemoteReq(req)) return res.status(403).json({ error: '只能在电脑上开关远程访问' });
+  if (remoteCtl.url && remoteCtl.proc && remoteCtl.proc.exitCode === null) {
+    return res.json({ url: remoteCtl.url, link: remoteCtl.url + '/?key=' + remoteCtl.token, reused: true });
+  }
+  const exe = findCloudflared();
+  if (!exe) return res.status(400).json({ error: '未找到 cloudflared（winget install Cloudflare.cloudflared 后重试）' });
+  try {
+    const url = await new Promise((resolve, reject) => {
+      const proc = spawn(exe, ['tunnel', '--url', 'http://127.0.0.1:' + (process.env.PORT || 5893)]);
+      let buf = '';
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try { proc.kill(); } catch {}
+        reject(new Error('隧道启动超时（30s）'));
+      }, 30000);
+      const onData = (d) => {
+        buf += d.toString();
+        const m = buf.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+        if (m && !settled) {
+          settled = true;
+          clearTimeout(timer);
+          remoteCtl.proc = proc;
+          resolve(m[0]);
+        }
+      };
+      proc.stdout.on('data', onData);
+      proc.stderr.on('data', onData);
+      proc.on('error', (e) => { if (!settled) { settled = true; clearTimeout(timer); reject(e); } });
+      proc.on('close', (code) => {
+        if (remoteCtl.proc === proc) { remoteCtl.proc = null; remoteCtl.url = ''; remoteCtl.token = ''; }
+        if (!settled) { settled = true; clearTimeout(timer); reject(new Error('cloudflared 提前退出 (code ' + code + '): ' + buf.slice(-300))); }
+      });
+    });
+    remoteCtl.url = url;
+    remoteCtl.token = require('crypto').randomBytes(24).toString('hex'); // 每次开启轮换
+    console.log('📱 手机遥控隧道已建立:', url);
+    res.json({ url, link: url + '/?key=' + remoteCtl.token, reused: false });
+  } catch (e) {
+    res.status(502).json({ error: String(e && e.message || e).slice(0, 300) });
+  }
+});
+app.post('/api/remote/stop', (req, res) => {
+  if (isRemoteReq(req)) return res.status(403).json({ error: '只能在电脑上开关远程访问' });
+  try { remoteCtl.proc && remoteCtl.proc.kill(); } catch {}
+  remoteCtl.proc = null; remoteCtl.url = ''; remoteCtl.token = '';
+  res.json({ ok: true });
+});
+app.get('/api/remote/status', (req, res) => {
+  const on = !!(remoteCtl.url && remoteCtl.proc && remoteCtl.proc.exitCode === null);
+  res.json({ on, url: on ? remoteCtl.url : '', isRemote: isRemoteReq(req) });
+});
 
 // 🧠 LLM 门户面板：状态 / 配置 / 一键启动 Hermes / 连通性测试 / 任意 OpenAI 兼容端点拉模型清单
 app.get('/api/llm/portal', async (req, res) => {

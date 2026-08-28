@@ -708,6 +708,13 @@ const I18N = {
   '点 🔄 从端点拉清单': ['click 🔄 to fetch the model list', '🔄 でモデル一覧取得'],
   '留空 = 自动取门户第一项': ['blank = first model on the portal', '空欄＝ポータル先頭モデル'],
   '按住拖拽调整镜头顺序 — 编号自动重排，内容原样搬家': ['Hold and drag to reorder cuts — numbering updates automatically, everything travels with the cut', '押したままドラッグでカット並べ替え — 番号は自動更新、内容はそのまま移動'],
+  // ===== 2026-08-28 📱 手机遥控 =====
+  '手机遥控：开一条加密隧道，用 iPhone/iPad 扫码即可在浏览器里操作这台电脑上的完整应用': ['Phone remote: opens an encrypted tunnel — scan the QR with your iPhone/iPad and drive the full app running on this computer', 'スマホ遠隔：暗号化トンネルを開き、iPhone/iPad で QR を読むだけでこの PC 上のフルアプリを操作'],
+  '— iPhone/iPad 扫码，在手机浏览器里操作这台电脑上的完整应用': ['— scan with iPhone/iPad and drive this computer\'s full app from the phone browser', '— iPhone/iPad でスキャンし、スマホのブラウザから PC 上のフルアプリを操作'],
+  '▶ 开启手机访问': ['▶ Enable phone access', '▶ スマホアクセスを開始'],
+  '⏹ 停止远程访问': ['⏹ Stop remote access', '⏹ 遠隔アクセスを停止'],
+  '已开启 ✓ 手机相机对准二维码 → 打开链接': ['Enabled ✓ point the phone camera at the QR → open the link', '有効化 ✓ スマホのカメラで QR を読み取り → リンクを開く'],
+  '已停止 — 旧链接与二维码全部失效 ✓': ['Stopped — old links and QR codes are all dead ✓', '停止しました — 旧リンクと QR はすべて無効 ✓'],
   // ===== 2026-08-27 💬 LLM 对话 =====
   '与 LLM 对话（走 🧠 所选通道）— 可附带当前场景提示词一起聊，窗口可拖动、不挡工作': ['Chat with the LLM (uses the 🧠 channel) — can carry your current scene prompts as context; draggable window, never blocks your work', 'LLM とチャット（🧠 の経路を使用）— 現在のシーンのプロンプトを文脈として同送可。ドラッグ可能で作業を妨げない'],
   // ===== 2026-08-27 🔎 术语搜索 =====
