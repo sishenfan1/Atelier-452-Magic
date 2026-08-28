@@ -714,6 +714,9 @@ const I18N = {
   '打开成片文件夹 D:\\MINIMAX H3 GENS': ['Open the output folder D:\\MINIMAX H3 GENS', '出力フォルダ D:\\MINIMAX H3 GENS を開く'],
   '选 ComfyUI 里存的工作流（Aiden-H3 的 FL2VA 系已直连；Ref2VA 后续）': ['Pick a workflow saved in ComfyUI (Aiden-H3 FL2VA family wired up; Ref2VA later)', 'ComfyUI 保存のワークフローを選択（Aiden-H3 FL2VA 系対応済み；Ref2VA は今後）'],
   '用当前场景组装出的完整提示词，在本机 ComfyUI 无头跑 MiniMax H3；没开 ComfyUI 会自动拉起；成片自动存 D:\\MINIMAX H3 GENS 并在上方播放器可看': ['Runs MiniMax H3 headlessly in local ComfyUI with this scene\'s fully assembled prompt; auto-starts ComfyUI if needed; output lands in D:\\MINIMAX H3 GENS and plays above', 'このシーンの完全プロンプトでローカル ComfyUI の MiniMax H3 をヘッドレス実行；未起動なら自動起動；成果は D:\\MINIMAX H3 GENS に保存され上のプレイヤーで再生'],
+  // ===== 2026-08-28 ⏹ ComfyUI 终止 =====
+  '⏹ 终止本次出片': ['⏹ Terminate this render', '⏹ この生成を中止'],
+  '终止本次出片：排队中直接出队，渲染中立即中断': ['Terminate: dequeues if waiting, interrupts immediately if rendering', '中止：待機中はキュー削除、レンダリング中は即時割り込み'],
   // ===== 2026-08-28 📱 手机遥控 =====
   '手机遥控：开一条加密隧道，用 iPhone/iPad 扫码即可在浏览器里操作这台电脑上的完整应用': ['Phone remote: opens an encrypted tunnel — scan the QR with your iPhone/iPad and drive the full app running on this computer', 'スマホ遠隔：暗号化トンネルを開き、iPhone/iPad で QR を読むだけでこの PC 上のフルアプリを操作'],
   '— iPhone/iPad 扫码，在手机浏览器里操作这台电脑上的完整应用': ['— scan with iPhone/iPad and drive this computer\'s full app from the phone browser', '— iPhone/iPad でスキャンし、スマホのブラウザから PC 上のフルアプリを操作'],

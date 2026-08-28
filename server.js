@@ -2186,6 +2186,29 @@ app.get('/api/comfy/health', async (req, res) => {
   res.json({ report });
 });
 function errStr(e) { return String(e && e.message || e); }
+// ⏹ 终止：排队中→出队；渲染中→interrupt；ComfyUI 掉线→本就没了，一样算成功
+app.post('/api/comfy/cancel', async (req, res) => {
+  const cc = comfyCfg(loadConfig());
+  const id = String((req.body && req.body.promptId) || '');
+  if (!id) return res.status(400).json({ error: 'promptId 必填' });
+  let interrupted = false, dequeued = false;
+  try {
+    const q = await (await fetch(cc.base + '/queue')).json();
+    const running = (q.queue_running || []).some((x) => x[1] === id);
+    const pending = (q.queue_pending || []).some((x) => x[1] === id);
+    if (pending) {
+      await fetch(cc.base + '/queue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ delete: [id] }) });
+      dequeued = true;
+    }
+    if (running) {
+      await fetch(cc.base + '/interrupt', { method: 'POST' });
+      interrupted = true;
+    }
+    res.json({ ok: true, interrupted, dequeued });
+  } catch {
+    res.json({ ok: true, interrupted: false, dequeued: false, note: 'ComfyUI 不在运行，任务本就不存在' });
+  }
+});
 app.post('/api/comfy/open-gens', (req, res) => {
   const cc = comfyCfg(loadConfig());
   try { fs.mkdirSync(cc.saveDir, { recursive: true }); } catch {}

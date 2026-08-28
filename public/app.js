@@ -8827,11 +8827,32 @@ function comfyPrettyError(msg) {
   if (m) return `缺文件：${m[2]}（${m[1]}）— 这个工作流引用的模型/素材没装。选带 ✓ 的工作流，或补装该文件`;
   return msg;
 }
+let comfyActiveJob = '';
+function comfyJobDone() {
+  comfyActiveJob = '';
+  const c = $('comfyCancel');
+  if (c) c.hidden = true;
+  const b = $('comfyRun');
+  if (b) b.disabled = false;
+}
 (() => {
   const btn = $('comfyRun');
   if (!btn) return;
   comfyLoadWorkflows();
   $('comfyOpenGens').onclick = () => fetch('/api/comfy/open-gens', { method: 'POST' }).catch(() => {});
+  $('comfyCancel').onclick = async () => {
+    clearInterval(comfyPoll);
+    const id = comfyActiveJob;
+    comfyJobDone();
+    $('comfyStatus').textContent = '⏹ 终止中…';
+    try {
+      const j = await (await fetch('/api/comfy/cancel', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ promptId: id }),
+      })).json();
+      $('comfyStatus').textContent = j.interrupted ? '⏹ 已中断渲染 ✓' : (j.dequeued ? '⏹ 已从队列移除 ✓' : '⏹ 已终止（任务已不在运行）✓');
+    } catch (e) { $('comfyStatus').textContent = '⏹ 已停止跟踪（' + errMsg(e) + '）'; }
+  };
   btn.onclick = async () => {
     const reqData = assembleDirectorRequest(); // 与导演生成同一条组装管线（含悬空引用拦截）
     if (!reqData) return;
@@ -8851,6 +8872,8 @@ function comfyPrettyError(msg) {
       if (!r.ok) throw new Error(comfyPrettyError(j.error || 'HTTP ' + r.status));
       const wiring = (j.refWiring && j.refWiring.length) ? `参考已接入：${j.refWiring.join('，')} · ` : (imgRefs.length ? '⚠ 本工作流没有可接参考的空位 · ' : '');
       $('comfyStatus').textContent = `🧩 ${wiring}已进 ComfyUI 队列，本机渲染中…`;
+      comfyActiveJob = j.promptId;
+      $('comfyCancel').hidden = false;
       const t0 = Date.now();
       clearInterval(comfyPoll);
       let pollFails = 0;
@@ -8866,7 +8889,7 @@ function comfyPrettyError(msg) {
             return;
           }
           clearInterval(comfyPoll);
-          btn.disabled = false;
+          comfyJobDone();
           if (!s.ok) { $('comfyStatus').textContent = '❌ ' + (s.error || '失败'); return; }
           $('comfyStatus').textContent = `✅ 出片完成 → 已存 D:\\MINIMAX H3 GENS（${s.saved.length} 个文件）`;
           if (s.url) { // 直接在结果播放器里放出来
@@ -8879,13 +8902,13 @@ function comfyPrettyError(msg) {
           pollFails += 1;
           if (pollFails >= 6) {
             clearInterval(comfyPoll);
-            btn.disabled = false;
+            comfyJobDone();
             $('comfyStatus').textContent = '❌ 状态查询连续失败（' + errMsg(e) + '）— 重新点一次出片即可';
           }
         }
       }, 3000);
     } catch (e) {
-      btn.disabled = false;
+      comfyJobDone();
       $('comfyStatus').textContent = '❌ ' + errMsg(e);
     }
   };

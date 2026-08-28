@@ -629,6 +629,8 @@
         <select id="comfyWf" title="选 ComfyUI 里存的工作流（Aiden-H3 的 FL2VA 系已直连；Ref2VA 后续）"></select>
         <button id="comfyRun" class="btn wide" type="button"
           title="用当前场景组装出的完整提示词，在本机 ComfyUI 无头跑 MiniMax H3；没开 ComfyUI 会自动拉起；成片自动存 D:\MINIMAX H3 GENS 并在上方播放器可看">🧩 本机出片（ComfyUI 自动运行）</button>
+        <button id="comfyCancel" class="btn wide comfy-cancel" type="button" hidden
+          title="终止本次出片：排队中直接出队，渲染中立即中断">⏹ 终止本次出片</button>
         <div id="comfyStatus" class="dir-go-status"></div>
       </div>
       <div class="dir-go-meta">
