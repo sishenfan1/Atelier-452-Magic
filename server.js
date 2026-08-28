@@ -1807,6 +1807,7 @@ function comfyWidgetNames(info) {
   // schema 顺序里的 widget 形参（连线专用类型不占 widgets_values 槽；seed 类后面跟一个 control 占位）
   const names = [];
   const seedish = new Set();
+  const defaults = {}; // 旧工作流少存的新增 widget → 按 schema 默认值补齐
   for (const sect of ['required', 'optional']) {
     const specs = (info && info.input && info.input[sect]) || {};
     for (const [name, spec] of Object.entries(specs)) {
@@ -1816,40 +1817,126 @@ function comfyWidgetNames(info) {
       const isWidget = Array.isArray(t) || COMFY_PRIMS.has(t) || (typeof t === 'string' && t.includes('COMBO'));
       if (!isWidget || opts.forceInput) continue;
       names.push(name);
+      if (opts.default !== undefined) defaults[name] = opts.default;
+      else if (Array.isArray(t) && t.length) defaults[name] = t[0];
+      else if (t === 'COMBO' && opts.options && opts.options.length) defaults[name] = opts.options[0];
+      else if (t === 'BOOLEAN') defaults[name] = false;
       if (name === 'seed' || name === 'noise_seed' || opts.control_after_generate) seedish.add(name);
     }
   }
-  return { names, seedish };
+  return { names, seedish, defaults };
 }
-/** UI 工作流 → API prompt。暂不支持 GetNode/SetNode/Reroute（Ref2VA 后续再接） */
+/** UI 工作流 → API prompt v3：支持 GetNode/SetNode/Reroute/PrimitiveNode 虚拟节点、
+ *  静音(mode2)=剪除、旁路(mode4)=同类型直通、UI 纯控制节点静默跳过、模型路径按文件名自动改指。 */
+const COMFY_VIRTUAL = new Set(['GetNode', 'SetNode', 'Reroute', 'PrimitiveNode']);
+const COMFY_UI_ONLY = /^(Note|MarkdownNote|Fast Groups (Bypasser|Muter) \(rgthree\)|Label \(rgthree\)|Bookmark.*)$/;
 function comfyConvert(ui, objectInfo) {
-  const unsupported = (ui.nodes || []).filter((n) => ['GetNode', 'SetNode', 'Reroute'].includes(n.type) && n.mode === 0);
-  if (unsupported.length) throw new Error('该工作流用了 GetNode/SetNode/Reroute 虚拟节点，暂只支持 FL2VA 系（Turbo/Quality6/LowVRAM）');
+  const byId = {};
+  for (const n of ui.nodes || []) byId[String(n.id)] = n;
   const linkSrc = {}; // linkId -> [srcNodeId, srcSlot]
   for (const l of ui.links || []) linkSrc[l[0]] = [String(l[1]), l[2]];
+  // 穿透：Reroute/旁路 = 直通；GetNode = 同 key SetNode 上溯；PrimitiveNode = 字面量；静音 = 断开
+  const resolveSrc = (src, depth) => {
+    if (!src || (depth || 0) > 48) return null;
+    const n = byId[src[0]];
+    if (!n) return null;
+    if (n.mode === 2) return null; // 静音：这条来源不存在
+    const follow = (inp) => (inp && inp.link != null && linkSrc[inp.link]) ? resolveSrc(linkSrc[inp.link], (depth || 0) + 1) : null;
+    if (n.type === 'Reroute') return follow((n.inputs || [])[0]);
+    if (n.type === 'GetNode') {
+      const key = (n.widgets_values || [])[0];
+      const setter = (ui.nodes || []).find((x) => x.type === 'SetNode' && x.mode !== 2 && (x.widgets_values || [])[0] === key);
+      const r = setter ? follow((setter.inputs || [])[0]) : null;
+      if (!r) throw new Error(`GetNode「${key}」找不到对应的 SetNode 来源`);
+      return r;
+    }
+    if (n.type === 'PrimitiveNode') return { lit: (n.widgets_values || [])[0] };
+    if (n.mode === 4) { // 旁路：按输出槽类型找同类型的输入直通
+      const outType = ((n.outputs || [])[src[1]] || {}).type;
+      const inp = (n.inputs || []).find((i) => i.type === outType && i.link != null) || (n.inputs || [])[src[1]] || (n.inputs || [])[0];
+      return follow(inp);
+    }
+    return src;
+  };
   const api = {};
   for (const n of ui.nodes || []) {
-    if (['Note', 'MarkdownNote'].includes(n.type)) continue;
-    if (n.mode === 2 || n.mode === 4) throw new Error(`节点 ${n.id}(${n.type}) 处于静音/旁路状态 — 请在 ComfyUI 里存一份全启用的版本`);
+    if (COMFY_UI_ONLY.test(n.type) || COMFY_VIRTUAL.has(n.type)) continue;
+    if (n.mode === 2 || n.mode === 4) continue; // 静音剪除；旁路由 resolveSrc 直通
     const info = objectInfo[n.type];
-    if (!info) throw new Error(`ComfyUI 缺节点 ${n.type} — 对应自定义节点包没装或没加载成功`);
+    if (!info) throw new Error(`ComfyUI 缺节点 ${n.type} — 对应自定义节点包没装（或是子图/未支持的容器节点）`);
     const inputs = {};
     for (const inp of n.inputs || []) {
-      if (inp.link != null && linkSrc[inp.link]) inputs[inp.name] = linkSrc[inp.link];
+      if (inp.link != null && linkSrc[inp.link]) {
+        const src = resolveSrc(linkSrc[inp.link], 0);
+        if (src && src.lit !== undefined) inputs[inp.name] = src.lit;
+        else if (src) inputs[inp.name] = src;
+      }
     }
-    const { names, seedish } = comfyWidgetNames(info);
-    const wv = n.widgets_values || [];
-    let wi = 0;
-    for (const name of names) {
-      if (wi >= wv.length) break;
-      const val = wv[wi++];
-      if (seedish.has(name) && wi < wv.length && typeof wv[wi] === 'string'
-        && ['fixed', 'increment', 'decrement', 'randomize'].includes(wv[wi])) wi++;
-      if (!(name in inputs)) inputs[name] = val;
+    const wvRaw = n.widgets_values;
+    if (wvRaw && !Array.isArray(wvRaw) && typeof wvRaw === 'object') {
+      // VHS 系节点把 widgets 存成命名字典 → 直接并入（跳过 videopreview 等 UI 专用对象值）
+      for (const [k, v] of Object.entries(wvRaw)) {
+        if (k in inputs || v === null || (v && typeof v === 'object')) continue;
+        inputs[k] = v;
+      }
+    } else {
+      const { names, seedish, defaults } = comfyWidgetNames(info);
+      const wv = wvRaw || [];
+      let wi = 0;
+      for (const name of names) {
+        if (wi >= wv.length) break;
+        const val = wv[wi++];
+        if (seedish.has(name) && wi < wv.length && typeof wv[wi] === 'string'
+          && ['fixed', 'increment', 'decrement', 'randomize'].includes(wv[wi])) wi++;
+        if (!(name in inputs)) inputs[name] = val;
+      }
+      // 工作流比节点包旧：新增的 widget 没存值 → 按 schema 默认补齐（否则整个节点被判无效剔除）
+      for (const name of names) {
+        if (!(name in inputs) && name in defaults) inputs[name] = defaults[name];
+      }
     }
     api[String(n.id)] = { class_type: n.type, inputs };
   }
   return api;
+}
+/** 模型路径自愈：值不在可选清单、但存在同文件名的可选项（仅子目录/斜杠不同）→ 自动改指同一份文件 */
+function comfyRemapModelPaths(api, objectInfo) {
+  const notes = [];
+  const norm = (s) => String(s).replace(/\\/g, '/').toLowerCase();
+  const baseOf = (s) => norm(s).split('/').pop();
+  for (const node of Object.values(api)) {
+    const input = (objectInfo[node.class_type] || {}).input || {};
+    const specs = { ...(input.required || {}), ...(input.optional || {}) };
+    for (const [name, val] of Object.entries(node.inputs)) {
+      if (typeof val !== 'string') continue;
+      const spec = specs[name];
+      const t = Array.isArray(spec) ? spec[0] : null;
+      const options = Array.isArray(t) ? t : (t === 'COMBO' && spec[1] && Array.isArray(spec[1].options) ? spec[1].options : null);
+      if (!options || !options.length || options.includes(val)) continue;
+      const hit = options.find((o) => baseOf(o) === baseOf(val));
+      if (hit) {
+        node.inputs[name] = hit;
+        notes.push(`${node.class_type}.${name}: ${val} → ${hit}`);
+      }
+    }
+  }
+  return notes;
+}
+/** 把应用内素材（/assets|/videos url）传进 ComfyUI 的 input 目录，返回 LoadImage/LoadAudio 可用的相对名 */
+function comfyLocalPathOf(url) {
+  const u = String(url || '');
+  if (u.startsWith('/assets/')) return path.join(ASSET_DIR, path.basename(u));
+  if (u.startsWith('/videos/')) return path.join(VIDEO_DIR, path.basename(u));
+  return null;
+}
+async function comfyUpload(cc, filePath) {
+  const fd = new FormData();
+  fd.append('image', new Blob([fs.readFileSync(filePath)]), path.basename(filePath));
+  fd.append('overwrite', 'true');
+  const r = await fetch(cc.base + '/upload/image', { method: 'POST', body: fd });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.name) throw new Error('素材上传 ComfyUI 失败: ' + JSON.stringify(j).slice(0, 120));
+  return (j.subfolder ? j.subfolder + '/' : '') + j.name;
 }
 const COMFY_WF_ROOT = () => path.join(comfyCfg(loadConfig()).dir, 'user', 'default', 'workflows');
 app.get('/api/comfy/workflows', (req, res) => {
@@ -1885,6 +1972,7 @@ app.post('/api/comfy/run', async (req, res) => {
     const objectInfo = await comfyObjectInfo(cc);
     const ui = JSON.parse(fs.readFileSync(wfPath, 'utf8'));
     const api = comfyConvert(ui, objectInfo);
+    const remaps = comfyRemapModelPaths(api, objectInfo); // 同文件不同挂载路径 → 自愈
     // 注入：提示词 → MiniMaxH3* 节点的首个 STRING widget；时长 → 喂给数学节点的 PrimitiveFloat；种子随机
     let injected = false;
     for (const [id, node] of Object.entries(api)) {
@@ -1906,14 +1994,31 @@ app.post('/api/comfy/run', async (req, res) => {
         if (node.class_type === 'PrimitiveFloat' && typeof node.inputs.value === 'number') node.inputs.value = durationSec;
       }
     }
+    // 场景参考注入：图→LoadImage（按节点 id 顺序一一对应）、音频→LoadAudio；没给就沿用工作流里存的
+    const refImages = Array.isArray(req.body && req.body.images) ? req.body.images : [];
+    const refAudio = (req.body && req.body.audio) || '';
+    const loadImgs = Object.values(api).filter((n) => n.class_type === 'LoadImage');
+    for (let i = 0; i < loadImgs.length && i < refImages.length; i++) {
+      const p = comfyLocalPathOf(refImages[i]);
+      if (p && fs.existsSync(p)) loadImgs[i].inputs.image = await comfyUpload(cc, p);
+    }
+    if (refAudio) {
+      const la = Object.values(api).find((n) => n.class_type === 'LoadAudio');
+      const p = comfyLocalPathOf(refAudio);
+      if (la && p && fs.existsSync(p)) la.inputs.audio = await comfyUpload(cc, p);
+    }
     const r = await fetch(cc.base + '/prompt', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt: api, client_id: 'atelier452' }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return res.status(502).json({ error: 'ComfyUI 拒绝工作流: ' + JSON.stringify(j.node_errors || j.error || j).slice(0, 500) });
+    // 200 也可能带 node_errors（无效节点被剔除后「部分执行」）——那会静默丢掉出片节点，必须当失败
+    if (j.node_errors && Object.keys(j.node_errors).length) {
+      return res.status(502).json({ error: 'ComfyUI 剔除了无效节点（会导致没有成片）: ' + JSON.stringify(j.node_errors).slice(0, 500) });
+    }
     comfyCtl.jobs[j.prompt_id] = { workflow: wfRel, at: Date.now() };
-    res.json({ promptId: j.prompt_id, started: up.started });
+    res.json({ promptId: j.prompt_id, started: up.started, remaps });
   } catch (e) {
     res.status(502).json({ error: String(e && e.message || e).slice(0, 400) });
   }
@@ -1970,6 +2075,60 @@ app.get('/api/comfy/status/:id', async (req, res) => {
     res.status(502).json({ error: String(e && e.message || e).slice(0, 300) });
   }
 });
+// 🩺 工作流体检：逐个转换 + 对照 schema 的可选清单查缺（模型文件/输入文件/缺节点），不排队不占 GPU
+let comfyHealthCache = { at: 0, data: null };
+app.get('/api/comfy/health', async (req, res) => {
+  if (comfyHealthCache.data && Date.now() - comfyHealthCache.at < 60000) return res.json(comfyHealthCache.data);
+  const cc = comfyCfg(loadConfig());
+  const up = await ensureComfy(cc);
+  if (!up.ok) return res.status(502).json({ error: up.error });
+  let objectInfo;
+  try { objectInfo = await comfyObjectInfo(cc); } catch (e) { return res.status(502).json({ error: errStr(e) }); }
+  const root = COMFY_WF_ROOT();
+  const report = [];
+  const files = [];
+  const walk = (d, rel) => {
+    let ents = [];
+    try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      if (e.isDirectory()) walk(path.join(d, e.name), rel ? rel + '/' + e.name : e.name);
+      else if (/\.json$/i.test(e.name)) files.push(rel ? rel + '/' + e.name : e.name);
+    }
+  };
+  walk(root, '');
+  for (const rel of files) {
+    const issues = [];
+    let refsOnly = false;
+    let remaps = [];
+    try {
+      const ui = JSON.parse(fs.readFileSync(path.join(root, rel), 'utf8'));
+      const api = comfyConvert(ui, objectInfo);
+      remaps = comfyRemapModelPaths(api, objectInfo);
+      for (const node of Object.values(api)) {
+        const specs = { ...((objectInfo[node.class_type].input || {}).required || {}), ...((objectInfo[node.class_type].input || {}).optional || {}) };
+        for (const [name, val] of Object.entries(node.inputs)) {
+          if (typeof val !== 'string') continue;
+          const spec = specs[name];
+          const t = Array.isArray(spec) ? spec[0] : null;
+          const options = Array.isArray(t) ? t : (t === 'COMBO' && spec[1] && Array.isArray(spec[1].options) ? spec[1].options : null);
+          if (options && options.length && !options.includes(val)) {
+            // LoadImage/LoadAudio 的缺文件在出片时会被场景参考自动顶掉 → 软问题
+            if ((node.class_type === 'LoadImage' && name === 'image') || (node.class_type === 'LoadAudio' && name === 'audio')) {
+              issues.push(`带上场景参考即可跑（工作流里存的 ${val} 已不在）`);
+            } else {
+              issues.push(`缺文件/选项 ${node.class_type}.${name}: ${val}`);
+            }
+          }
+        }
+      }
+      refsOnly = issues.length > 0 && issues.every((x) => x.startsWith('带上场景参考'));
+    } catch (e) { issues.push(errStr(e).slice(0, 160)); }
+    report.push({ workflow: rel, ok: !issues.length, refsOnly, issues, remaps });
+  }
+  comfyHealthCache = { at: Date.now(), data: { report } };
+  res.json({ report });
+});
+function errStr(e) { return String(e && e.message || e); }
 app.post('/api/comfy/open-gens', (req, res) => {
   const cc = comfyCfg(loadConfig());
   try { fs.mkdirSync(cc.saveDir, { recursive: true }); } catch {}

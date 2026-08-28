@@ -8801,10 +8801,31 @@ async function comfyLoadWorkflows() {
     const sel = $('comfyWf');
     if (!sel) return;
     sel.innerHTML = (j.workflows || []).map((w) => `<option value="${escapeHtml(w)}">${escapeHtml(w.replace(/\.json$/i, ''))}</option>`).join('');
-    // 默认选第一个 Aiden-H3 FL2VA（当前直连家族）
-    const pref = (j.workflows || []).find((w) => /Aiden-H3\/.*FL2VA/i.test(w)) || (j.workflows || [])[0];
+    // 默认选第一个 Aiden-H3（Turbo 优先）
+    const pref = (j.workflows || []).find((w) => /Aiden-H3\/.*Turbo_FL2VA/i.test(w)) || (j.workflows || []).find((w) => w.startsWith('Aiden-H3/')) || (j.workflows || [])[0];
     if (pref) sel.value = pref;
   } catch {}
+  // 🩺 体检慢慢来（可能要先拉起 ComfyUI）：完成后给每项打 ✓/⚠ 徽标 + 悬停原因
+  try {
+    const h = await (await fetch('/api/comfy/health')).json();
+    const sel = $('comfyWf');
+    if (!sel || !h.report) return;
+    const byWf = {};
+    for (const r of h.report) byWf[r.workflow] = r;
+    for (const opt of sel.options) {
+      const r = byWf[opt.value];
+      if (!r) continue;
+      const badge = r.ok ? '✓ ' : (r.refsOnly ? '🖼 ' : '⚠ ');
+      opt.textContent = badge + opt.value.replace(/\.json$/i, '');
+      if (!r.ok) opt.title = r.issues.join('\n') + (r.refsOnly ? '\n（左栏加了参考图/音频就能直接跑）' : '');
+    }
+  } catch {}
+}
+/** ComfyUI 报错人话化：value_not_in_list = 缺模型/文件 */
+function comfyPrettyError(msg) {
+  const m = /value_not_in_list[\s\S]*?"details":\s*"([^"]+?):\s*'([^']+)'/.exec(msg);
+  if (m) return `缺文件：${m[2]}（${m[1]}）— 这个工作流引用的模型/素材没装。选带 ✓ 的工作流，或补装该文件`;
+  return msg;
 }
 (() => {
   const btn = $('comfyRun');
@@ -8819,12 +8840,15 @@ async function comfyLoadWorkflows() {
     btn.disabled = true;
     $('comfyStatus').textContent = '⏳ 连接 ComfyUI…（未启动会自动拉起，首次约 20–60s）';
     try {
+      // 场景参考随行：图给 LoadImage、音频给 LoadAudio（Ref2VA 系用得上；FL2VA 系服务端自动忽略）
+      const imgRefs = (state.director.refs || []).filter((x) => (x.kind || 'image') === 'image').map((x) => x.url);
+      const audRef = ((state.director.refs || []).find((x) => x.kind === 'audio') || {}).url || '';
       const r = await fetch('/api/comfy/run', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workflow: wf, prompt: reqData.prompt, duration: reqData.duration }),
+        body: JSON.stringify({ workflow: wf, prompt: reqData.prompt, duration: reqData.duration, images: imgRefs, audio: audRef }),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      if (!r.ok) throw new Error(comfyPrettyError(j.error || 'HTTP ' + r.status));
       $('comfyStatus').textContent = '🧩 已进 ComfyUI 队列，本机渲染中…';
       const t0 = Date.now();
       clearInterval(comfyPoll);
