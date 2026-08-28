@@ -8849,7 +8849,8 @@ function comfyPrettyError(msg) {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(comfyPrettyError(j.error || 'HTTP ' + r.status));
-      $('comfyStatus').textContent = '🧩 已进 ComfyUI 队列，本机渲染中…';
+      const wiring = (j.refWiring && j.refWiring.length) ? `参考已接入：${j.refWiring.join('，')} · ` : (imgRefs.length ? '⚠ 本工作流没有可接参考的空位 · ' : '');
+      $('comfyStatus').textContent = `🧩 ${wiring}已进 ComfyUI 队列，本机渲染中…`;
       const t0 = Date.now();
       clearInterval(comfyPoll);
       comfyPoll = setInterval(async () => {

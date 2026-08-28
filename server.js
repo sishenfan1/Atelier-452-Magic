@@ -1994,18 +1994,66 @@ app.post('/api/comfy/run', async (req, res) => {
         if (node.class_type === 'PrimitiveFloat' && typeof node.inputs.value === 'number') node.inputs.value = durationSec;
       }
     }
-    // 场景参考注入：图→LoadImage（按节点 id 顺序一一对应）、音频→LoadAudio；没给就沿用工作流里存的
+    // 场景参考注入 v2：先喂既有 LoadImage/LoadAudio，再把剩余参考直接接进 MiniMaxH3 节点的
+    // 空闲 image/audio 槽（FL2VA 的 first/last_frame 默认悬空 = 参考被完全无视——此处补上）。
     const refImages = Array.isArray(req.body && req.body.images) ? req.body.images : [];
     const refAudio = (req.body && req.body.audio) || '';
+    const refWiring = [];
     const loadImgs = Object.values(api).filter((n) => n.class_type === 'LoadImage');
-    for (let i = 0; i < loadImgs.length && i < refImages.length; i++) {
-      const p = comfyLocalPathOf(refImages[i]);
-      if (p && fs.existsSync(p)) loadImgs[i].inputs.image = await comfyUpload(cc, p);
+    let usedImages = 0;
+    for (let i = 0; i < loadImgs.length && usedImages < refImages.length; i++) {
+      const p = comfyLocalPathOf(refImages[usedImages]);
+      if (p && fs.existsSync(p)) {
+        loadImgs[i].inputs.image = await comfyUpload(cc, p);
+        refWiring.push(`参考图${usedImages + 1} → 工作流 LoadImage`);
+      }
+      usedImages++;
     }
+    let audioUsed = false;
     if (refAudio) {
       const la = Object.values(api).find((n) => n.class_type === 'LoadAudio');
       const p = comfyLocalPathOf(refAudio);
-      if (la && p && fs.existsSync(p)) la.inputs.audio = await comfyUpload(cc, p);
+      if (la && p && fs.existsSync(p)) {
+        la.inputs.audio = await comfyUpload(cc, p);
+        refWiring.push('参考音频 → 工作流 LoadAudio');
+        audioUsed = true;
+      }
+    }
+    const uiNodesById = {};
+    for (const n of ui.nodes || []) uiNodesById[String(n.id)] = n;
+    let injSeq = 0;
+    for (const [nid, node] of Object.entries(api)) {
+      if (!/^MiniMaxH3(ImageToVideo|ReferenceToVideo)$/.test(node.class_type)) continue;
+      const uiNode = uiNodesById[nid] || { inputs: [] };
+      const freeImgIns = (uiNode.inputs || []).filter((i) => i.type === 'IMAGE' && i.link == null && !(i.name in node.inputs));
+      for (const inp of freeImgIns) {
+        if (usedImages >= refImages.length) break;
+        const p = comfyLocalPathOf(refImages[usedImages]);
+        if (p && fs.existsSync(p)) {
+          const name = await comfyUpload(cc, p);
+          const lid = 'atelier_img_' + (++injSeq);
+          api[lid] = { class_type: 'LoadImage', inputs: { image: name } };
+          node.inputs[inp.name] = [lid, 0];
+          refWiring.push(`参考图${usedImages + 1} → ${inp.name}`);
+        }
+        usedImages++;
+      }
+      if (refAudio && !audioUsed) {
+        const freeAud = (uiNode.inputs || []).find((i) => i.type === 'AUDIO' && i.link == null && !(i.name in node.inputs));
+        const p = comfyLocalPathOf(refAudio);
+        if (freeAud && p && fs.existsSync(p)) {
+          const name = await comfyUpload(cc, p);
+          const aid = 'atelier_aud_' + (++injSeq);
+          api[aid] = { class_type: 'LoadAudio', inputs: { audio: name } };
+          node.inputs[freeAud.name] = [aid, 0];
+          refWiring.push('参考音频 → ' + freeAud.name);
+          audioUsed = true;
+        }
+      }
+    }
+    // 🔬 干跑：只组装不排队 — 检查参考接线与最终图（前端与 E2E 用）
+    if (req.body && req.body.dryRun) {
+      return res.json({ dryRun: true, nodeCount: Object.keys(api).length, refWiring, remaps });
     }
     const r = await fetch(cc.base + '/prompt', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2018,7 +2066,7 @@ app.post('/api/comfy/run', async (req, res) => {
       return res.status(502).json({ error: 'ComfyUI 剔除了无效节点（会导致没有成片）: ' + JSON.stringify(j.node_errors).slice(0, 500) });
     }
     comfyCtl.jobs[j.prompt_id] = { workflow: wfRel, at: Date.now() };
-    res.json({ promptId: j.prompt_id, started: up.started, remaps });
+    res.json({ promptId: j.prompt_id, started: up.started, remaps, refWiring });
   } catch (e) {
     res.status(502).json({ error: String(e && e.message || e).slice(0, 400) });
   }
