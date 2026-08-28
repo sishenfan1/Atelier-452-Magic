@@ -1913,7 +1913,8 @@ function comfyRemapModelPaths(api, objectInfo) {
       const t = Array.isArray(spec) ? spec[0] : null;
       const options = Array.isArray(t) ? t : (t === 'COMBO' && spec[1] && Array.isArray(spec[1].options) ? spec[1].options : null);
       if (!options || !options.length || options.includes(val)) continue;
-      const hit = options.find((o) => baseOf(o) === baseOf(val));
+      // 同文件不同挂载路径 → 改指；否则若清单只剩唯一可选项（节点版本变更移除了旧选项）→ 就选它
+      const hit = options.find((o) => baseOf(o) === baseOf(val)) || (options.length === 1 ? options[0] : null);
       if (hit) {
         node.inputs[name] = hit;
         notes.push(`${node.class_type}.${name}: ${val} → ${hit}`);
