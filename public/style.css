@@ -1021,6 +1021,12 @@ dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .cut-box .cut-dur input[type=range] { flex: 1; }
 .cut-box .cut-dur b { min-width: 86px; text-align: right; font-variant-numeric: tabular-nums; }
 .cut-box.timed { border-color: rgba(52, 168, 83, .45); }
+/* CUT 拖拽换序（与参考素材同款视觉） */
+.cut-drag { cursor: grab; opacity: .4; font-size: 13px; flex: none; user-select: none; }
+.cut-drag:hover { opacity: .9; }
+.cut-box.dragging { opacity: .45; }
+.cut-box.drop-above { box-shadow: 0 -3px 0 0 #0a84ff; }
+.cut-box.drop-below { box-shadow: 0 3px 0 0 #0a84ff; }
 .add-cut {
   margin-top: 8px; border: 2px dashed rgba(120, 140, 255, .4);
   background: none; font-weight: 700; padding: 12px 0; border-radius: 12px;

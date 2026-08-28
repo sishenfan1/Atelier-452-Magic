@@ -6455,6 +6455,26 @@ document.addEventListener('pointerdown', jargonTipHide, true);
 document.addEventListener('scroll', jargonTipHide, true);
 document.addEventListener('change', (e) => { if (e.target && e.target.matches && e.target.matches('[data-jargon]')) jargonTipHide(); }, true);
 
+// ---------------- CUT 拖拽换序：与参考素材同款（⠿ 手柄 + 上/下落点线），整盒数据原样搬家 ----------------
+let dirCutDragIdx = null;
+function dirCutClearDropMarks() {
+  document.querySelectorAll('#dirCuts .cut-box').forEach((b) => b.classList.remove('drop-above', 'drop-below', 'dragging'));
+}
+/** 把 src 号镜头搬到 target 号镜头的上/下方：splice 移动整个 cut 对象（文本/时长/情绪/景别/机位锁/60-30-10 全随行），编号即渲染下标自动重排 */
+function dirReorderCut(src, target, before) {
+  const cuts = state.director.cuts;
+  if (src === target || src < 0 || src >= cuts.length || target < 0 || target >= cuts.length) return;
+  const [moved] = cuts.splice(src, 1);
+  let ti = target;
+  if (src < target) ti -= 1;
+  cuts.splice(before ? ti : ti + 1, 0, moved);
+  renderDirCuts();
+  syncDurationFromCuts();
+  renderMentionPreview();
+  scheduleSave();
+  setDirStatus(`镜头已移位 ✓ — 原 CUT ${src + 1} 现在是 CUT ${cuts.indexOf(moved) + 1}，全部内容原样带走，编号自动重排`);
+}
+
 function renderDirCuts() {
   const wrap = $('dirCuts');
   if (!wrap) return;
@@ -6465,6 +6485,39 @@ function renderDirCuts() {
     box.className = 'cut-box' + (Number(cut.dur) > 0 ? ' timed' : '');
     const head = document.createElement('div');
     head.className = 'cut-head';
+    // ⠿ 手柄：只有按住手柄时整盒才可拖（盒里全是输入框，全盒常开 draggable 会抢文本选择）
+    const grab = document.createElement('span');
+    grab.className = 'cut-drag';
+    grab.textContent = '⠿';
+    grab.title = '按住拖拽调整镜头顺序 — 编号自动重排，内容原样搬家';
+    grab.addEventListener('mousedown', () => { box.draggable = true; });
+    grab.addEventListener('mouseup', () => { box.draggable = false; });
+    head.appendChild(grab);
+    box.addEventListener('dragstart', (e) => {
+      if (!box.draggable) { e.preventDefault(); return; }
+      dirCutDragIdx = i;
+      box.classList.add('dragging');
+      try { e.dataTransfer.setData('text/plain', 'cut-' + i); e.dataTransfer.effectAllowed = 'move'; } catch {}
+    });
+    box.addEventListener('dragend', () => { box.draggable = false; dirCutDragIdx = null; dirCutClearDropMarks(); });
+    box.addEventListener('dragover', (e) => {
+      if (dirCutDragIdx === null || dirCutDragIdx === i) return;
+      e.preventDefault();
+      const r = box.getBoundingClientRect();
+      const before = e.clientY < r.top + r.height / 2;
+      box.classList.toggle('drop-above', before);
+      box.classList.toggle('drop-below', !before);
+    });
+    box.addEventListener('dragleave', () => box.classList.remove('drop-above', 'drop-below'));
+    box.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const r = box.getBoundingClientRect();
+      const before = e.clientY < r.top + r.height / 2;
+      const src = dirCutDragIdx;
+      dirCutDragIdx = null;
+      if (src !== null && src !== i) dirReorderCut(src, i, before);
+      else dirCutClearDropMarks();
+    });
     const title = document.createElement('span');
     title.textContent = `🎬 CUT ${i + 1}`;
     head.appendChild(title);

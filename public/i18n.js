@@ -707,6 +707,7 @@ const I18N = {
   '本机端点可留空；留空不改动已存 Key': ['optional for local endpoints; blank keeps the stored key', 'ローカルは空欄可；空欄なら保存済みキーを維持'],
   '点 🔄 从端点拉清单': ['click 🔄 to fetch the model list', '🔄 でモデル一覧取得'],
   '留空 = 自动取门户第一项': ['blank = first model on the portal', '空欄＝ポータル先頭モデル'],
+  '按住拖拽调整镜头顺序 — 编号自动重排，内容原样搬家': ['Hold and drag to reorder cuts — numbering updates automatically, everything travels with the cut', '押したままドラッグでカット並べ替え — 番号は自動更新、内容はそのまま移動'],
   // ===== 2026-08-27 💬 LLM 对话 =====
   '与 LLM 对话（走 🧠 所选通道）— 可附带当前场景提示词一起聊，窗口可拖动、不挡工作': ['Chat with the LLM (uses the 🧠 channel) — can carry your current scene prompts as context; draggable window, never blocks your work', 'LLM とチャット（🧠 の経路を使用）— 現在のシーンのプロンプトを文脈として同送可。ドラッグ可能で作業を妨げない'],
   // ===== 2026-08-27 🔎 术语搜索 =====
@@ -725,6 +726,7 @@ const I18N_RULES = [
   [/^未分组（(\d+)）▸$/, 'Ungrouped ($1) ▸', '未分類（$1）▸'],
   [/^已把「(.+)」移出序列 ✓$/, 'Moved "$1" out of its sequence ✓', '「$1」をシーケンスから外しました ✓'],
   [/^复合运镜第 (\d+) 段——与前段连贯衔接一次完成$/, 'Composite move segment $1 — flows seamlessly from the previous segment', '複合ムーブ第 $1 区間 — 前の区間から途切れず連続実行'],
+  [/^镜头已移位 ✓ — 原 CUT (\d+) 现在是 CUT (\d+)，全部内容原样带走，编号自动重排$/, 'Cut moved ✓ — old CUT $1 is now CUT $2; everything traveled with it, numbering auto-updated', 'カットを移動 ✓ — 旧 CUT $1 は CUT $2 に。内容はそのまま、番号は自動更新'],
   [/^已复制「(.+)」✓ (\d+) 字符$/, 'Copied "$1" ✓ $2 chars', '「$1」をコピー ✓ $2 文字'],
   [/^「(.+)」是空的 — 没有可复制的内容$/, '"$1" is empty — nothing to copy', '「$1」は空です — コピーする内容がありません'],
   [/^📥 已(增强并)?填入 (.+)$/, '📥 Filled$1: $2', '📥 入力完了$1：$2'],
