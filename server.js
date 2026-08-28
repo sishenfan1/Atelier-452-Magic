@@ -2082,6 +2082,10 @@ app.get('/api/comfy/status/:id', async (req, res) => {
       const q = await (await fetch(cc.base + '/queue')).json();
       const inRun = (q.queue_running || []).some((x) => x[1] === id);
       const pos = (q.queue_pending || []).findIndex((x) => x[1] === id);
+      // 既不在历史也不在队列 = ComfyUI 重启过、任务已蒸发——别让前端永远转圈
+      if (!inRun && pos < 0) {
+        return res.json({ done: true, ok: false, lost: true, error: '任务已不在 ComfyUI 里（进程重启过，这次出片丢失）— 重新点一次出片即可，会自动重排' });
+      }
       return res.json({ done: false, running: inRun, queuePos: pos >= 0 ? pos + 1 : null });
     }
     const entry = h[id];
@@ -2121,6 +2125,10 @@ app.get('/api/comfy/status/:id', async (req, res) => {
     if (!saved.length) return res.json({ done: true, ok: false, error: '产物文件不在 ComfyUI output 目录（检查 SaveVideo 设置）' });
     res.json({ done: true, ok: true, saved, url: appUrl });
   } catch (e) {
+    // ComfyUI 连不上（掉线/被杀）——按丢失结案，别让前端无限「处理中」
+    if (/fetch failed|ECONNREFUSED|aborted/i.test(String(e && e.message || e))) {
+      return res.json({ done: true, ok: false, lost: true, error: 'ComfyUI 已不在运行（这次出片丢失）— 重新点一次出片即可，会自动拉起' });
+    }
     res.status(502).json({ error: String(e && e.message || e).slice(0, 300) });
   }
 });

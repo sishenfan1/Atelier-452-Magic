@@ -8853,9 +8853,13 @@ function comfyPrettyError(msg) {
       $('comfyStatus').textContent = `🧩 ${wiring}已进 ComfyUI 队列，本机渲染中…`;
       const t0 = Date.now();
       clearInterval(comfyPoll);
+      let pollFails = 0;
       comfyPoll = setInterval(async () => {
         try {
-          const s = await (await fetch('/api/comfy/status/' + j.promptId)).json();
+          const r2 = await fetch('/api/comfy/status/' + j.promptId);
+          const s = await r2.json();
+          if (!r2.ok) throw new Error(s.error || 'HTTP ' + r2.status);
+          pollFails = 0;
           if (!s.done) {
             const mins = ((Date.now() - t0) / 60000).toFixed(1);
             $('comfyStatus').textContent = s.running ? `🧩 渲染中… ${mins} 分钟` : (s.queuePos ? `🧩 排队第 ${s.queuePos} 位` : `🧩 处理中… ${mins} 分钟`);
@@ -8870,7 +8874,15 @@ function comfyPrettyError(msg) {
             if (v) { v.src = s.url; v.hidden = false; try { v.play(); } catch {} }
             if ($('dirResultEmpty')) $('dirResultEmpty').hidden = true;
           }
-        } catch {}
+        } catch (e) {
+          // 连续查询失败（服务端/网络）也要有终点，不许无限「处理中」
+          pollFails += 1;
+          if (pollFails >= 6) {
+            clearInterval(comfyPoll);
+            btn.disabled = false;
+            $('comfyStatus').textContent = '❌ 状态查询连续失败（' + errMsg(e) + '）— 重新点一次出片即可';
+          }
+        }
       }, 3000);
     } catch (e) {
       btn.disabled = false;
