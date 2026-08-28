@@ -6497,7 +6497,8 @@ function renderDirCuts() {
       if (!box.draggable) { e.preventDefault(); return; }
       dirCutDragIdx = i;
       box.classList.add('dragging');
-      try { e.dataTransfer.setData('text/plain', 'cut-' + i); e.dataTransfer.effectAllowed = 'move'; } catch {}
+      // 私有 MIME：绝不用 text/plain —— 📥 导入面板会把任何纯文本拖放当提示词接管（cut-0 弹导入框事故）
+      try { e.dataTransfer.setData('application/x-a452-cut', String(i)); e.dataTransfer.effectAllowed = 'move'; } catch {}
     });
     box.addEventListener('dragend', () => { box.draggable = false; dirCutDragIdx = null; dirCutClearDropMarks(); });
     box.addEventListener('dragover', (e) => {
@@ -6511,6 +6512,7 @@ function renderDirCuts() {
     box.addEventListener('dragleave', () => box.classList.remove('drop-above', 'drop-below'));
     box.addEventListener('drop', (e) => {
       e.preventDefault();
+      e.stopPropagation(); // 别冒泡到 📥 导入面板的全域文本拖放接管
       const r = box.getBoundingClientRect();
       const before = e.clientY < r.top + r.height / 2;
       const src = dirCutDragIdx;
@@ -8580,6 +8582,7 @@ if ($('dirIngestBtn')) {
   for (const host of [$('dirPromptPanel'), $('ingestDialog')].filter(Boolean)) {
     host.addEventListener('dragover', (e) => {
       const types = [...(e.dataTransfer && e.dataTransfer.types || [])];
+      if (types.includes('application/x-a452-cut') || dirCutDragIdx !== null) return; // CUT 换序拖拽：完全不接管
       if (types.includes('Files') || types.includes('text/plain')) {
         e.preventDefault();
         host.classList.add('file-drop-hot');
@@ -8589,6 +8592,8 @@ if ($('dirIngestBtn')) {
     host.addEventListener('drop', async (e) => {
       host.classList.remove('file-drop-hot');
       if (!(e.dataTransfer)) return;
+      const types = [...(e.dataTransfer.types || [])];
+      if (types.includes('application/x-a452-cut') || dirCutDragIdx !== null) return; // CUT 换序拖拽：双保险不拦
       // CUT 盒内部的参考拖拽重排等不拦（只有带文件或纯文本时接管）
       const text = await readDropText(e.dataTransfer);
       if (text === null || !text.trim()) return;
