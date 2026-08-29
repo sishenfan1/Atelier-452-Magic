@@ -2745,7 +2745,7 @@ app.post('/api/comfy/open-gens', (req, res) => {
 // ---------------- ☁ 云端出片（Wan / DashScope 异步视频）：用导入的厂商端点直接出片 ----------------
 // 与本机 ComfyUI 并列的第二条出片通道。i2v 需要公网可达的参考图 → 复用既有 cloudflared 隧道。
 const CLOUD_VIDEO_MODELS = [
-  { id: 'wan3.0-video', label: 'Wan 3.0（旗舰 · 多参考 · 原生音频）', ref: true },
+  { id: 'wan3.0-video', label: 'Wan 3.0（真·多参考 ≤10图 · 原生音频 · 推荐）', ref: true },
   { id: 'wan2.7-i2v', label: 'Wan 2.7 图生视频（参考图驱动）', ref: true },
   { id: 'wan2.7-t2v', label: 'Wan 2.7 文生视频', ref: false },
   { id: 'wan2.5-i2v-preview', label: 'Wan 2.5 图生视频', ref: true },
@@ -2775,28 +2775,55 @@ app.post('/api/cloudvideo/run', async (req, res) => {
   const imageUrl = String((req.body && req.body.image) || '');
   if (!prompt) return res.status(400).json({ error: '提示词为空' });
   const spec = CLOUD_VIDEO_MODELS.find((m) => m.id === model) || { ref: false };
+  const resolution = String((req.body && req.body.resolution) || '720P');
+  // 注入文本里的「参考图N」是给中文模型看的；Wan 认的是 "Image N / Video N / Audio N"（按 media 数组顺序编号）
+  const citeForWan = (t) => String(t || '')
+    .replace(/「参考图(\d+)」/g, 'Image $1')
+    .replace(/「参考视频(\d+)」/g, 'Video $1')
+    .replace(/「参考音频(\d+)」/g, 'Audio $1');
+  const publish = async (u) => {
+    const local = comfyLocalPathOf(u);
+    if (!local || !fs.existsSync(local)) return '';
+    const base = await ensureTunnel();
+    const pub = base + u;
+    await waitPublicReachable(pub);
+    return pub;
+  };
   const input = { prompt: prompt.slice(0, 3800) };
+  const parameters = { duration, resolution, prompt_extend: false }; // 关掉改写：用户的提示词一字不动
   let publicNote = '';
-  if (spec.ref) {
-    const local = comfyLocalPathOf(imageUrl);
-    if (!local || !fs.existsSync(local)) {
-      return res.status(400).json({ error: '这个模型是「图生视频」，需要场景里至少有一张参考图' });
-    }
-    try {
-      const base = await ensureTunnel(); // 参考图必须公网可达
-      const pub = base + imageUrl;
-      await waitPublicReachable(pub);
+  try {
+    if (model === 'wan3.0-video') {
+      // 旗舰：真·多参考（≤10 图 / 5 视频 / 5 音频），全部场景参考按 @编号顺序进 media[]
+      const refs = Array.isArray(req.body && req.body.refs) ? req.body.refs : [];
+      const imgs = refs.filter((r) => (r.kind || 'image') === 'image').slice(0, 10);
+      const vids = refs.filter((r) => r.kind === 'video').slice(0, 5);
+      const auds = refs.filter((r) => r.kind === 'audio').slice(0, 5);
+      const media = [];
+      for (const r of imgs) { const p = await publish(r.url); if (p) media.push({ type: 'reference_image', url: p }); }
+      for (const r of vids) { const p = await publish(r.url); if (p) media.push({ type: 'reference_video', url: p }); }
+      for (const r of auds) { const p = await publish(r.url); if (p) media.push({ type: 'reference_audio', url: p }); }
+      if (!media.length) return res.status(400).json({ error: 'Wan 3.0 是参考驱动模型 — 场景里至少要有一份参考素材' });
+      input.media = media;
+      input.prompt = citeForWan(input.prompt).slice(0, 3800);
+      parameters.ratio = 'adaptive';
+      parameters.audio = true; // 原生音频
+      publicNote = `已带 ${media.length} 份参考（图${imgs.length}/视频${vids.length}/音频${auds.length}）`;
+    } else if (spec.ref) {
+      // i2v 家族：官方 schema 只有单张 img_url，且是「首帧」——不是角色参考
+      const pub = await publish(imageUrl);
+      if (!pub) return res.status(400).json({ error: '这个模型是「图生视频」，需要场景里至少有一张参考图' });
       input.img_url = pub;
-      publicNote = '参考图已通过隧道公开：' + pub.replace(/^https:\/\//, '').slice(0, 40) + '…';
-    } catch (e) {
-      return res.status(502).json({ error: '参考图无法公开访问（隧道失败）：' + String(e && e.message || e).slice(0, 140) });
+      publicNote = '首帧参考图已公开（i2v 仅支持单张首帧，要多参考请选 Wan 3.0）';
     }
+  } catch (e) {
+    return res.status(502).json({ error: '参考素材无法公开访问（隧道失败）：' + String(e && e.message || e).slice(0, 140) });
   }
   try {
     const r = await fetch(conn.ds + '/services/aigc/video-generation/video-synthesis', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + conn.key, 'X-DashScope-Async': 'enable' },
-      body: JSON.stringify({ model, input, parameters: { duration, size: '832*480' } }),
+      body: JSON.stringify({ model, input, parameters }),
     });
     const j = await r.json().catch(() => ({}));
     const id = j.output && j.output.task_id;

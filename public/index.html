@@ -637,7 +637,12 @@
       <div class="comfy-block cloud-block" id="cloudBlock">
         <div class="comfy-head">☁ 云端出片 <span class="hint" id="cloudProvider">用导入的厂商端点</span>
           <button id="cloudOpenGens" type="button" title="打开云端成片文件夹">📂</button></div>
-        <select id="cloudModel" title="选云端视频模型：图生视频用场景第一张参考图驱动"></select>
+        <select id="cloudModel" title="Wan 3.0 = 真·多参考（≤10图/5视频/5音频，@编号在提示词里生效）；i2v 系只吃单张首帧图"></select>
+        <select id="cloudRes" title="分辨率（越高越贵越慢）">
+          <option value="480P">480P（最省）</option>
+          <option value="720P" selected>720P</option>
+          <option value="1080P">1080P</option>
+        </select>
         <button id="cloudRun" class="btn wide" type="button"
           title="用当前场景的完整提示词在云端出片；图生视频会自动把参考图通过隧道公开给云端读取">☁ 云端出片</button>
         <button id="cloudCancel" class="btn wide comfy-cancel" type="button" hidden>⏹ 停止跟踪</button>

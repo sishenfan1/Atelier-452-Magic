@@ -9056,12 +9056,21 @@ let cloudJob = '';
     const needsRef = $('cloudModel').selectedOptions[0] && $('cloudModel').selectedOptions[0].dataset.ref === '1';
     const firstImg = (state.director.refs || []).find((r) => (r.kind || 'image') === 'image');
     if (needsRef && !firstImg) { $('cloudStatus').textContent = '⚠ 这个模型要参考图 — 左栏先加一张，或换文生视频模型'; return; }
+    if (model !== 'wan3.0-video' && (state.director.refs || []).length > 1) {
+      $('cloudStatus').textContent = 'ℹ 提示：i2v 只吃单张首帧图；要让全部参考真正生效，选 Wan 3.0（多参考）';
+    }
     btn.disabled = true;
     $('cloudStatus').textContent = '☁ 提交中…' + (needsRef ? '（正在把参考图通过隧道公开给云端）' : '');
     try {
       const r = await fetch('/api/cloudvideo/run', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, prompt: reqData.prompt, duration: reqData.duration, image: needsRef && firstImg ? firstImg.url : '' }),
+        body: JSON.stringify({
+          model, prompt: reqData.prompt, duration: reqData.duration,
+          image: needsRef && firstImg ? firstImg.url : '',
+          // Wan 3.0 走真·多参考：把全部场景参考按 @编号顺序送过去
+          refs: (state.director.refs || []).map((r) => ({ kind: r.kind || 'image', url: r.url })),
+          resolution: $('cloudRes') ? $('cloudRes').value : '720P',
+        }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
