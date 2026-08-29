@@ -2762,6 +2762,33 @@ function cloudConn() {
   return hit ? { key: hit.key, ds: String(hit.ds).replace(/\/+$/, ''), name: hit.name } : null;
 }
 function cloudSaveDir(cfg) { return cfg.cloudSaveDir || 'D:\\WAN CLOUD GENS'; }
+/**
+ * 参考素材直传 DashScope 临时空间 → 返回 oss:// 地址。
+ * 这条路不依赖 cloudflared 隧道，也不需要 VPN（trycloudflare 域名在本网络要 VPN 才解析，
+ * 隧道自检必失败）。调用生成时必须带 X-DashScope-OssResourceResolve: enable 才认 oss://。
+ */
+async function dashUpload(conn, localPath, model) {
+  const pol = await fetch(conn.ds + '/uploads?action=getPolicy&model=' + encodeURIComponent(model), {
+    headers: { Authorization: 'Bearer ' + conn.key },
+  });
+  if (!pol.ok) throw new Error('取上传凭证失败 HTTP ' + pol.status);
+  const d = ((await pol.json()) || {}).data || {};
+  if (!d.upload_host || !d.policy) throw new Error('上传凭证不完整');
+  const name = path.basename(localPath).replace(/[^\w.-]/g, '_');
+  const key = d.upload_dir + '/' + Date.now() + '_' + name;
+  const fd = new FormData();
+  fd.append('OSSAccessKeyId', d.oss_access_key_id);
+  fd.append('policy', d.policy);
+  fd.append('Signature', d.signature);
+  fd.append('key', key);
+  fd.append('x-oss-object-acl', d.x_oss_object_acl);
+  fd.append('x-oss-forbid-overwrite', d.x_oss_forbid_overwrite);
+  fd.append('success_action_status', '200');
+  fd.append('file', new Blob([fs.readFileSync(localPath)]), name);
+  const up = await fetch(d.upload_host, { method: 'POST', body: fd });
+  if (up.status !== 200 && up.status !== 204) throw new Error('素材上传失败 HTTP ' + up.status);
+  return 'oss://' + key;
+}
 app.get('/api/cloudvideo/models', (req, res) => {
   const conn = cloudConn();
   res.json({ ready: !!conn, provider: conn ? conn.name : '', models: CLOUD_VIDEO_MODELS });
@@ -2781,13 +2808,27 @@ app.post('/api/cloudvideo/run', async (req, res) => {
     .replace(/「参考图(\d+)」/g, 'Image $1')
     .replace(/「参考视频(\d+)」/g, 'Video $1')
     .replace(/「参考音频(\d+)」/g, 'Audio $1');
+  let usedOss = false;
+  const publishFails = [];
   const publish = async (u) => {
     const local = comfyLocalPathOf(u);
     if (!local || !fs.existsSync(local)) return '';
-    const base = await ensureTunnel();
-    const pub = base + u;
-    await waitPublicReachable(pub);
-    return pub;
+    try { // 首选直传（无需隧道/VPN）
+      const oss = await dashUpload(conn, local, model);
+      usedOss = true;
+      return oss;
+    } catch (e) {
+      publishFails.push(String(e && e.message || e).slice(0, 80));
+      try { // 兜底：老的公网隧道路线
+        const base = await ensureTunnel();
+        const pub = base + u;
+        await waitPublicReachable(pub);
+        return pub;
+      } catch (e2) {
+        publishFails.push('隧道兜底也失败: ' + String(e2 && e2.message || e2).slice(0, 80));
+        return '';
+      }
+    }
   };
   const input = { prompt: prompt.slice(0, 3800) };
   const parameters = { duration, resolution, prompt_extend: false }; // 关掉改写：用户的提示词一字不动
@@ -2803,27 +2844,35 @@ app.post('/api/cloudvideo/run', async (req, res) => {
       for (const r of imgs) { const p = await publish(r.url); if (p) media.push({ type: 'reference_image', url: p }); }
       for (const r of vids) { const p = await publish(r.url); if (p) media.push({ type: 'reference_video', url: p }); }
       for (const r of auds) { const p = await publish(r.url); if (p) media.push({ type: 'reference_audio', url: p }); }
-      if (!media.length) return res.status(400).json({ error: 'Wan 3.0 是参考驱动模型 — 场景里至少要有一份参考素材' });
+      if (!media.length) {
+        return res.status(400).json({ error: refs.length
+          ? '参考素材没能送上云：' + (publishFails.join('；') || '未知原因')
+          : 'Wan 3.0 是参考驱动模型 — 场景里至少要有一份参考素材（图片即可，不需要视频）' });
+      }
       input.media = media;
       input.prompt = citeForWan(input.prompt).slice(0, 3800);
       parameters.ratio = 'adaptive';
       parameters.audio = true; // 原生音频
-      publicNote = `已带 ${media.length} 份参考（图${imgs.length}/视频${vids.length}/音频${auds.length}）`;
+      publicNote = `已带 ${media.length} 份参考（图${imgs.length}/视频${vids.length}/音频${auds.length}）` + (usedOss ? ' · 直传云端' : ' · 经隧道');
     } else if (spec.ref) {
       // i2v 家族：官方 schema 只有单张 img_url，且是「首帧」——不是角色参考
       const pub = await publish(imageUrl);
-      if (!pub) return res.status(400).json({ error: '这个模型是「图生视频」，需要场景里至少有一张参考图' });
+      if (!pub) {
+        return res.status(400).json({ error: imageUrl
+          ? '参考图没能送上云：' + (publishFails.join('；') || '未知原因')
+          : '这个模型是「图生视频」，需要场景里至少有一张参考图' });
+      }
       input.img_url = pub;
       publicNote = '首帧参考图已公开（i2v 仅支持单张首帧，要多参考请选 Wan 3.0）';
     }
   } catch (e) {
-    return res.status(502).json({ error: '参考素材无法公开访问（隧道失败）：' + String(e && e.message || e).slice(0, 140) });
+    return res.status(502).json({ error: '参考素材准备失败：' + String(e && e.message || e).slice(0, 160) });
   }
   try {
+    const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + conn.key, 'X-DashScope-Async': 'enable' };
+    if (usedOss) headers['X-DashScope-OssResourceResolve'] = 'enable'; // 认 oss:// 地址
     const r = await fetch(conn.ds + '/services/aigc/video-generation/video-synthesis', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + conn.key, 'X-DashScope-Async': 'enable' },
-      body: JSON.stringify({ model, input, parameters }),
+      method: 'POST', headers, body: JSON.stringify({ model, input, parameters }),
     });
     const j = await r.json().catch(() => ({}));
     const id = j.output && j.output.task_id;
