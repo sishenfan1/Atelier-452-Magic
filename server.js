@@ -2065,6 +2065,98 @@ function comfyConvert(ui, objectInfo) {
   }
   return api;
 }
+/** 取某节点某输入的合法选项清单（combo 三代写法通吃）；不是 combo 返回 null */
+function comfyValidOptionsFor(objectInfo, cls, name) {
+  const inp = (objectInfo[cls] || {}).input || {};
+  const spec = (inp.required || {})[name] || (inp.optional || {})[name];
+  if (!spec) return null;
+  const t = Array.isArray(spec) ? spec[0] : null;
+  if (Array.isArray(t)) return t;
+  if (typeof t === 'string' && t.includes('COMBO') && spec[1] && Array.isArray(spec[1].options)) return spec[1].options;
+  return null;
+}
+function comfyRequiredNames(objectInfo, cls) {
+  return new Set(Object.keys((((objectInfo[cls] || {}).input) || {}).required || {}));
+}
+/**
+ * 🩹 死链修剪（R2V 能跑的关键）：LoadImage/LoadAudio 指向的文件在 ComfyUI 里已不存在、
+ * 且没有场景参考可顶 → 判死，沿「必需输入」级联，遇到可选输入直接断开。
+ * H3 的 ref_audios 正是可选：没有参考音频时断开即可，模型按提示词自己生成声音
+ * （成片音轨来自 VAEDecodeAudio，不是这条参考链——已核对图结构）。
+ */
+function comfyPruneDeadLoaders(api, objectInfo, onlyClasses, immuneIds) {
+  const notes = [];
+  const LOADER_FIELD = { LoadImage: 'image', LoadAudio: 'audio', LoadVideo: 'video', LoadImageMask: 'image' };
+  const dead = new Set();
+  for (const [id, node] of Object.entries(api)) {
+    const field = LOADER_FIELD[node.class_type];
+    if (!field) continue;
+    if (onlyClasses && !onlyClasses.includes(node.class_type)) continue;
+    // 刚上传的场景参考不在缓存的 object_info 清单里，绝不能因此被判死
+    if (immuneIds && immuneIds.has(String(id))) continue;
+    const val = node.inputs[field];
+    if (typeof val !== 'string') continue;
+    const opts = comfyValidOptionsFor(objectInfo, node.class_type, field);
+    if (opts && opts.length && !opts.includes(val)) {
+      dead.add(id);
+      notes.push(`${node.class_type}「${val}」已不存在 → 断开该参考链`);
+    }
+  }
+  if (!dead.size) return notes;
+  for (let pass = 0; pass < 32; pass++) {
+    let changed = false;
+    for (const [id, node] of Object.entries(api)) {
+      if (dead.has(id)) continue;
+      const req = comfyRequiredNames(objectInfo, node.class_type);
+      for (const [name, val] of Object.entries(node.inputs)) {
+        if (!Array.isArray(val) || typeof val[0] !== 'string' || !dead.has(val[0])) continue;
+        const root = String(name).split('.')[0]; // dict 形态 ref_audios.ref_audio_0 → 判根名
+        if (req.has(name) || req.has(root)) { dead.add(id); changed = true; break; }
+        delete node.inputs[name];
+        changed = true;
+        notes.push(`断开可选输入 ${node.class_type}.${name}（模型将自行生成该部分）`);
+      }
+    }
+    if (!changed) break;
+  }
+  for (const id of dead) delete api[id];
+  for (const node of Object.values(api)) {
+    for (const [name, val] of Object.entries(node.inputs)) {
+      if (Array.isArray(val) && typeof val[0] === 'string' && dead.has(val[0])) delete node.inputs[name];
+    }
+  }
+  return notes;
+}
+/** 音频时长（秒）：ffmpeg -i 读 stderr 的 Duration，拿不到返回 0 */
+function comfyAudioSeconds(file) {
+  try {
+    const r = spawnSync(FFMPEG || 'ffmpeg', ['-i', file], { timeout: 15000 });
+    const out = String(r.stderr || '') + String(r.stdout || '');
+    const m = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(out);
+    if (!m) return 0;
+    return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+  } catch { return 0; }
+}
+/** 参考音频比工作流存的裁剪窗还短 → 把 start_index/duration 夹回可行范围（否则 TrimAudioDuration 直接报错） */
+function comfyFitAudioTrim(api, seconds) {
+  const notes = [];
+  if (!(seconds > 0)) return notes;
+  for (const node of Object.values(api)) {
+    if (node.class_type !== 'TrimAudioDuration') continue;
+    const start = Number(node.inputs.start_index);
+    if (Number.isFinite(start) && start >= seconds - 0.5) {
+      node.inputs.start_index = 0;
+      notes.push(`参考音频仅 ${seconds.toFixed(1)}s，裁剪起点 ${start}s 越界 → 归 0`);
+    }
+    const dur = Number(node.inputs.duration);
+    if (Number.isFinite(dur)) {
+      const room = Math.max(0.5, seconds - Number(node.inputs.start_index || 0));
+      if (dur > room) { node.inputs.duration = Math.floor(room * 10) / 10; notes.push(`裁剪时长夹到 ${node.inputs.duration}s`); }
+    }
+  }
+  return notes;
+}
+
 /** 模型路径自愈：值不在可选清单、但存在同文件名的可选项（仅子目录/斜杠不同）→ 自动改指同一份文件 */
 function comfyRemapModelPaths(api, objectInfo) {
   const notes = [];
@@ -2166,24 +2258,29 @@ app.post('/api/comfy/run', async (req, res) => {
     const refImages = Array.isArray(req.body && req.body.images) ? req.body.images : [];
     const refAudio = (req.body && req.body.audio) || '';
     const refWiring = [];
-    const loadImgs = Object.values(api).filter((n) => n.class_type === 'LoadImage');
+    const injectedIds = new Set(); // 我们刚喂过素材的节点：免疫死链修剪
+    const loadImgEntries = Object.entries(api).filter(([, n]) => n.class_type === 'LoadImage');
     let usedImages = 0;
-    for (let i = 0; i < loadImgs.length && usedImages < refImages.length; i++) {
+    for (let i = 0; i < loadImgEntries.length && usedImages < refImages.length; i++) {
       const p = comfyLocalPathOf(refImages[usedImages]);
       if (p && fs.existsSync(p)) {
-        loadImgs[i].inputs.image = await comfyUpload(cc, p);
+        loadImgEntries[i][1].inputs.image = await comfyUpload(cc, p);
+        injectedIds.add(String(loadImgEntries[i][0]));
         refWiring.push(`参考图${usedImages + 1} → 工作流 LoadImage`);
       }
       usedImages++;
     }
     let audioUsed = false;
+    let audioLocalPath = '';
     if (refAudio) {
-      const la = Object.values(api).find((n) => n.class_type === 'LoadAudio');
+      const laEntry = Object.entries(api).find(([, n]) => n.class_type === 'LoadAudio');
       const p = comfyLocalPathOf(refAudio);
-      if (la && p && fs.existsSync(p)) {
-        la.inputs.audio = await comfyUpload(cc, p);
+      if (laEntry && p && fs.existsSync(p)) {
+        laEntry[1].inputs.audio = await comfyUpload(cc, p);
+        injectedIds.add(String(laEntry[0]));
         refWiring.push('参考音频 → 工作流 LoadAudio');
         audioUsed = true;
+        audioLocalPath = p;
       }
     }
     const uiNodesById = {};
@@ -2200,6 +2297,7 @@ app.post('/api/comfy/run', async (req, res) => {
           const name = await comfyUpload(cc, p);
           const lid = 'atelier_img_' + (++injSeq);
           api[lid] = { class_type: 'LoadImage', inputs: { image: name } };
+          injectedIds.add(lid);
           node.inputs[inp.name] = [lid, 0];
           refWiring.push(`参考图${usedImages + 1} → ${inp.name}`);
         }
@@ -2212,15 +2310,24 @@ app.post('/api/comfy/run', async (req, res) => {
           const name = await comfyUpload(cc, p);
           const aid = 'atelier_aud_' + (++injSeq);
           api[aid] = { class_type: 'LoadAudio', inputs: { audio: name } };
+          injectedIds.add(aid);
           node.inputs[freeAud.name] = [aid, 0];
           refWiring.push('参考音频 → ' + freeAud.name);
           audioUsed = true;
+          audioLocalPath = p;
         }
       }
     }
+    // 🩹 自愈：夹裁剪窗（参考音频短于工作流预设时）→ 再修剪失效素材的死链（R2V 无参考音频即断开）
+    const repairs = (audioLocalPath ? comfyFitAudioTrim(api, comfyAudioSeconds(audioLocalPath)) : [])
+      .concat(comfyPruneDeadLoaders(api, objectInfo, null, injectedIds));
+    const hasOutput = Object.values(api).some((n) => /SaveVideo|VHS_VideoCombine|CreateVideo|SaveAnimatedWEBP|SaveWEBM/.test(n.class_type));
+    if (!hasOutput) {
+      return res.status(400).json({ error: '这个工作流缺的素材太多，修剪后连出片节点都没了 — 换一个带 ✓/🖼 的工作流，或补齐它引用的文件', repairs, refWiring });
+    }
     // 🔬 干跑：只组装不排队 — 检查参考接线与最终图（前端与 E2E 用）
     if (req.body && req.body.dryRun) {
-      return res.json({ dryRun: true, nodeCount: Object.keys(api).length, refWiring, remaps });
+      return res.json({ dryRun: true, nodeCount: Object.keys(api).length, refWiring, remaps, repairs });
     }
     const r = await fetch(cc.base + '/prompt', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2233,7 +2340,7 @@ app.post('/api/comfy/run', async (req, res) => {
       return res.status(502).json({ error: 'ComfyUI 剔除了无效节点（会导致没有成片）: ' + JSON.stringify(j.node_errors).slice(0, 500) });
     }
     comfyCtl.jobs[j.prompt_id] = { workflow: wfRel, at: Date.now() };
-    res.json({ promptId: j.prompt_id, started: up.started, remaps, refWiring });
+    res.json({ promptId: j.prompt_id, started: up.started, remaps, refWiring, repairs });
   } catch (e) {
     res.status(502).json({ error: String(e && e.message || e).slice(0, 400) });
   }
@@ -2327,6 +2434,8 @@ app.get('/api/comfy/health', async (req, res) => {
       const ui = JSON.parse(fs.readFileSync(path.join(root, rel), 'utf8'));
       const api = comfyConvert(ui, objectInfo);
       remaps = comfyRemapModelPaths(api, objectInfo);
+      // 与出片时同款自愈：失效的参考音频链会被自动断开，体检不该再把它算成问题
+      comfyPruneDeadLoaders(api, objectInfo, ['LoadAudio']);
       for (const node of Object.values(api)) {
         const specs = { ...((objectInfo[node.class_type].input || {}).required || {}), ...((objectInfo[node.class_type].input || {}).optional || {}) };
         for (const [name, val] of Object.entries(node.inputs)) {
