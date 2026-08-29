@@ -9042,7 +9042,7 @@ let cloudJob = '';
     try {
       const j = await (await fetch('/api/cloudvideo/models')).json();
       $('cloudModel').innerHTML = (j.models || []).map((m) => `<option value="${escapeHtml(m.id)}" data-ref="${m.ref ? 1 : 0}">${escapeHtml(m.label)}</option>`).join('');
-      $('cloudModel').value = 'wan2.2-i2v-flash';
+      $('cloudModel').value = 'wan3.0-video'; // 默认走真·多参考，别再让参考图被丢掉
       $('cloudProvider').textContent = j.ready ? ('已连 ' + j.provider) : '未导入厂商密钥（点 🔌）';
       if (!j.ready) btn.disabled = true;
     } catch {}
