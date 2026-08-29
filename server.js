@@ -1994,9 +1994,137 @@ function comfyWidgetNames(info) {
 }
 /** UI 工作流 → API prompt v3：支持 GetNode/SetNode/Reroute/PrimitiveNode 虚拟节点、
  *  静音(mode2)=剪除、旁路(mode4)=同类型直通、UI 纯控制节点静默跳过、模型路径按文件名自动改指。 */
-const COMFY_VIRTUAL = new Set(['GetNode', 'SetNode', 'Reroute', 'PrimitiveNode']);
+const COMFY_VIRTUAL = new Set(['GetNode', 'SetNode', 'Reroute', 'PrimitiveNode', 'PMultilineString']);
+// 已知无法自动补装的节点 → 人话原因（体检/转换报错都用）
+const COMFY_KNOWN_MISSING = {
+  OllamaGenerateV2: '这个工作流用本机 Ollama 大模型看图写提示词 — 需要自行安装 Ollama 服务 + comfyui-ollama 节点包才可跑',
+  ExecutionGate: '节点 ExecutionGate 在社区注册表查无来源包（作者未发布）— 此工作流暂无法自动修复',
+};
 const COMFY_UI_ONLY = /^(Note|MarkdownNote|Fast Groups (Bypasser|Muter) \(rgthree\)|Label \(rgthree\)|Bookmark.*)$/;
+// ---------------- 子图容器展开：UUID 节点（definitions.subgraphs）内联回顶层 ----------------
+// ComfyUI 新版把「节点组→子图」存成容器：顶层节点 type=子图 UUID，图体在 definitions.subgraphs。
+// 展开语义（对 8 个实测工作流逐一验证）：
+//  - 子图内部 links 是对象格式 {origin_id,origin_slot,target_id,target_slot}；origin_id=-10 为
+//    子图输入伪节点（origin_slot=子图 inputs 下标），target_id=-20 为输出伪节点。
+//  - 实例 widgets_values 按「子图 inputs 全序中可 widget 化类型（STRING/INT/FLOAT/BOOLEAN/COMBO）」
+//    逐格存值——已连线的槽也占格（值被连线覆盖，与普通节点 seed 槽同理）。
+//  - 实例 inputs[] 只列部分子图输入，按 name 对应；输出同理（下标兜底）。
+const COMFY_WIDGETABLE_TYPES = /STRING|INT|FLOAT|BOOLEAN|NUMBER|COMBO/i;
+function comfyExpandSubgraphs(ui) {
+  const defs = ((ui.definitions || {}).subgraphs) || [];
+  if (!defs.length) return ui;
+  const byDef = {};
+  for (const s of defs) byDef[String(s.id)] = s;
+  const out = {
+    ...ui,
+    nodes: (ui.nodes || []).map((n) => ({ ...n })),
+    links: (ui.links || []).map((l) => l.slice()),
+  };
+  let nextNode = Number(out.last_node_id) || 0;
+  let nextLink = Number(out.last_link_id) || 0;
+  for (const n of out.nodes) { if (Number(n.id) > nextNode) nextNode = Number(n.id); }
+  for (const l of out.links) { if (Number(l[0]) > nextLink) nextLink = Number(l[0]); }
+  for (let pass = 0; pass < 64; pass++) { // 支持嵌套：每轮展开一个实例，直到没有 UUID 节点
+    const inst = out.nodes.find((n) => byDef[String(n.type)]);
+    if (!inst) break;
+    const sub = byDef[String(inst.type)];
+    if (inst.mode === 2 || inst.mode === 4) {
+      // 整体静音/旁路的子图实例：按剪除处理（旁路直通子图无通用语义）
+      const deadOut = new Set();
+      for (const o of inst.outputs || []) for (const lid of o.links || []) deadOut.add(lid);
+      out.nodes = out.nodes.filter((n) => n !== inst);
+      out.links = out.links.filter((l) => !deadOut.has(l[0]));
+      continue;
+    }
+    const topLinkSrc = {};
+    for (const l of out.links) topLinkSrc[l[0]] = [l[1], l[2]];
+    const instInputByName = {};
+    for (const i of inst.inputs || []) instInputByName[i.name] = i;
+    // 子图输入逐槽解析：连线来源 or 实例 widget 字面量
+    const wv = Array.isArray(inst.widgets_values) ? inst.widgets_values : [];
+    let wi = 0;
+    const inMap = (sub.inputs || []).map((si) => {
+      const widgetable = COMFY_WIDGETABLE_TYPES.test(String(si.type || ''));
+      let lit;
+      if (widgetable && wi < wv.length) lit = wv[wi++]; // 占格（连线与否都占）
+      const ii = instInputByName[si.name];
+      if (ii && ii.link != null && topLinkSrc[ii.link]) return { src: topLinkSrc[ii.link] };
+      if (lit !== undefined) return { lit };
+      return {};
+    });
+    // 内部节点重编号并入（inputs.link 先清空，由子图 links 重建，防撞顶层同号）
+    const idMap = {};
+    for (const n of sub.nodes || []) idMap[String(n.id)] = ++nextNode;
+    const newNodes = (sub.nodes || []).map((n) => ({
+      ...n,
+      id: idMap[String(n.id)],
+      inputs: (n.inputs || []).map((i) => ({ ...i, link: null })),
+      outputs: (n.outputs || []).map((o) => ({ ...o, links: [] })),
+    }));
+    const newById = {};
+    for (const n of newNodes) newById[n.id] = n;
+    const instOutFor = (slot) => {
+      const def = (sub.outputs || [])[slot] || {};
+      return (inst.outputs || []).find((o) => o.name === def.name) || (inst.outputs || [])[slot];
+    };
+    for (const L of sub.links || []) {
+      const oid = L.origin_id, tid = L.target_id;
+      if (oid === -10 && tid === -20) {
+        // 输入直通输出：顶层受体改接实例该输入的真实来源
+        const m = inMap[L.origin_slot] || {};
+        const io = instOutFor(L.target_slot);
+        for (const lid of (io && io.links) || []) {
+          const tl = out.links.find((l) => l[0] === lid);
+          if (!tl) continue;
+          if (m.src) { tl[1] = m.src[0]; tl[2] = m.src[1]; }
+          else out.links = out.links.filter((l) => l[0] !== lid);
+        }
+        continue;
+      }
+      if (oid === -10) {
+        const m = inMap[L.origin_slot] || {};
+        const tgt = newById[idMap[String(tid)]];
+        if (!tgt) continue;
+        const ti = (tgt.inputs || [])[L.target_slot];
+        if (m.src) {
+          const lid = ++nextLink;
+          out.links.push([lid, m.src[0], m.src[1], tgt.id, L.target_slot, L.type]);
+          if (ti) ti.link = lid;
+        } else if (m.lit !== undefined) {
+          // 实例 widget 值 → 内部目标槽的字面量（转换阶段消费 __lit）
+          tgt.__lit = tgt.__lit || {};
+          tgt.__lit[ti ? ti.name : 'slot' + L.target_slot] = m.lit;
+        }
+        continue;
+      }
+      if (tid === -20) {
+        const srcN = newById[idMap[String(oid)]];
+        if (!srcN) continue;
+        const io = instOutFor(L.target_slot);
+        for (const lid of (io && io.links) || []) {
+          const tl = out.links.find((l) => l[0] === lid);
+          if (!tl) continue;
+          tl[1] = srcN.id;
+          tl[2] = L.origin_slot;
+        }
+        continue;
+      }
+      const s = newById[idMap[String(oid)]], t = newById[idMap[String(tid)]];
+      if (!s || !t) continue;
+      const lid = ++nextLink;
+      out.links.push([lid, s.id, L.origin_slot, t.id, L.target_slot, L.type]);
+      const ti = (t.inputs || [])[L.target_slot];
+      if (ti) ti.link = lid;
+    }
+    out.nodes = out.nodes.filter((n) => n !== inst).concat(newNodes);
+  }
+  out.last_node_id = nextNode;
+  out.last_link_id = nextLink;
+  return out;
+}
+
 function comfyConvert(ui, objectInfo) {
+  ui = comfyExpandSubgraphs(ui); // 子图容器先内联回顶层，后续转换零感知
   const byId = {};
   for (const n of ui.nodes || []) byId[String(n.id)] = n;
   const linkSrc = {}; // linkId -> [srcNodeId, srcSlot]
@@ -2017,6 +2145,8 @@ function comfyConvert(ui, objectInfo) {
       return r;
     }
     if (n.type === 'PrimitiveNode') return { lit: (n.widgets_values || [])[0] };
+    // PMultilineString（fearnworks 旧版节点，包已绝版）：本质就是多行字符串常量 → 字面量内联
+    if (n.type === 'PMultilineString') return { lit: (n.widgets_values || [])[0] };
     if (n.mode === 4) { // 旁路：按输出槽类型找同类型的输入直通
       const outType = ((n.outputs || [])[src[1]] || {}).type;
       const inp = (n.inputs || []).find((i) => i.type === outType && i.link != null) || (n.inputs || [])[src[1]] || (n.inputs || [])[0];
@@ -2029,7 +2159,10 @@ function comfyConvert(ui, objectInfo) {
     if (COMFY_UI_ONLY.test(n.type) || COMFY_VIRTUAL.has(n.type)) continue;
     if (n.mode === 2 || n.mode === 4) continue; // 静音剪除；旁路由 resolveSrc 直通
     const info = objectInfo[n.type];
-    if (!info) throw new Error(`ComfyUI 缺节点 ${n.type} — 对应自定义节点包没装（或是子图/未支持的容器节点）`);
+    if (!info) {
+      throw new Error(COMFY_KNOWN_MISSING[n.type]
+        || `ComfyUI 缺节点 ${n.type} — 对应自定义节点包没装（或是子图/未支持的容器节点）`);
+    }
     const inputs = {};
     for (const inp of n.inputs || []) {
       if (inp.link != null && linkSrc[inp.link]) {
@@ -2061,6 +2194,8 @@ function comfyConvert(ui, objectInfo) {
         if (!(name in inputs) && name in defaults) inputs[name] = defaults[name];
       }
     }
+    // 子图展开注入的实例级字面量：优先级最高（覆盖内部节点自存的旧值/默认值）
+    if (n.__lit) for (const [k, v] of Object.entries(n.__lit)) inputs[k] = v;
     api[String(n.id)] = { class_type: n.type, inputs };
   }
   return api;
@@ -2171,9 +2306,23 @@ function comfyRemapModelPaths(api, objectInfo) {
       const t = Array.isArray(spec) ? spec[0] : null;
       const options = Array.isArray(t) ? t : (t === 'COMBO' && spec[1] && Array.isArray(spec[1].options) ? spec[1].options : null);
       if (!options || !options.length || options.includes(val)) continue;
-      // 同文件不同挂载路径 → 改指；否则若清单只剩唯一可选项（节点版本变更移除了旧选项）→ 就选它
-      const hit = options.find((o) => baseOf(o) === baseOf(val)) || (options.length === 1 ? options[0] : null);
-      if (hit) {
+      // 同文件不同挂载路径 → 改指；再退一步：同名的 pruned/非 pruned 量化变体互替
+      //（如 fl2va_int8_convrot ↔ fl2va_pruned_int8_convrot——同一模型的两种发布形态，
+      //  作者环境用全量、本机只有 pruned 时自动顶上；remaps 会明示给用户）；
+      // 最后：清单只剩唯一可选项（节点版本变更移除了旧选项）→ 就选它
+      const wantBase = baseOf(val);
+      const altBase = wantBase.includes('pruned') ? wantBase.replace(/_?pruned_?/, '_').replace(/__+/g, '_') : wantBase.replace(/(fl2va|ref2va|i2v|t2v)_/, '$1_pruned_');
+      // 选项文案规范化匹配（节点更新改了大小写/空格/下划线：First frame priority ↔ first_frame_priority）
+      const squash = (s) => String(s).toLowerCase().replace(/[\s_\-.]+/g, '');
+      const spec1 = Array.isArray(spec) ? spec[1] : null;
+      const schemaDefault = spec1 && spec1.default !== undefined ? spec1.default : undefined;
+      const hit = options.find((o) => baseOf(o) === wantBase)
+        || options.find((o) => baseOf(o) === altBase)
+        || options.find((o) => squash(o) === squash(val))
+        || ((val === '' || val == null) && schemaDefault !== undefined && options.includes(schemaDefault) ? schemaDefault : null)
+        || ((val === '' || val == null) && options.length ? options[0] : null) // 空值=没选：按 UI 惯例取首项
+        || (options.length === 1 ? options[0] : null);
+      if (hit != null) {
         node.inputs[name] = hit;
         notes.push(`${node.class_type}.${name}: ${val} → ${hit}`);
       }
@@ -2289,7 +2438,10 @@ app.post('/api/comfy/run', async (req, res) => {
     for (const [nid, node] of Object.entries(api)) {
       if (!/^MiniMaxH3(ImageToVideo|ReferenceToVideo)$/.test(node.class_type)) continue;
       const uiNode = uiNodesById[nid] || { inputs: [] };
-      const freeImgIns = (uiNode.inputs || []).filter((i) => i.type === 'IMAGE' && i.link == null && !(i.name in node.inputs));
+      // ⚠ ref_videos.ref_video_0 的类型也是 IMAGE，但它要的是「≥5 帧的视频」——
+      // 往里塞单张静图会在执行期炸「H3 reference videos need at least 5 frames」。按名字排除一切 video 槽。
+      const freeImgIns = (uiNode.inputs || []).filter((i) => i.type === 'IMAGE' && i.link == null
+        && !(i.name in node.inputs) && !/video/i.test(i.name));
       for (const inp of freeImgIns) {
         if (usedImages >= refImages.length) break;
         const p = comfyLocalPathOf(refImages[usedImages]);
@@ -2304,7 +2456,9 @@ app.post('/api/comfy/run', async (req, res) => {
         usedImages++;
       }
       if (refAudio && !audioUsed) {
-        const freeAud = (uiNode.inputs || []).find((i) => i.type === 'AUDIO' && i.link == null && !(i.name in node.inputs));
+        // 同理跳过 ref_video_audios.*（那是参考视频自带的音轨槽，不是独立参考音频）
+        const freeAud = (uiNode.inputs || []).find((i) => i.type === 'AUDIO' && i.link == null
+          && !(i.name in node.inputs) && !/video/i.test(i.name));
         const p = comfyLocalPathOf(refAudio);
         if (freeAud && p && fs.existsSync(p)) {
           const name = await comfyUpload(cc, p);
