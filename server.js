@@ -2063,21 +2063,25 @@ function comfyExpandSubgraphs(ui) {
     }));
     const newById = {};
     for (const n of newNodes) newById[n.id] = n;
-    const instOutFor = (slot) => {
+    // 实例输出槽下标（实例 outputs 按 name 对齐子图 outputs；下标兜底）。
+    // 顶层受体必须按「origin==实例id && slot==该下标」全量扫——串联子图时，先展开的邻居
+    // 会新建挂在本实例输出上的顶层连线，它们不在实例自带的 outputs[].links 登记表里。
+    const instOutIdx = (slot) => {
       const def = (sub.outputs || [])[slot] || {};
-      return (inst.outputs || []).find((o) => o.name === def.name) || (inst.outputs || [])[slot];
+      const arr = inst.outputs || [];
+      const i = arr.findIndex((o) => o.name === def.name);
+      return i >= 0 ? i : Math.min(slot, Math.max(0, arr.length - 1));
     };
     for (const L of sub.links || []) {
       const oid = L.origin_id, tid = L.target_id;
       if (oid === -10 && tid === -20) {
         // 输入直通输出：顶层受体改接实例该输入的真实来源
         const m = inMap[L.origin_slot] || {};
-        const io = instOutFor(L.target_slot);
-        for (const lid of (io && io.links) || []) {
-          const tl = out.links.find((l) => l[0] === lid);
-          if (!tl) continue;
+        const oi = instOutIdx(L.target_slot);
+        for (const tl of out.links.slice()) {
+          if (tl[1] !== inst.id || tl[2] !== oi) continue;
           if (m.src) { tl[1] = m.src[0]; tl[2] = m.src[1]; }
-          else out.links = out.links.filter((l) => l[0] !== lid);
+          else out.links = out.links.filter((l) => l !== tl);
         }
         continue;
       }
@@ -2100,12 +2104,12 @@ function comfyExpandSubgraphs(ui) {
       if (tid === -20) {
         const srcN = newById[idMap[String(oid)]];
         if (!srcN) continue;
-        const io = instOutFor(L.target_slot);
-        for (const lid of (io && io.links) || []) {
-          const tl = out.links.find((l) => l[0] === lid);
-          if (!tl) continue;
-          tl[1] = srcN.id;
-          tl[2] = L.origin_slot;
+        const oi = instOutIdx(L.target_slot);
+        for (const tl of out.links) {
+          if (tl[1] === inst.id && tl[2] === oi) {
+            tl[1] = srcN.id;
+            tl[2] = L.origin_slot;
+          }
         }
         continue;
       }
@@ -2321,7 +2325,10 @@ function comfyRemapModelPaths(api, objectInfo) {
         || options.find((o) => squash(o) === squash(val))
         || ((val === '' || val == null) && schemaDefault !== undefined && options.includes(schemaDefault) ? schemaDefault : null)
         || ((val === '' || val == null) && options.length ? options[0] : null) // 空值=没选：按 UI 惯例取首项
-        || (options.length === 1 ? options[0] : null);
+        || (options.length === 1 ? options[0] : null)
+        // 节点升级导致 widget 槽位平移/选项改名（如 "16:9" 落进 resize_method、旧文案选项已删）：
+        // 值彻底无效时回退 schema default（作者推荐参数，可跑且合理）—— remaps 会逐条明示
+        || (schemaDefault !== undefined && options.includes(schemaDefault) ? schemaDefault : null);
       if (hit != null) {
         node.inputs[name] = hit;
         notes.push(`${node.class_type}.${name}: ${val} → ${hit}`);
@@ -2537,8 +2544,16 @@ app.get('/api/comfy/status/:id', async (req, res) => {
     const saved = [];
     let appUrl = '';
     for (const f of files) {
-      const src = path.join(cc.dir, 'output', f.subfolder || '', f.filename);
-      if (!fs.existsSync(src)) continue;
+      // 产物可能落 output 也可能落 temp（VHS_VideoCombine save_output=false 时 type:'temp'）；
+      // 条目自带 fullpath 时最可靠，优先用
+      const candidates = [
+        f.fullpath,
+        path.join(cc.dir, f.type === 'temp' ? 'temp' : 'output', f.subfolder || '', f.filename),
+        path.join(cc.dir, 'output', f.subfolder || '', f.filename),
+        path.join(cc.dir, 'temp', f.subfolder || '', f.filename),
+      ].filter(Boolean);
+      const src = candidates.find((p) => { try { return fs.existsSync(p); } catch { return false; } });
+      if (!src) continue;
       const base = 'MiniMaxH3_' + String(job.workflow || 'gen').replace(/.*\//, '').replace(/\.json$/i, '') + '_' + stamp + path.extname(f.filename);
       const dst = path.join(cc.saveDir, base);
       fs.copyFileSync(src, dst);
@@ -2549,7 +2564,7 @@ app.get('/api/comfy/status/:id', async (req, res) => {
         if (!appUrl) appUrl = '/videos/' + base;
       } catch {}
     }
-    if (!saved.length) return res.json({ done: true, ok: false, error: '产物文件不在 ComfyUI output 目录（检查 SaveVideo 设置）' });
+    if (!saved.length) return res.json({ done: true, ok: false, error: '产物文件不在 ComfyUI output/temp 目录（可能已被清理）— 重跑一次即可' });
     res.json({ done: true, ok: true, saved, url: appUrl });
   } catch (e) {
     // ComfyUI 连不上（掉线/被杀）——按丢失结案，别让前端无限「处理中」
