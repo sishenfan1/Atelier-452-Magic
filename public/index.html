@@ -71,6 +71,7 @@
     <button id="btnLlmPortal" class="btn ghost" title="LLM 门户：选择增强/翻译用的大模型通道 — Hermes 本机零 Key / Ollama / LM Studio / OpenRouter / 任意 OpenAI 兼容端点">🧠</button>
     <button id="btnLlmChat" class="btn ghost" title="与 LLM 对话（走 🧠 所选通道）— 可附带当前场景提示词一起聊，窗口可拖动、不挡工作">💬</button>
     <button id="btnRemote" class="btn ghost" title="手机遥控：开一条加密隧道，用 iPhone/iPad 扫码即可在浏览器里操作这台电脑上的完整应用">📱</button>
+    <button id="btnConnect" class="btn ghost" title="万能连接：粘任意 API Key，自动识别是谁/去哪/干什么；也能加 MCP 服务器。想连什么就连什么">🔌</button>
     <button id="btnSettings" class="btn ghost">⚙ API 设置</button>
   </div>
 </header>
@@ -909,6 +910,38 @@
     <button id="llmClose" class="btn ghost" type="button">关闭</button>
   </div>
   <div id="llmStatus" class="hint accent"></div>
+</dialog>
+
+<!-- 🔌 万能连接：粘任意 Key 自动识别，或加 MCP -->
+<dialog id="connectDialog" class="connect-dialog">
+  <h3>🔌 万能连接 <span class="hint">— 粘任意 API Key 自动识别是谁 / 去哪 / 能干啥；也能加 MCP 服务器</span></h3>
+  <div class="connect-tabs">
+    <button type="button" class="connect-tab active" data-ctab="key">🔑 API Key</button>
+    <button type="button" class="connect-tab" data-ctab="mcp">🧩 MCP 服务器</button>
+  </div>
+  <div id="ctabKey" class="connect-pane">
+    <div class="field"><label>把任意 API Key 粘这里</label>
+      <input id="ckKey" type="password" placeholder="sk-… / gsk_… / AIza… / r8_… 任意"></div>
+    <div class="connect-actions">
+      <button id="ckIdentify" class="btn" type="button">🔍 识别</button>
+      <button id="ckVerify" class="btn primary" type="button">✅ 验证并连接</button>
+    </div>
+    <div class="field" id="ckBaseRow" hidden><label>Base URL <span class="hint">自动没认出时填（OpenAI 兼容端点，不带 /v1）</span></label>
+      <input id="ckBase" placeholder="https://your-endpoint.com"></div>
+    <div id="ckResult" class="connect-result"></div>
+  </div>
+  <div id="ctabMcp" class="connect-pane" hidden>
+    <div class="field"><label>MCP 服务器 URL <span class="hint">SSE / streamable HTTP 端点</span></label>
+      <input id="cmUrl" placeholder="https://mcp.example.com/sse"></div>
+    <div class="field"><label>Token <span class="hint">需要就填，不需要留空</span></label>
+      <input id="cmToken" type="password" placeholder="可选"></div>
+    <button id="cmProbe" class="btn primary" type="button">🔎 探测工具清单</button>
+    <div id="cmResult" class="connect-result"></div>
+  </div>
+  <h4 class="connect-h4">已连接</h4>
+  <div id="connList" class="conn-list"></div>
+  <div class="dialog-actions"><button id="connectClose" class="btn ghost" type="button">关闭</button></div>
+  <div id="connectStatus" class="hint accent"></div>
 </dialog>
 
 <!-- 📱 手机遥控：隧道 + 令牌门 + 扫码直达 -->

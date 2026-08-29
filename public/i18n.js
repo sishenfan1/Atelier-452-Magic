@@ -714,6 +714,11 @@ const I18N = {
   '打开成片文件夹 D:\\MINIMAX H3 GENS': ['Open the output folder D:\\MINIMAX H3 GENS', '出力フォルダ D:\\MINIMAX H3 GENS を開く'],
   '选 ComfyUI 里存的工作流（Aiden-H3 的 FL2VA 系已直连；Ref2VA 后续）': ['Pick a workflow saved in ComfyUI (Aiden-H3 FL2VA family wired up; Ref2VA later)', 'ComfyUI 保存のワークフローを選択（Aiden-H3 FL2VA 系対応済み；Ref2VA は今後）'],
   '用当前场景组装出的完整提示词，在本机 ComfyUI 无头跑 MiniMax H3；没开 ComfyUI 会自动拉起；成片自动存 D:\\MINIMAX H3 GENS 并在上方播放器可看': ['Runs MiniMax H3 headlessly in local ComfyUI with this scene\'s fully assembled prompt; auto-starts ComfyUI if needed; output lands in D:\\MINIMAX H3 GENS and plays above', 'このシーンの完全プロンプトでローカル ComfyUI の MiniMax H3 をヘッドレス実行；未起動なら自動起動；成果は D:\\MINIMAX H3 GENS に保存され上のプレイヤーで再生'],
+  // ===== 2026-08-28 🔌 万能连接 =====
+  '万能连接：粘任意 API Key，自动识别是谁/去哪/干什么；也能加 MCP 服务器。想连什么就连什么': ['Universal connect: paste any API key and it auto-detects who/where/what; also add MCP servers. Connect to anything', '万能接続：任意の API キーを貼ると誰/どこ/何かを自動判別；MCP サーバーも追加可。何にでも繋がる'],
+  '🔍 识别': ['🔍 Identify', '🔍 識別'],
+  '✅ 验证并连接': ['✅ Verify & connect', '✅ 検証して接続'],
+  '🔎 探测工具清单': ['🔎 Probe tool list', '🔎 ツール一覧を探索'],
   // ===== 2026-08-28 ⏹ ComfyUI 终止 =====
   '⏹ 终止本次出片': ['⏹ Terminate this render', '⏹ この生成を中止'],
   '终止本次出片：排队中直接出队，渲染中立即中断': ['Terminate: dequeues if waiting, interrupts immediately if rendering', '中止：待機中はキュー削除、レンダリング中は即時割り込み'],

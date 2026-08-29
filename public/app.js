@@ -8914,6 +8914,92 @@ function comfyJobDone() {
   };
 })();
 
+// ---------------- 🔌 万能连接：粘任意 API Key 自动识别 / 加 MCP ----------------
+(() => {
+  const btn = $('btnConnect');
+  if (!btn) return;
+  let lastResolved = null; // 验证成功后的身份，保存用
+  const catLabel = { llm: '大模型', image: '图像', video: '视频', audio: '音频', search: '搜索', dev: '开发', storage: '存储', comms: '通讯', pay: '支付', data: '数据', other: '其它' };
+  async function loadConns() {
+    try {
+      const j = await (await fetch('/api/connections')).json();
+      const box = $('connList');
+      if (!j.connections || !j.connections.length) { box.innerHTML = '<div class="hint">还没连任何东西</div>'; return; }
+      box.innerHTML = j.connections.map((c) => {
+        const meta = c.kind === 'mcp'
+          ? `🧩 MCP · ${(c.tools || []).length} 个工具`
+          : `${c.masked || ''} · ${catLabel[c.cat] || c.cat}${(c.models || []).length ? ' · ' + c.models.length + ' 模型' : ''}`;
+        return `<div class="conn-row"><div class="conn-main"><b>${escapeHtml(c.name)}</b><span class="hint">${escapeHtml(meta)}</span>${c.base || c.url ? `<span class="conn-base">${escapeHtml(c.base || c.url)}</span>` : ''}</div><button type="button" class="conn-del" data-id="${c.id}">✕</button></div>`;
+      }).join('');
+      box.querySelectorAll('.conn-del').forEach((b) => {
+        b.onclick = async () => { await fetch('/api/connections/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: b.dataset.id }) }); loadConns(); };
+      });
+    } catch {}
+  }
+  btn.onclick = () => { $('connectDialog').showModal(); $('connectStatus').textContent = ''; $('ckResult').innerHTML = ''; $('cmResult').innerHTML = ''; loadConns(); };
+  $('connectClose').onclick = () => $('connectDialog').close();
+  document.querySelectorAll('#connectDialog .connect-tab').forEach((tab) => {
+    tab.onclick = () => {
+      document.querySelectorAll('#connectDialog .connect-tab').forEach((t) => t.classList.toggle('active', t === tab));
+      $('ctabKey').hidden = tab.dataset.ctab !== 'key';
+      $('ctabMcp').hidden = tab.dataset.ctab !== 'mcp';
+    };
+  });
+  $('ckIdentify').onclick = async () => {
+    const key = $('ckKey').value.trim();
+    if (!key) return;
+    $('ckResult').innerHTML = '识别中…';
+    try {
+      const j = await (await fetch('/api/keys/identify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) })).json();
+      if (j.unknown) { $('ckResult').innerHTML = `<div class="hint">没认出前缀（长度 ${j.length}）。点「验证并连接」我会真去探；或在下方填 Base URL。</div>`; $('ckBaseRow').hidden = false; return; }
+      const g = (j.guesses || []).map((x) => `<b>${escapeHtml(x.name)}</b>（${catLabel[x.cat] || x.cat}）${x.soft ? ' · 猜测' : ''}`).join(' 或 ');
+      const sk = (j.skCandidates || []).length ? `<div class="hint">sk- 通用格式，候选：${j.skCandidates.map((x) => x.name).join(' / ')}（验证时逐个试）</div>` : '';
+      $('ckResult').innerHTML = `<div>看起来是 ${g || '未知'} <span class="hint">· ${escapeHtml(j.masked)}</span></div>${sk}`;
+      $('ckBaseRow').hidden = !!(j.guesses || []).length;
+    } catch (e) { $('ckResult').innerHTML = '识别失败: ' + errMsg(e); }
+  };
+  $('ckVerify').onclick = async () => {
+    const key = $('ckKey').value.trim();
+    if (!key) return;
+    lastResolved = null;
+    $('ckResult').innerHTML = '验证中…（真去提供商探一次，Key 只发给它自己）';
+    try {
+      const j = await (await fetch('/api/keys/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, base: $('ckBase').value.trim() }) })).json();
+      if (!j.resolved) {
+        $('ckBaseRow').hidden = false;
+        $('ckResult').innerHTML = `<div>❌ 没认出。${escapeHtml(j.hint || '')}</div><div class="hint">试过：${(j.tried || []).map((t) => t.name + ':' + t.status).join(' / ')}</div>`;
+        return;
+      }
+      lastResolved = { key, ...j.resolved };
+      const r = j.resolved;
+      $('ckResult').innerHTML = `<div>✅ <b>${escapeHtml(r.name)}</b>（${catLabel[r.cat] || r.cat}）→ ${escapeHtml(r.base)}${(r.models || []).length ? ` · <b>${r.models.length}</b> 个模型可用` : ''}</div>
+        <div class="conn-save-row"><input id="ckName" value="${escapeHtml(r.name)}"><button id="ckSave" class="btn primary" type="button">＋ 保存这个连接</button></div>`;
+      $('ckSave').onclick = async () => {
+        await fetch('/api/connections/save', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: 'apikey', name: $('ckName').value.trim() || r.name, cat: r.cat, base: r.base, key, models: r.models, openai: r.openai }) });
+        $('ckKey').value = ''; $('ckResult').innerHTML = '<div class="hint">已保存 ✓</div>'; loadConns();
+      };
+    } catch (e) { $('ckResult').innerHTML = '验证失败: ' + errMsg(e); }
+  };
+  $('cmProbe').onclick = async () => {
+    const url = $('cmUrl').value.trim();
+    if (!url) return;
+    $('cmResult').innerHTML = '探测中…';
+    try {
+      const j = await (await fetch('/api/mcp/probe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, token: $('cmToken').value.trim() }) })).json();
+      if (j.error) { $('cmResult').innerHTML = '❌ ' + escapeHtml(j.error); return; }
+      const tools = (j.tools || []).map((t) => `<div class="mcp-tool"><b>${escapeHtml(t.name)}</b> <span class="hint">${escapeHtml(t.desc)}</span></div>`).join('');
+      $('cmResult').innerHTML = `<div>✅ ${escapeHtml(j.serverName || 'MCP')} · <b>${(j.tools || []).length}</b> 个工具</div>${tools}
+        <div class="conn-save-row"><input id="cmName" value="${escapeHtml(j.serverName || 'MCP')}"><button id="cmSave" class="btn primary" type="button">＋ 保存这个 MCP</button></div>`;
+      $('cmSave').onclick = async () => {
+        await fetch('/api/connections/save', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: 'mcp', name: $('cmName').value.trim() || 'MCP', cat: 'other', url, key: $('cmToken').value.trim(), tools: (j.tools || []).map((t) => t.name) }) });
+        $('cmResult').innerHTML = '<div class="hint">已保存 ✓</div>'; loadConns();
+      };
+    } catch (e) { $('cmResult').innerHTML = '探测失败: ' + errMsg(e); }
+  };
+})();
+
 // ---------------- 📱 手机遥控面板：开隧道 → 二维码扫码直达（令牌每次轮换） ----------------
 (() => {
   const btn = $('btnRemote');

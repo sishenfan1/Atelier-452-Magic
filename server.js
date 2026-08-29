@@ -1698,6 +1698,172 @@ async function hermesResolveModel(cfg) {
   return models.find((m) => m.includes(':free')) || models[0];
 }
 
+// ---------------- 🔌 万能连接：粘任意 API Key，自动识别是谁/去哪/干什么；也能加 MCP ----------------
+const KEY_FINGERPRINTS = [
+  { re: /^sk-ant-/, name: 'Anthropic Claude', cat: 'llm', base: 'https://api.anthropic.com', verify: '/v1/models', auth: 'x-api-key', extra: { 'anthropic-version': '2023-06-01' }, openai: false },
+  { re: /^sk-or-v1-/, name: 'OpenRouter', cat: 'llm', base: 'https://openrouter.ai/api', verify: '/v1/models', auth: 'bearer', openai: true },
+  { re: /^sk-proj-|^sk-svcacct-/, name: 'OpenAI', cat: 'llm', base: 'https://api.openai.com', verify: '/v1/models', auth: 'bearer', openai: true },
+  { re: /^gsk_/, name: 'Groq', cat: 'llm', base: 'https://api.groq.com/openai', verify: '/v1/models', auth: 'bearer', openai: true },
+  { re: /^xai-/, name: 'xAI Grok', cat: 'llm', base: 'https://api.x.ai', verify: '/v1/models', auth: 'bearer', openai: true },
+  { re: /^pplx-/, name: 'Perplexity', cat: 'llm', base: 'https://api.perplexity.ai', verify: '/models', auth: 'bearer', openai: true },
+  { re: /^nvapi-/, name: 'NVIDIA NIM', cat: 'llm', base: 'https://integrate.api.nvidia.com', verify: '/v1/models', auth: 'bearer', openai: true },
+  { re: /^csk-/, name: 'Cerebras', cat: 'llm', base: 'https://api.cerebras.ai', verify: '/v1/models', auth: 'bearer', openai: true },
+  { re: /^AIza/, name: 'Google Gemini', cat: 'llm', base: 'https://generativelanguage.googleapis.com', verify: '/v1beta/models', auth: 'query', openai: false },
+  { re: /^r8_/, name: 'Replicate', cat: 'video', base: 'https://api.replicate.com', verify: '/v1/models', auth: 'token', openai: false },
+  { re: /^hf_/, name: 'Hugging Face', cat: 'data', base: 'https://huggingface.co', verify: '/api/whoami-v2', auth: 'bearer', openai: false },
+  { re: /^tvly-/, name: 'Tavily Search', cat: 'search', base: 'https://api.tavily.com', verify: '', auth: 'bearer', openai: false },
+  { re: /^re_/, name: 'Resend Email', cat: 'comms', base: 'https://api.resend.com', verify: '/domains', auth: 'bearer', openai: false },
+  { re: /^SG\./, name: 'SendGrid', cat: 'comms', base: 'https://api.sendgrid.com', verify: '/v3/scopes', auth: 'bearer', openai: false },
+  { re: /^(ghp_|gho_|github_pat_)/, name: 'GitHub', cat: 'dev', base: 'https://api.github.com', verify: '/user', auth: 'bearer', openai: false },
+  { re: /^glpat-/, name: 'GitLab', cat: 'dev', base: 'https://gitlab.com/api', verify: '/v4/user', auth: 'bearer', openai: false },
+  { re: /^(xoxb-|xoxp-)/, name: 'Slack', cat: 'comms', base: 'https://slack.com/api', verify: '/auth.test', auth: 'bearer', openai: false },
+  { re: /^(sk_live_|sk_test_|rk_live_)/, name: 'Stripe', cat: 'pay', base: 'https://api.stripe.com', verify: '/v1/balance', auth: 'bearer', openai: false },
+  { re: /^(ntn_|secret_)/, name: 'Notion', cat: 'data', base: 'https://api.notion.com', verify: '/v1/users/me', auth: 'bearer', extra: { 'Notion-Version': '2022-06-28' }, openai: false },
+  { re: /^dop_v1_/, name: 'DigitalOcean', cat: 'dev', base: 'https://api.digitalocean.com', verify: '/v2/account', auth: 'bearer', openai: false },
+  { re: /^pcsk_/, name: 'Pinecone', cat: 'data', base: 'https://api.pinecone.io', verify: '/indexes', auth: 'apikey', openai: false },
+  { re: /^dckr_pat_/, name: 'Docker Hub', cat: 'dev', base: 'https://hub.docker.com', verify: '', auth: 'bearer', openai: false },
+  { re: /^sk-[0-9a-f]{32,}$/, name: 'DeepSeek(或其它 sk- 兼容站)', cat: 'llm', base: 'https://api.deepseek.com', verify: '/v1/models', auth: 'bearer', openai: true, soft: true },
+];
+const SK_CANDIDATES = [
+  { name: 'OpenAI', base: 'https://api.openai.com' },
+  { name: 'DeepSeek', base: 'https://api.deepseek.com' },
+  { name: 'Mistral', base: 'https://api.mistral.ai' },
+  { name: 'Together', base: 'https://api.together.xyz' },
+  { name: 'Fireworks', base: 'https://api.fireworks.ai/inference' },
+  { name: 'Moonshot Kimi', base: 'https://api.moonshot.cn' },
+];
+function fingerprintKey(key) {
+  const k = String(key || '').trim();
+  return KEY_FINGERPRINTS.filter((fp) => fp.re.test(k));
+}
+function authHeadersFor(fp, key) {
+  const h = Object.assign({}, fp.extra || {});
+  if (fp.auth === 'bearer') h.Authorization = 'Bearer ' + key;
+  else if (fp.auth === 'x-api-key') h['x-api-key'] = key;
+  else if (fp.auth === 'token') h.Authorization = 'Token ' + key;
+  else if (fp.auth === 'apikey') h['Api-Key'] = key;
+  return h;
+}
+async function probeProvider(base, verify, headers, isOpenai, key, authKind) {
+  let url = base.replace(/\/+$/, '') + (verify || (isOpenai ? '/v1/models' : ''));
+  if (authKind === 'query') url = url + (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(key);
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const r = await fetch(url, { headers: headers, signal: ctl.signal });
+    const txt = await r.text();
+    let models = [];
+    try { const j = JSON.parse(txt); models = (j.data || j.models || []).map((m) => m.id || m.name).filter(Boolean).slice(0, 60); } catch (e2) {}
+    return { status: r.status, ok: r.ok, models: models };
+  } catch (e) { return { status: 0, ok: false, error: String((e && e.message) || e).slice(0, 120) }; }
+  finally { clearTimeout(t); }
+}
+app.post('/api/keys/identify', (req, res) => {
+  const key = String((req.body && req.body.key) || '').trim();
+  if (!key) return res.status(400).json({ error: '没有粘贴 Key' });
+  const hits = fingerprintKey(key);
+  const looksSk = /^sk-/.test(key) && !hits.some((h) => !h.soft);
+  res.json({
+    masked: maskKey(key), length: key.length,
+    guesses: hits.map((h) => ({ name: h.name, cat: h.cat, base: h.base, openai: !!h.openai, soft: !!h.soft })),
+    skCandidates: looksSk ? SK_CANDIDATES : [],
+    unknown: !hits.length && !looksSk,
+  });
+});
+app.post('/api/keys/verify', async (req, res) => {
+  const key = String((req.body && req.body.key) || '').trim();
+  const forceBase = String((req.body && req.body.base) || '').trim();
+  const forceName = String((req.body && req.body.name) || '').trim();
+  if (!key) return res.status(400).json({ error: '没有 Key' });
+  const tried = [];
+  if (forceBase) {
+    const r = await probeProvider(forceBase, '/v1/models', { Authorization: 'Bearer ' + key }, true, key, 'bearer');
+    tried.push(Object.assign({ name: forceName || forceBase, base: forceBase }, r));
+    if (r.ok) return res.json({ resolved: { name: forceName || forceBase, cat: 'llm', base: forceBase, openai: true, models: r.models }, tried });
+  }
+  for (const fp of fingerprintKey(key)) {
+    const r = await probeProvider(fp.base, fp.verify, authHeadersFor(fp, key), fp.openai, key, fp.auth);
+    tried.push(Object.assign({ name: fp.name, base: fp.base, cat: fp.cat }, r));
+    if (r.ok) return res.json({ resolved: { name: fp.name, cat: fp.cat, base: fp.base, openai: !!fp.openai, models: r.models }, tried });
+  }
+  if (/^sk-/.test(key)) {
+    for (const c of SK_CANDIDATES) {
+      const r = await probeProvider(c.base, '/v1/models', { Authorization: 'Bearer ' + key }, true, key, 'bearer');
+      tried.push(Object.assign({ name: c.name, base: c.base, cat: 'llm' }, r));
+      if (r.ok) return res.json({ resolved: { name: c.name, cat: 'llm', base: c.base, openai: true, models: r.models }, tried });
+    }
+  }
+  res.json({ resolved: null, tried, hint: '没能自动认出——填一个 Base URL(OpenAI 兼容端点)我再试,或手动标注它是什么。' });
+});
+function ensureConnections(cur) {
+  if (!Array.isArray(cur.connections)) { cur.connections = []; return true; }
+  return false;
+}
+app.get('/api/connections', (req, res) => {
+  const cfg = loadConfig();
+  ensureConnections(cfg);
+  res.json({ connections: (cfg.connections || []).map((c) => ({
+    id: c.id, kind: c.kind, name: c.name, cat: c.cat, base: c.base, url: c.url,
+    masked: c.key ? maskKey(c.key) : undefined, models: c.models, tools: c.tools, note: c.note, addedAt: c.addedAt,
+  })) });
+});
+app.post('/api/connections/save', (req, res) => {
+  const b = req.body || {};
+  const cfg = loadConfig();
+  ensureConnections(cfg);
+  const entry = {
+    id: newId(), kind: b.kind === 'mcp' ? 'mcp' : 'apikey',
+    name: String(b.name || '未命名').slice(0, 60), cat: String(b.cat || 'other'),
+    base: b.base ? String(b.base).replace(/\/+$/, '') : '', url: b.url ? String(b.url) : '',
+    key: b.key ? String(b.key) : '', models: Array.isArray(b.models) ? b.models.slice(0, 80) : [],
+    tools: Array.isArray(b.tools) ? b.tools.slice(0, 200) : [], note: String(b.note || '').slice(0, 300),
+    openai: !!b.openai, auth: b.auth || 'bearer', addedAt: Date.now(),
+  };
+  cfg.connections.push(entry);
+  saveConfig(cfg);
+  res.json({ ok: true, id: entry.id, masked: entry.key ? maskKey(entry.key) : undefined });
+});
+app.post('/api/connections/delete', (req, res) => {
+  const id = String((req.body && req.body.id) || '');
+  const cfg = loadConfig();
+  ensureConnections(cfg);
+  cfg.connections = cfg.connections.filter((c) => c.id !== id);
+  saveConfig(cfg);
+  res.json({ ok: true });
+});
+app.post('/api/mcp/probe', async (req, res) => {
+  const url = String((req.body && req.body.url) || '').trim();
+  const token = String((req.body && req.body.token) || '').trim();
+  if (!/^https?:\/\//.test(url)) return res.status(400).json({ error: 'MCP URL 需为 http(s)(SSE/streamable 端点)' });
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
+  if (token) headers.Authorization = 'Bearer ' + token;
+  const rpc = (method, params, id) => JSON.stringify({ jsonrpc: '2.0', id: id, method: method, params: params || {} });
+  const parseMcp = (txt) => {
+    const lines = txt.split(/\r?\n/).filter((l) => l.indexOf('data:') === 0);
+    const body = lines.length ? lines.map((l) => l.slice(5).trim()).join('') : txt;
+    try { return JSON.parse(body); } catch (e) { return null; }
+  };
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 10000);
+  try {
+    const initR = await fetch(url, { method: 'POST', headers: headers, signal: ctl.signal,
+      body: rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'atelier452', version: '1.0' } }, 1) });
+    const sid = initR.headers.get('mcp-session-id');
+    const h2 = Object.assign({}, headers);
+    if (sid) h2['mcp-session-id'] = sid;
+    const initJson = parseMcp(await initR.text());
+    const serverName = (initJson && initJson.result && initJson.result.serverInfo) ? initJson.result.serverInfo.name : '';
+    const toolsR = await fetch(url, { method: 'POST', headers: h2, signal: ctl.signal, body: rpc('tools/list', {}, 2) });
+    const toolsJson = parseMcp(await toolsR.text());
+    const tools = ((toolsJson && toolsJson.result && Array.isArray(toolsJson.result.tools)) ? toolsJson.result.tools : [])
+      .map((x) => ({ name: x.name, desc: String(x.description || '').slice(0, 120) }));
+    if (!initJson && !tools.length) return res.status(502).json({ error: '握手失败(不是 MCP 端点或需要授权)' });
+    res.json({ ok: true, serverName: serverName, tools: tools });
+  } catch (e) {
+    res.status(502).json({ error: '连不上/握手失败:' + String((e && e.message) || e).slice(0, 160) });
+  } finally { clearTimeout(t); }
+});
+
 // 📱 手机遥控开关（只许本机操作；status 双端可查）
 app.post('/api/remote/start', async (req, res) => {
   if (isRemoteReq(req)) return res.status(403).json({ error: '只能在电脑上开关远程访问' });
