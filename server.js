@@ -1722,6 +1722,7 @@ const KEY_FINGERPRINTS = [
   { re: /^dop_v1_/, name: 'DigitalOcean', cat: 'dev', base: 'https://api.digitalocean.com', verify: '/v2/account', auth: 'bearer', openai: false },
   { re: /^pcsk_/, name: 'Pinecone', cat: 'data', base: 'https://api.pinecone.io', verify: '/indexes', auth: 'apikey', openai: false },
   { re: /^dckr_pat_/, name: 'Docker Hub', cat: 'dev', base: 'https://hub.docker.com', verify: '', auth: 'bearer', openai: false },
+  { re: /^sk-ws-/, name: '阿里云百炼 工作空间（需配套端点）', cat: 'llm', base: '', verify: '/models', auth: 'bearer', openai: true, soft: true },
   { re: /^sk-[0-9a-f]{32,}$/, name: 'DeepSeek(或其它 sk- 兼容站)', cat: 'llm', base: 'https://api.deepseek.com', verify: '/v1/models', auth: 'bearer', openai: true, soft: true },
 ];
 const SK_CANDIDATES = [
@@ -1794,6 +1795,85 @@ app.post('/api/keys/verify', async (req, res) => {
     }
   }
   res.json({ resolved: null, tried, hint: '没能自动认出——填一个 Base URL(OpenAI 兼容端点)我再试,或手动标注它是什么。' });
+});
+// 📄 厂商密钥文件导入：把 CSV/KV/JSON（如阿里云百炼工作空间 apiKey.csv）整份贴进来，
+// 自动抽出 key + OpenAI 兼容端点 + 工作空间名 → 真连一次拿模型清单 → 存为连接。
+function parseVendorBlob(text) {
+  const out = {};
+  const raw = String(text || '').trim();
+  if (!raw) return out;
+  try { // 先试 JSON
+    const j = JSON.parse(raw);
+    if (j && typeof j === 'object') for (const [k, v] of Object.entries(j)) out[String(k).trim()] = String(v == null ? '' : v).trim();
+  } catch {
+    for (const line of raw.split(/\r?\n/)) { // CSV / key=value / key: value 通吃
+      const m = /^\s*"?([A-Za-z0-9_\-. ]+)"?\s*[,=:]\s*(.*)$/.exec(line);
+      if (!m) continue;
+      out[m[1].trim()] = m[2].trim().replace(/^"(.*)"$/, '$1');
+    }
+  }
+  const pick = (...names) => {
+    for (const n of names) {
+      const hit = Object.keys(out).find((k) => k.toLowerCase() === n.toLowerCase());
+      if (hit && out[hit]) return out[hit];
+    }
+    return '';
+  };
+  let base = pick('openAiCompatible', 'openai_compatible', 'baseUrl', 'base_url', 'endpoint', 'apiBase', 'api_base');
+  const host = pick('apiHost', 'host');
+  if (!base && host) base = 'https://' + host.replace(/^https?:\/\//, '') + '/compatible-mode/v1';
+  return {
+    key: pick('apiKey', 'api_key', 'key', 'token', 'sk'),
+    base: base.replace(/\/+$/, ''),
+    name: pick('workspaceName', 'workspace', 'name', 'description') || '',
+    workspaceId: pick('workspaceId', 'workspace_id', 'id') || '',
+    dashScope: pick('dashScope', 'dashscope') || '',
+  };
+}
+app.post('/api/connections/import-vendor', async (req, res) => {
+  const parsed = parseVendorBlob((req.body && req.body.text) || '');
+  if (!parsed.key) return res.status(400).json({ error: '没在这份内容里找到 apiKey（支持 CSV / key=value / JSON）' });
+  if (!parsed.base) return res.status(400).json({ error: '没找到 OpenAI 兼容端点（openAiCompatible 或 apiHost）— 补一行再试' });
+  // OpenAI 兼容端点可能已带 /v1；探测时按原样 + 补 /v1 两种都试
+  const candidates = /\/v\d+$/.test(parsed.base) ? [parsed.base] : [parsed.base + '/v1', parsed.base];
+  for (const b of candidates) {
+    const r = await probeProvider(b, '/models', { Authorization: 'Bearer ' + parsed.key }, false, parsed.key, 'bearer');
+    if (!r.ok) continue;
+    const cfg = loadConfig();
+    ensureConnections(cfg);
+    const entry = {
+      id: newId(), kind: 'apikey',
+      name: parsed.name || parsed.workspaceId || '厂商端点',
+      cat: 'llm', base: b, url: '', key: parsed.key,
+      models: r.models || [], tools: [],
+      note: (parsed.workspaceId ? '工作空间 ' + parsed.workspaceId : '') + (parsed.dashScope ? ' · DashScope ' + parsed.dashScope : ''),
+      openai: true, auth: 'bearer', addedAt: Date.now(),
+    };
+    cfg.connections.push(entry);
+    // 一键设为 ✨增强/💬对话/翻译 的通道（省钱：不再走 Claude 硬顶额度）
+    // ⚠ 必须经钥匙串落 key：loadConfig 会用 active 条目覆写 openaiKey，直接写字段会被冲掉
+    if (req.body && req.body.setAsLlm) {
+      ensureKeychain(cfg);
+      let hit = (cfg.keychain.openai || []).find((k) => k && k.key === parsed.key);
+      if (!hit) {
+        hit = { id: newId(), label: entry.name + '（密钥文件导入）', key: parsed.key, addedAt: Date.now(), activatedAt: Date.now() };
+        cfg.keychain.openai.push(hit);
+      }
+      cfg.keychainActive.openai = hit.id;
+      syncKeychainToLegacy(cfg);
+      cfg.openaiBase = b.replace(/\/v\d+$/, '');
+      cfg.llmProvider = 'openai';
+      if (req.body.llmModel) cfg.llmModel = String(req.body.llmModel);
+    }
+    saveConfig(cfg);
+    return res.json({
+      ok: true, id: entry.id, name: entry.name, base: b,
+      masked: maskKey(parsed.key), models: r.models || [],
+      setAsLlm: !!(req.body && req.body.setAsLlm),
+      hasVideo: (r.models || []).some((m) => /t2v|i2v|s2v|video|minimax|hailuo/i.test(String(m))),
+    });
+  }
+  res.status(502).json({ error: '端点连不上或 Key 被拒（试过：' + candidates.join(' / ') + '）' });
 });
 function ensureConnections(cur) {
   if (!Array.isArray(cur.connections)) { cur.connections = []; return true; }

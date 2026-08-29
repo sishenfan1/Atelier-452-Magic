@@ -8943,6 +8943,7 @@ function comfyJobDone() {
       document.querySelectorAll('#connectDialog .connect-tab').forEach((t) => t.classList.toggle('active', t === tab));
       $('ctabKey').hidden = tab.dataset.ctab !== 'key';
       $('ctabMcp').hidden = tab.dataset.ctab !== 'mcp';
+      if ($('ctabVendor')) $('ctabVendor').hidden = tab.dataset.ctab !== 'vendor';
     };
   });
   $('ckIdentify').onclick = async () => {
@@ -8981,6 +8982,36 @@ function comfyJobDone() {
       };
     } catch (e) { $('ckResult').innerHTML = '验证失败: ' + errMsg(e); }
   };
+  // 📄 厂商密钥文件：贴 CSV/JSON 或直接把文件拖进来 → 解析 → 真连 → 存连接（可一键设为 LLM 通道）
+  if ($('cvText')) {
+    const ta = $('cvText');
+    ta.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
+    ta.addEventListener('drop', async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const f = [...((e.dataTransfer && e.dataTransfer.files) || [])][0];
+      if (f) { try { ta.value = await f.text(); } catch {} }
+    });
+    $('cvImport').onclick = async () => {
+      const text = ta.value.trim();
+      if (!text) { $('cvResult').innerHTML = '<div class="hint">先把密钥文件内容贴进来</div>'; return; }
+      $('cvResult').innerHTML = '解析并连接中…（真去端点拉一次模型清单）';
+      try {
+        const r = await fetch('/api/connections/import-vendor', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, setAsLlm: $('cvSetLlm').checked }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+        const vid = j.hasVideo
+          ? '<div>🎬 这个端点有视频模型</div>'
+          : '<div class="hint">ℹ 该端点只有文本/图像/语音模型，没有视频模型 — 视频出片仍走本机 ComfyUI（免费）或方舟/Artcraft</div>';
+        $('cvResult').innerHTML = `<div>✅ 已连接 <b>${escapeHtml(j.name)}</b> · ${escapeHtml(j.masked)} · <b>${(j.models || []).length}</b> 个模型</div>`
+          + vid + (j.setAsLlm ? '<div>🧠 已设为 ✨增强/💬对话/翻译 通道</div>' : '');
+        ta.value = '';
+        loadConns();
+      } catch (e) { $('cvResult').innerHTML = '❌ ' + errMsg(e); }
+    };
+  }
   $('cmProbe').onclick = async () => {
     const url = $('cmUrl').value.trim();
     if (!url) return;

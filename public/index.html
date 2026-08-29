@@ -918,6 +918,7 @@
   <div class="connect-tabs">
     <button type="button" class="connect-tab active" data-ctab="key">🔑 API Key</button>
     <button type="button" class="connect-tab" data-ctab="mcp">🧩 MCP 服务器</button>
+    <button type="button" class="connect-tab" data-ctab="vendor">📄 厂商密钥文件</button>
   </div>
   <div id="ctabKey" class="connect-pane">
     <div class="field"><label>把任意 API Key 粘这里</label>
@@ -937,6 +938,13 @@
       <input id="cmToken" type="password" placeholder="可选"></div>
     <button id="cmProbe" class="btn primary" type="button">🔎 探测工具清单</button>
     <div id="cmResult" class="connect-result"></div>
+  </div>
+  <div id="ctabVendor" class="connect-pane" hidden>
+    <div class="field"><label>把厂商给的密钥文件整份贴进来 <span class="hint">CSV / key=value / JSON 都行（如阿里云百炼 apiKey.csv）；也可直接拖文件进来</span></label>
+      <textarea id="cvText" rows="7" placeholder="id,1104884&#10;apiKey,sk-...&#10;apiHost,xxx.maas.aliyuncs.com&#10;openAiCompatible,https://xxx/compatible-mode/v1&#10;workspaceName,..."></textarea></div>
+    <label class="cv-check"><input type="checkbox" id="cvSetLlm" checked> 同时设为 ✨增强 / 💬对话 / 翻译 的通道（省下 Claude 额度）</label>
+    <button id="cvImport" class="btn primary" type="button">📥 解析并连接</button>
+    <div id="cvResult" class="connect-result"></div>
   </div>
   <h4 class="connect-h4">已连接</h4>
   <div id="connList" class="conn-list"></div>
