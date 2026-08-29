@@ -634,6 +634,15 @@
           title="终止本次出片：排队中直接出队，渲染中立即中断">⏹ 终止本次出片</button>
         <div id="comfyStatus" class="dir-go-status"></div>
       </div>
+      <div class="comfy-block cloud-block" id="cloudBlock">
+        <div class="comfy-head">☁ 云端出片 <span class="hint" id="cloudProvider">用导入的厂商端点</span>
+          <button id="cloudOpenGens" type="button" title="打开云端成片文件夹">📂</button></div>
+        <select id="cloudModel" title="选云端视频模型：图生视频用场景第一张参考图驱动"></select>
+        <button id="cloudRun" class="btn wide" type="button"
+          title="用当前场景的完整提示词在云端出片；图生视频会自动把参考图通过隧道公开给云端读取">☁ 云端出片</button>
+        <button id="cloudCancel" class="btn wide comfy-cancel" type="button" hidden>⏹ 停止跟踪</button>
+        <div id="cloudStatus" class="dir-go-status"></div>
+      </div>
       <div class="dir-go-meta">
         <select id="dirGoModel" class="dir-go-model" title="当前生效模型 — 点击直接切换模型与 provider（与左侧 ⚡ 生成面板联动，切档自动换参考集）"></select>
         <div id="dirGoStatus" class="dir-go-status"></div>

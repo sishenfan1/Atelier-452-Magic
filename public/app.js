@@ -9031,6 +9031,64 @@ function comfyJobDone() {
   };
 })();
 
+// ---------------- ☁ 云端出片：走 🔌 导入的厂商端点（Wan 系）出片，与本机 ComfyUI 并列 ----------------
+let cloudPoll = null;
+let cloudJob = '';
+(() => {
+  const btn = $('cloudRun');
+  if (!btn) return;
+  const done = () => { cloudJob = ''; $('cloudCancel').hidden = true; btn.disabled = false; };
+  (async () => {
+    try {
+      const j = await (await fetch('/api/cloudvideo/models')).json();
+      $('cloudModel').innerHTML = (j.models || []).map((m) => `<option value="${escapeHtml(m.id)}" data-ref="${m.ref ? 1 : 0}">${escapeHtml(m.label)}</option>`).join('');
+      $('cloudModel').value = 'wan2.2-i2v-flash';
+      $('cloudProvider').textContent = j.ready ? ('已连 ' + j.provider) : '未导入厂商密钥（点 🔌）';
+      if (!j.ready) btn.disabled = true;
+    } catch {}
+  })();
+  $('cloudOpenGens').onclick = () => fetch('/api/cloudvideo/open-gens', { method: 'POST' }).catch(() => {});
+  $('cloudCancel').onclick = () => { clearInterval(cloudPoll); done(); $('cloudStatus').textContent = '⏹ 已停止跟踪（云端任务可能仍在跑）'; };
+  btn.onclick = async () => {
+    const reqData = assembleDirectorRequest();
+    if (!reqData) return;
+    const model = $('cloudModel').value;
+    const needsRef = $('cloudModel').selectedOptions[0] && $('cloudModel').selectedOptions[0].dataset.ref === '1';
+    const firstImg = (state.director.refs || []).find((r) => (r.kind || 'image') === 'image');
+    if (needsRef && !firstImg) { $('cloudStatus').textContent = '⚠ 这个模型要参考图 — 左栏先加一张，或换文生视频模型'; return; }
+    btn.disabled = true;
+    $('cloudStatus').textContent = '☁ 提交中…' + (needsRef ? '（正在把参考图通过隧道公开给云端）' : '');
+    try {
+      const r = await fetch('/api/cloudvideo/run', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, prompt: reqData.prompt, duration: reqData.duration, image: needsRef && firstImg ? firstImg.url : '' }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      cloudJob = j.taskId;
+      $('cloudCancel').hidden = false;
+      $('cloudStatus').textContent = '☁ 云端渲染中…' + (j.note ? ' · ' + j.note : '');
+      const t0 = Date.now();
+      clearInterval(cloudPoll);
+      cloudPoll = setInterval(async () => {
+        try {
+          const s = await (await fetch('/api/cloudvideo/status/' + j.taskId)).json();
+          if (!s.done) { $('cloudStatus').textContent = `☁ 云端${s.state === 'RUNNING' ? '渲染中' : '排队中'}… ${((Date.now() - t0) / 1000).toFixed(0)}s`; return; }
+          clearInterval(cloudPoll);
+          done();
+          if (!s.ok) { $('cloudStatus').textContent = '❌ ' + (s.error || '失败'); return; }
+          $('cloudStatus').textContent = `✅ 云端出片完成 → 已存 ${s.saved[0]}`;
+          if (s.url) {
+            const v = $('dirResult');
+            if (v) { v.src = s.url; v.hidden = false; try { v.play(); } catch {} }
+            if ($('dirResultEmpty')) $('dirResultEmpty').hidden = true;
+          }
+        } catch {}
+      }, 4000);
+    } catch (e) { done(); $('cloudStatus').textContent = '❌ ' + errMsg(e); }
+  };
+})();
+
 // ---------------- 📱 手机遥控面板：开隧道 → 二维码扫码直达（令牌每次轮换） ----------------
 (() => {
   const btn = $('btnRemote');

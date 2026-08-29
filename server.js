@@ -1845,6 +1845,8 @@ app.post('/api/connections/import-vendor', async (req, res) => {
       id: newId(), kind: 'apikey',
       name: parsed.name || parsed.workspaceId || '厂商端点',
       cat: 'llm', base: b, url: '', key: parsed.key,
+      // DashScope 原生端点：云端出片（Wan 视频）走它，不是 OpenAI 兼容那条
+      ds: parsed.dashScope || (parsed.base ? parsed.base.replace(/\/compatible-mode\/v\d+$/, '') + '/api/v1' : ''),
       models: r.models || [], tools: [],
       note: (parsed.workspaceId ? '工作空间 ' + parsed.workspaceId : '') + (parsed.dashScope ? ' · DashScope ' + parsed.dashScope : ''),
       openai: true, auth: 'bearer', addedAt: Date.now(),
@@ -1884,7 +1886,7 @@ app.get('/api/connections', (req, res) => {
   ensureConnections(cfg);
   res.json({ connections: (cfg.connections || []).map((c) => ({
     id: c.id, kind: c.kind, name: c.name, cat: c.cat, base: c.base, url: c.url,
-    masked: c.key ? maskKey(c.key) : undefined, models: c.models, tools: c.tools, note: c.note, addedAt: c.addedAt,
+    masked: c.key ? maskKey(c.key) : undefined, models: c.models, tools: c.tools, note: c.note, addedAt: c.addedAt, ds: c.ds,
   })) });
 });
 app.post('/api/connections/save', (req, res) => {
@@ -2737,6 +2739,113 @@ app.post('/api/comfy/open-gens', (req, res) => {
   const cc = comfyCfg(loadConfig());
   try { fs.mkdirSync(cc.saveDir, { recursive: true }); } catch {}
   openFolderNative(cc.saveDir);
+  res.json({ ok: true });
+});
+
+// ---------------- ☁ 云端出片（Wan / DashScope 异步视频）：用导入的厂商端点直接出片 ----------------
+// 与本机 ComfyUI 并列的第二条出片通道。i2v 需要公网可达的参考图 → 复用既有 cloudflared 隧道。
+const CLOUD_VIDEO_MODELS = [
+  { id: 'wan3.0-video', label: 'Wan 3.0（旗舰 · 多参考 · 原生音频）', ref: true },
+  { id: 'wan2.7-i2v', label: 'Wan 2.7 图生视频（参考图驱动）', ref: true },
+  { id: 'wan2.7-t2v', label: 'Wan 2.7 文生视频', ref: false },
+  { id: 'wan2.5-i2v-preview', label: 'Wan 2.5 图生视频', ref: true },
+  { id: 'wan2.5-t2v-preview', label: 'Wan 2.5 文生视频', ref: false },
+  { id: 'wan2.2-i2v-plus', label: 'Wan 2.2 图生视频 Plus', ref: true },
+  { id: 'wan2.2-i2v-flash', label: 'Wan 2.2 图生视频 Flash（最快最省）', ref: true },
+  { id: 'wan2.2-t2v-plus', label: 'Wan 2.2 文生视频 Plus', ref: false },
+];
+const cloudJobs = {};
+function cloudConn() {
+  const cfg = loadConfig();
+  const list = Array.isArray(cfg.connections) ? cfg.connections : [];
+  const hit = list.find((c) => c && c.key && c.ds);
+  return hit ? { key: hit.key, ds: String(hit.ds).replace(/\/+$/, ''), name: hit.name } : null;
+}
+function cloudSaveDir(cfg) { return cfg.cloudSaveDir || 'D:\\WAN CLOUD GENS'; }
+app.get('/api/cloudvideo/models', (req, res) => {
+  const conn = cloudConn();
+  res.json({ ready: !!conn, provider: conn ? conn.name : '', models: CLOUD_VIDEO_MODELS });
+});
+app.post('/api/cloudvideo/run', async (req, res) => {
+  const conn = cloudConn();
+  if (!conn) return res.status(400).json({ error: '还没导入带 DashScope 端点的厂商密钥 — 点 🔌 用「📄 厂商密钥文件」导入' });
+  const model = String((req.body && req.body.model) || 'wan2.2-i2v-flash');
+  const prompt = String((req.body && req.body.prompt) || '').trim();
+  const duration = Math.max(3, Math.min(10, Number((req.body && req.body.duration) || 5)));
+  const imageUrl = String((req.body && req.body.image) || '');
+  if (!prompt) return res.status(400).json({ error: '提示词为空' });
+  const spec = CLOUD_VIDEO_MODELS.find((m) => m.id === model) || { ref: false };
+  const input = { prompt: prompt.slice(0, 3800) };
+  let publicNote = '';
+  if (spec.ref) {
+    const local = comfyLocalPathOf(imageUrl);
+    if (!local || !fs.existsSync(local)) {
+      return res.status(400).json({ error: '这个模型是「图生视频」，需要场景里至少有一张参考图' });
+    }
+    try {
+      const base = await ensureTunnel(); // 参考图必须公网可达
+      const pub = base + imageUrl;
+      await waitPublicReachable(pub);
+      input.img_url = pub;
+      publicNote = '参考图已通过隧道公开：' + pub.replace(/^https:\/\//, '').slice(0, 40) + '…';
+    } catch (e) {
+      return res.status(502).json({ error: '参考图无法公开访问（隧道失败）：' + String(e && e.message || e).slice(0, 140) });
+    }
+  }
+  try {
+    const r = await fetch(conn.ds + '/services/aigc/video-generation/video-synthesis', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + conn.key, 'X-DashScope-Async': 'enable' },
+      body: JSON.stringify({ model, input, parameters: { duration, size: '832*480' } }),
+    });
+    const j = await r.json().catch(() => ({}));
+    const id = j.output && j.output.task_id;
+    if (!r.ok || !id) return res.status(502).json({ error: '云端拒绝任务：' + JSON.stringify(j).slice(0, 300) });
+    cloudJobs[id] = { model, at: Date.now() };
+    res.json({ taskId: id, model, note: publicNote });
+  } catch (e) {
+    res.status(502).json({ error: String(e && e.message || e).slice(0, 240) });
+  }
+});
+app.get('/api/cloudvideo/status/:id', async (req, res) => {
+  const conn = cloudConn();
+  if (!conn) return res.status(400).json({ error: '连接已丢失' });
+  const id = req.params.id;
+  try {
+    const r = await fetch(conn.ds + '/tasks/' + id, { headers: { Authorization: 'Bearer ' + conn.key } });
+    const j = await r.json().catch(() => ({}));
+    const out = j.output || {};
+    const st = out.task_status;
+    if (st === 'PENDING' || st === 'RUNNING') return res.json({ done: false, state: st });
+    if (st !== 'SUCCEEDED') {
+      return res.json({ done: true, ok: false, error: '云端失败：' + (out.message || out.code || JSON.stringify(j).slice(0, 200)) });
+    }
+    const url = out.video_url;
+    if (!url) return res.json({ done: true, ok: false, error: '完成但没有视频地址' });
+    // 立刻落盘：OSS 链接会过期
+    const cfg = loadConfig();
+    const dir = cloudSaveDir(cfg);
+    fs.mkdirSync(dir, { recursive: true });
+    const job = cloudJobs[id] || {};
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+    const base = 'Wan_' + String(job.model || 'cloud').replace(/[^\w.-]/g, '') + '_' + stamp + '.mp4';
+    const buf = Buffer.from(await (await fetch(url)).arrayBuffer());
+    fs.writeFileSync(path.join(dir, base), buf);
+    let appUrl = '';
+    try {
+      fs.mkdirSync(VIDEO_DIR, { recursive: true });
+      fs.writeFileSync(path.join(VIDEO_DIR, base), buf);
+      appUrl = '/videos/' + base;
+    } catch {}
+    res.json({ done: true, ok: true, saved: [path.join(dir, base)], url: appUrl });
+  } catch (e) {
+    res.status(502).json({ error: String(e && e.message || e).slice(0, 240) });
+  }
+});
+app.post('/api/cloudvideo/open-gens', (req, res) => {
+  const dir = cloudSaveDir(loadConfig());
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  openFolderNative(dir);
   res.json({ ok: true });
 });
 
