@@ -669,12 +669,14 @@ function switchMode(mode) {
   $('viewLibrary').hidden = mode !== 'library';
   $('viewMotion').hidden = mode !== 'motion';
   $('viewDirector').hidden = mode !== 'director';
+  $('viewH3').hidden = mode !== 'h3';
   $('tabInbetween').classList.toggle('active', mode === 'inbetween');
   $('tabV2V').classList.toggle('active', mode === 'v2v');
   $('tabRefine').classList.toggle('active', mode === 'refine');
   $('tabLibrary').classList.toggle('active', mode === 'library');
   $('tabMotion').classList.toggle('active', mode === 'motion');
   $('tabDirector').classList.toggle('active', mode === 'director');
+  $('tabH3').classList.toggle('active', mode === 'h3');
   // 收起式导航：同步当前工作区徽章，选择后浮层立即收起（离开 hover 前也不再挡视线）
   const MODE_NAMES = {
     inbetween: ['工作区 1', '中割生成', 1],
@@ -682,13 +684,14 @@ function switchMode(mode) {
     refine: ['工作区 3', '原画精修', 3],
     library: ['工作区 4', '提示词库', 4],
     motion: ['工作区 5', '動作分析', 5],
-    director: ['主工作区', 'REFERENCES TOOL', '★'], // 主力工作区：排位第一、开机即入
+    director: ['主工作区', 'REFERENCES TOOL', '★'],
+    h3: ['Workspace 7', 'Local H3', 7], // 主力工作区：排位第一、开机即入
   };
   const nm = MODE_NAMES[mode];
   if (nm) {
     $('modeCurrentKicker').textContent = nm[0];
     $('modeCurrentTitle').textContent = nm[1];
-    $('modeCount').textContent = nm[2] === '★' ? '★' : nm[2] + ' / 6';
+    $('modeCount').textContent = nm[2] === '★' ? '★' : nm[2] + ' / 7';
   }
   const tabsEl = $('modeTabs');
   tabsEl.classList.add('force-hide');
@@ -704,6 +707,7 @@ function switchMode(mode) {
     // 只碰 disabled，不覆写文案 —— 覆写会破坏两行排版与多语翻译
     $('btnDirectorGen').disabled = false;
   }
+  if (mode === 'h3' && typeof window.h3OnShow === 'function') window.h3OnShow();
 }
 
 // ---------------- 关键帧管理 ----------------
@@ -2755,6 +2759,7 @@ $('tabV2V').onclick = () => switchMode('v2v');
 $('tabRefine').onclick = () => switchMode('refine');
 $('tabLibrary').onclick = () => switchMode('library');
 $('tabMotion').onclick = () => switchMode('motion');
+$('tabH3').onclick = () => switchMode('h3');
 $('tabDirector').onclick = () => switchMode('director');
 
 // 精修：源图上传 / 生成 / 结果操作
@@ -9065,7 +9070,10 @@ let cloudJob = '';
       const r = await fetch('/api/cloudvideo/run', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model, prompt: reqData.prompt, duration: reqData.duration,
+          model, prompt: reqData.prompt,
+          // 云端时长以本块的下拉为准（选「跟随场景」才用场景时长）——
+          // 场景时长会被 CUT 秒数合计悄悄覆写，用户设了 15 秒却出 5 秒就是这么来的
+          duration: Number(($('cloudDur') || {}).value || 0) || reqData.duration,
           image: needsRef && firstImg ? firstImg.url : '',
           // Wan 3.0 走真·多参考：把全部场景参考按 @编号顺序送过去
           refs: (state.director.refs || []).map((r) => ({ kind: r.kind || 'image', url: r.url })),

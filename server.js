@@ -2798,7 +2798,14 @@ app.post('/api/cloudvideo/run', async (req, res) => {
   if (!conn) return res.status(400).json({ error: '还没导入带 DashScope 端点的厂商密钥 — 点 🔌 用「📄 厂商密钥文件」导入' });
   const model = String((req.body && req.body.model) || 'wan2.2-i2v-flash');
   const prompt = String((req.body && req.body.prompt) || '').trim();
-  const duration = Math.max(3, Math.min(10, Number((req.body && req.body.duration) || 5)));
+  // 时长按模型能力钳制：wan3.0 官方支持 2–30s（默认 5）；老的 2.2/2.5/2.7 系只认固定档位 5/10。
+  const askedDur = Number((req.body && req.body.duration) || 5);
+  const durOf = (mdl, want) => {
+    if (mdl === 'wan3.0-video') return Math.max(2, Math.min(30, Math.round(want)));
+    const allowed = [5, 10];
+    return allowed.reduce((best, v) => (Math.abs(v - want) < Math.abs(best - want) ? v : best), allowed[0]);
+  };
+  const duration = durOf(String((req.body && req.body.model) || ''), askedDur);
   const imageUrl = String((req.body && req.body.image) || '');
   if (!prompt) return res.status(400).json({ error: '提示词为空' });
   const spec = CLOUD_VIDEO_MODELS.find((m) => m.id === model) || { ref: false };
@@ -2878,7 +2885,10 @@ app.post('/api/cloudvideo/run', async (req, res) => {
     const id = j.output && j.output.task_id;
     if (!r.ok || !id) return res.status(502).json({ error: '云端拒绝任务：' + JSON.stringify(j).slice(0, 300) });
     cloudJobs[id] = { model, at: Date.now() };
-    res.json({ taskId: id, model, note: publicNote });
+    const durNote = duration !== Math.round(askedDur)
+      ? `时长 ${Math.round(askedDur)}s → ${duration}s（该模型只支持 ${model === 'wan3.0-video' ? '2–30' : '5/10'} 秒）`
+      : `时长 ${duration}s`;
+    res.json({ taskId: id, model, duration, note: [publicNote, durNote].filter(Boolean).join(' · ') });
   } catch (e) {
     res.status(502).json({ error: String(e && e.message || e).slice(0, 240) });
   }
@@ -4524,6 +4534,8 @@ app.use((err, req, res, next) => {
   const hint = err && err.type === 'entity.too.large' ? '请求体超过 300MB 上限' : '';
   res.status(status).json({ error: hint || raw.slice(0, 300) });
 });
+
+try { require('./h3-routes')(app); } catch (e) { console.warn('[h3] routes skipped:', e && e.message || e); }
 
 const PORT = process.env.PORT || 5893;
 // 只绑回环（浏览器/Chrome 扩展/平台窗口全走 localhost）：不暴露局域网，也永远不触发防火墙管理员弹窗

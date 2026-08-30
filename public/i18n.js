@@ -737,6 +737,33 @@ const I18N = {
   // ===== 2026-08-26 机位插入器（复合机位 + 度数分档） =====
   '📐 插入机位…': ['📐 Insert angle…', '📐 アングルを挿入…'],
   '选一个机位 → 立即写入镜头框成可编辑提示词；连选多项自动用「＋」拼成复合机位（如 前侧45度＋齐腰＋微俯）': ['Pick an angle → written into the cut box as an editable prompt; pick several in a row and they chain with ＋ into one composite setup (e.g. 3/4 front 45° + hip level + slight high)', 'アングルを選ぶ → カット枠に編集可能プロンプトとして書き込み；連続選択で「＋」連結の複合アングルに（例：前側45°＋腰高＋微俯瞰）'],
+  // ===== 2026-08-29 🖥 Local MiniMax H3 =====
+  '工作区 7': ['Workspace 7', 'ワークスペース 7'],
+  'Local H3': ['Local H3', 'Local H3'],
+  'MiniMax GPU': ['MiniMax GPU', 'MiniMax GPU'],
+  '本机 H3 状态': ['Local H3 status', 'ローカル H3 状態'],
+  '— 8787 生成 API · 8188 ComfyUI': ['— 8787 generate API · 8188 ComfyUI', '— 8787 生成 API · 8188 ComfyUI'],
+  '启动本机 H3': ['Start local H3', 'ローカル H3 を起動'],
+  '不会关掉现有 Comfy 或 Magic（5893）。只拉起 D:\\Atelier452\\minimax-h3 的 8787 / 8188。': ['Will not kill existing Comfy or Magic (5893). Only starts 8787 / 8188 under D:\\Atelier452\\minimax-h3.', '既存の Comfy / Magic（5893）は止めません。D:\\Atelier452\\minimax-h3 の 8787 / 8188 だけ起動します。'],
+  '提示词': ['Prompt', 'プロンプト'],
+  '— 可很长 · Ref2VA': ['— long is fine · Ref2VA', '— 長くて可 · Ref2VA'],
+  '人设图 / 静帧仅作参考，绝不当首帧。按附加顺序在提示词里写 <Picture 1>、<Video 1>、<Audio 1>。': ['Character sheets / stills are REFERENCE ONLY, never first frames. Tag them in the prompt as <Picture 1>, <Video 1>, <Audio 1> in attach order.', 'キャラシート／静止画は参照のみ。絶対にファーストフレームにしない。添付順でプロンプトに <Picture 1>、<Video 1>、<Audio 1> と書く。'],
+  '参考素材': ['References', '参照素材'],
+  '— 图 ≤9 · 视频 ≤3 · 音频 ≤3 · 只是参考': ['— images ≤9 · video ≤3 · audio ≤3 · reference only', '— 画像 ≤9 · 動画 ≤3 · 音声 ≤3 · 参照のみ'],
+  '参考图（最多 9 张）': ['Reference images (up to 9)', '参照画像（最大 9）'],
+  '人设 / 风格 / 身份 · 不是首帧': ['sheets / style / identity · not first frames', '設定／画風／身元 · ファーストフレームではない'],
+  '参考视频（最多 3 条）': ['Reference video (up to 3)', '参照動画（最大 3）'],
+  '动作 / 运镜 / 演技 · 声轨随视频走': ['motion / camera / acting · soundtrack rides along', '動き／カメラ／演技 · 音声は動画に付く'],
+  '参考音频（最多 3 条）': ['Reference audio (up to 3)', '参照音声（最大 3）'],
+  '独立人声 / 音乐 / 音效': ['standalone voice, music, SFX', '独立した声／音楽／効果音'],
+  '生成参数': ['Generate settings', '生成パラメータ'],
+  '— 原生 768p 锁定 1344×768': ['— native 768p locked 1344×768', '— ネイティブ 768p 固定 1344×768'],
+  '时长（秒）': ['Duration (seconds)', '尺（秒）'],
+  'Turbo（4 步 Ref2VA）': ['Turbo (4-step Ref2VA)', 'Turbo（4 ステップ Ref2VA）'],
+  '▶ 生成 MiniMax H3': ['▶ Generate MiniMax H3', '▶ MiniMax H3 を生成'],
+  '成片': ['Result', '成果'],
+  '— MiniMax H3 · 本机 GPU': ['— MiniMax H3 · local GPU', '— MiniMax H3 · ローカル GPU'],
+  '出品：MiniMax H3 · 本机 RTX 5090 · 原生 768p。2K 需 MiniMax 付费 regen（仅提示）。': ['Credit: MiniMax H3, local RTX 5090, 768p native. 2K needs MiniMax paid regen (hint only).', 'クレジット：MiniMax H3 · ローカル RTX 5090 · ネイティブ 768p。2K は MiniMax 有料 regen が必要（ヒントのみ）。'],
 };
 
 // 含数字/插值的动态字符串：[正则, EN, JA]

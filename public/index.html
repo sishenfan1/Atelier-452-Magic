@@ -6,6 +6,7 @@
 <title>Atelier452 Magic</title>
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="cosmic.css">
+<link rel="stylesheet" href="h3.css">
 </head>
 <body>
 <header class="topbar">
@@ -48,6 +49,11 @@
         <span class="mode-kicker">工作区 5</span>
         <span class="mode-title">動作分析</span>
         <small>视频 → 原画拾取</small>
+      </button>
+      <button id="tabH3" class="mode-tab">
+        <span class="mode-kicker">Workspace 7</span>
+        <span class="mode-title">Local H3</span>
+        <small>MiniMax GPU</small>
       </button>
     </div>
   </nav>
@@ -638,6 +644,15 @@
         <div class="comfy-head">☁ 云端出片 <span class="hint" id="cloudProvider">用导入的厂商端点</span>
           <button id="cloudOpenGens" type="button" title="打开云端成片文件夹">📂</button></div>
         <select id="cloudModel" title="Wan 3.0 = 真·多参考（≤10图/5视频/5音频，@编号在提示词里生效）；i2v 系只吃单张首帧图"></select>
+        <select id="cloudDur" title="云端出片时长 — 这里选多少就是多少，不受 CUT 秒数影响（Wan 3.0 支持 2–30 秒；老 Wan 只有 5/10 秒）">
+          <option value="0">时长：跟随场景</option>
+          <option value="5">5 秒</option>
+          <option value="10" selected>10 秒</option>
+          <option value="15">15 秒</option>
+          <option value="20">20 秒</option>
+          <option value="25">25 秒</option>
+          <option value="30">30 秒（仅 Wan 3.0）</option>
+        </select>
         <select id="cloudRes" title="分辨率（越高越贵越慢）">
           <option value="480P">480P（最省）</option>
           <option value="720P" selected>720P</option>
@@ -668,6 +683,77 @@
     </section>
   </aside>
 </main>
+<main class="layout" id="viewH3" hidden>
+  <aside class="col-left">
+    <section class="panel highlight">
+      <h2>Local H3 status <span class="hint">- 8787 H3 API - 8188 ComfyUI</span></h2>
+      <div class="h3-status-row">
+        <span id="h3HealthApi" class="h3-pill">H3 API 8787 - .</span>
+        <span id="h3HealthComfy" class="h3-pill">ComfyUI 8188 - .</span>
+      </div>
+      <button id="btnH3Start" class="btn wide" type="button" style="margin-top:10px">Start local H3</button>
+      <div class="hint" style="margin-top:6px">Will not kill existing Comfy or Magic (5893). Only starts 8787 / 8188 under D:\Atelier452\minimax-h3.</div>
+    </section>
+    <section class="panel">
+      <h2>Prompt <span class="hint">- text - Ref2VA</span></h2>
+      <textarea id="h3Prompt" rows="16" placeholder="Use <Picture 1> as identity. Use <Video 1> for motion. Use <Audio 1> as voice.
+CUT 1: ."></textarea>
+      <div class="hint" style="margin-top:6px">Name refs in the prompt with &lt;Picture 1&gt; &lt;Video 1&gt; &lt;Audio 1&gt; in attach order. Adding a file appends (cap 9 / 3 / 3).</div>
+    </section>
+    <section class="panel">
+      <h2>References <span class="hint">- images up to 9 - videos up to 3 - audios up to 3</span></h2>
+      <div class="h3-ref-grid">
+        <label class="filedrop" id="h3DropImages">
+          <input type="file" accept="image/*" multiple>
+          <span class="drop-icon">IMG</span>
+          <span class="drop-title">Images (up to 9)</span>
+          <span class="drop-sub">Drop / pick / append</span>
+        </label>
+        <div id="h3ChipsImages" class="h3-chips"></div>
+        <label class="filedrop" id="h3DropVideos">
+          <input type="file" accept="video/*" multiple>
+          <span class="drop-icon">VID</span>
+          <span class="drop-title">Videos (up to 3)</span>
+          <span class="drop-sub">Drop / pick / append</span>
+        </label>
+        <div id="h3ChipsVideos" class="h3-chips"></div>
+        <label class="filedrop" id="h3DropAudios">
+          <input type="file" accept="audio/*" multiple>
+          <span class="drop-icon">AUD</span>
+          <span class="drop-title">Audio (up to 3)</span>
+          <span class="drop-sub">Voice / music / SFX</span>
+        </label>
+        <div id="h3ChipsAudios" class="h3-chips"></div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Options <span class="hint">- native 768p - 1344x768</span></h2>
+      <div class="h3-opts">
+        <div class="field">
+          <label>Seconds</label>
+          <input type="number" id="h3Duration" min="4" max="15" value="8" step="1">
+        </div>
+        <label class="check"><input type="checkbox" id="h3Turbo" checked> Turbo (4-step Ref2VA)</label>
+      </div>
+      <div class="field" style="margin-top:10px">
+        <label>Size</label>
+        <input type="text" id="h3Size" value="1344 x 768" readonly>
+      </div>
+      <button id="btnH3Generate" class="btn primary wide" type="button">Generate MiniMax H3</button>
+      <div id="h3Status" class="hint accent" style="margin-top:8px"></div>
+    </section>
+  </aside>
+  <div class="col-main">
+    <section class="panel">
+      <h2>Output <span class="hint">- MiniMax H3 - local GPU</span></h2>
+      <div class="h3-player">
+        <video id="h3Video" controls hidden></video>
+      </div>
+      <div class="hint h3-credit">Credit: MiniMax H3 - local RTX 5090 - native 768p. 2K needs MiniMax paid regen (hint only).</div>
+    </section>
+  </div>
+</main>
+
 
 <!-- MARS-LSP 风格 JSON 脚本导出 -->
 <dialog id="jsonScriptDialog" class="json-script-dialog">
@@ -1201,5 +1287,6 @@
 <script src="qr.js"></script>
 <script src="saas.js"></script>
 <script src="app.js"></script>
+<script src="h3.js"></script>
 </body>
 </html>

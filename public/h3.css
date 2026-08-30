@@ -1,0 +1,125 @@
+/* Local MiniMax H3 panel only — does not rewrite style.css / cosmic.css */
+#viewH3.layout {
+  grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+}
+#viewH3 .col-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+#viewH3 textarea#h3Prompt {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  font-family: ui-monospace, Consolas, "Microsoft YaHei", monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+#viewH3 input[type="number"] {
+  width: 5.5em;
+  background: #0d1520;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+#viewH3 .h3-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+#viewH3 .h3-pill {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #1c2a3d;
+  color: var(--dim);
+  border: 1px solid var(--line);
+}
+#viewH3 .h3-pill.ok {
+  color: var(--success);
+  border-color: var(--success);
+}
+#viewH3 .h3-pill.bad {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+#viewH3 .h3-ref-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+#viewH3 .h3-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  min-height: 0;
+}
+#viewH3 .h3-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  background: var(--card2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--dim);
+}
+#viewH3 .h3-chip img {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #000;
+}
+#viewH3 .h3-chip em {
+  font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+  color: var(--text);
+}
+#viewH3 .h3-chip button {
+  background: none;
+  border: none;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+}
+#viewH3 .h3-chip button:hover { color: var(--danger); }
+#viewH3 .h3-opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+}
+#viewH3 .h3-opts .field { margin: 0; }
+#viewH3 #h3Status {
+  white-space: pre-wrap;
+  min-height: 16px;
+}
+#viewH3 #h3Status.err { color: var(--danger); }
+#viewH3 .h3-player {
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 220px;
+}
+#viewH3 #h3Video {
+  display: block;
+  width: 100%;
+  max-height: calc(100vh - 220px);
+  background: #000;
+}
+#viewH3 #h3Video[hidden] { display: none !important; }
+#viewH3 .h3-credit {
+  margin-top: 8px;
+}
